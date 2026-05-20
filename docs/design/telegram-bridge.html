@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>SDD — Telecode v0.4</title>
+<title>SDD — Telecode v0.6</title>
 <style>
   :root {
     --bg: #fbfbfd; --surface: #fff; --surface-2: #f5f5f7;
@@ -64,18 +64,72 @@
 <main class="page">
 
 <header>
-  <div class="eyebrow">SDD · v0.4 · 2026-05-20 · Opus 4.7 build sweep</div>
+  <div class="eyebrow">SDD · v0.6 · 2026-05-20 · Opus 4.7 build + 2 senior reviews</div>
   <h1>Telecode — Telegram bridge</h1>
-  <p class="subtitle">Single-sweep implementation of M0–M5 from <code>docs/plans/telegram-bridge.html</code>. SDD written alongside code, one section per milestone.</p>
+  <p class="subtitle">v0.4 single-sweep M0-M5 + v0.5 kiro-cli headless + v0.6 Kiro preToolUse hook bridge. Each version added below as an addendum; the original sections are kept untouched for historical reference.</p>
 </header>
 
 <section>
-  <h2>1. Overview &amp; diff vs plan</h2>
+  <h2>0. v0.6 / v0.5 Addendum (Kiro rewrites)</h2>
+  <p>After the v0.4 single-sweep, Context7 turned up <code>kiro-cli</code> v2.3+ — a headless binary separate from the <code>kiro</code> IDE launcher (which the v0.4 adapter spawned). Two iterations followed:</p>
+
+  <h3>0.1 v0.5 (commit <code>ff4a5aa</code>) — switch to <code>kiro-cli</code> headless</h3>
+  <ul>
+    <li><strong>Why</strong>: v0.4 Kiro adapter spawned <code>kiro chat --reuse-window</code> (IDE), which loaded the prompt into the Electron chat panel but had no stdout. Phase-1 "fire-and-notify" was the only option, and the user reported the panel often arrived empty when no workspace was open in the reused window.</li>
+    <li><strong>What</strong>: rewrote <code>src/agents/kiro.ts</code> to spawn <code>kiro-cli chat --no-interactive [--resume-id ...] [--trust-tools=...] &lt;prompt&gt;</code>. Streamed stdout chunk-by-chunk into the existing <code>text</code> AgentEvent pipeline (notifier debounces + edits the Telegram message). Added an ANSI/cursor-code stripper (<code>\x1b[...</code> sequences) and a regex (<code>Chat SessionId: &lt;uuid&gt;</code>) that scrapes <code>--list-sessions</code> output after each prompt to persist the session UUID for cross-restart <code>--resume-id</code>.</li>
+    <li><strong>Trade-off</strong>: <code>--trust-tools=fs_read</code> default was safer than <code>--trust-all-tools</code> but left users in a corner — Kiro asks for permission on most non-read tools and headless mode has no place to ask. v0.6 fixes this.</li>
+  </ul>
+
+  <h3>0.2 v0.6 (commit <code>8b6ddd8</code>) — preToolUse hook bridge for Claude-parity approvals</h3>
+  <ul>
+    <li><strong>Why</strong>: trust-list-at-startup is impractical because Kiro touches many tools mid-prompt; the user can't possibly know which to pre-trust. Context7 then revealed Kiro custom agents support a <code>preToolUse</code> hook with Claude-style exit-code semantics (0=allow, 2=block + STDERR returned to the LLM, other=warn). That's the bridge.</li>
+    <li><strong>Architecture</strong>:
+      <ul>
+        <li><code>KiroHookServer</code> (new, <code>src/util/kiro-hook-server.ts</code>): tiny <code>node:http</code> server bound to 127.0.0.1 on an ephemeral port. Exposes <code>POST /kiro-hook</code>.</li>
+        <li><code>writeKiroTelecodeAgent</code> (new, <code>src/agents/kiro-agent-config.ts</code>): on daemon boot, idempotently writes <code>~/.kiro/agents/telecode.json</code> — a kiro-cli custom agent declaring <code>tools: ["*"]</code>, <code>allowedTools: ["*"]</code>, and a <code>hooks.preToolUse</code> entry whose command is the absolute path to the gate shim.</li>
+        <li><code>src/cli/kiro-gate.ts</code> (new bin): reads the hook event JSON from stdin, POSTs it to the daemon at <code>$TELECODE_GATE_URL</code> with <code>x-telecode-session: $TELECODE_SESSION_ID</code>, blocks on the response, exits 0 (allow) or 2 (deny — prints the reason to STDERR so the LLM sees it). Bundled into <code>dist/cli/kiro-gate.js</code> with <code>chmod +x</code>.</li>
+        <li>Kiro adapter now spawns <code>kiro-cli chat --no-interactive --agent telecode --trust-all-tools [--resume-id ...] [--model ...] &lt;prompt&gt;</code> with the two env vars set. <code>--trust-all-tools</code> only bypasses kiro-cli's <strong>built-in</strong> approval prompt (which has no TTY anyway under <code>--no-interactive</code>); the hook still fires for every tool call.</li>
+        <li>Daemon handler: looks up the telecode session by id (unknown → deny), runs <code>PolicyEngine.decide(toolName, input, {projectDir})</code>. Auto-allow / auto-deny return immediately. Otherwise calls <code>ApprovalBroker.ask</code> — the same path Claude uses — which posts <code>[Allow once] [Allow always] [Deny]</code> to Telegram and awaits the tap. <code>allow_always</code> appends to <code>policy.yaml</code>. Response is sent via <code>x-telecode-decision</code> + <code>x-telecode-reason</code> headers.</li>
+      </ul>
+    </li>
+    <li><strong>Cross-agent policy</strong>: <code>PolicyEngine.renderInputForMatch</code> learns Kiro shapes. Claude's <code>Bash({command})</code> + <code>Edit({file_path})</code> still work; Kiro adds <code>shell({command})</code>, <code>execute_bash({command})</code>, and <code>read</code>/<code>write</code>/<code>fs_read</code>/<code>fs_write</code> which use either <code>{path}</code> or batched <code>{operations:[{path,...}]}</code>. Senior review iter 1 caught that the <code>operations[]</code> shape wasn't unwrapped — <code>deny: ["read(~/.ssh/**)"]</code> would have silently no-op'd. Patched + 2 regression tests added.</li>
+    <li><strong>Timeout grace</strong>: kiro-cli's <code>preToolUse</code> <code>timeout_ms</code> is set to <code>approval_timeout_sec * 1000 + 10_000</code> so the broker is always the one that expires first and cleans up its pending map — kiro-cli won't SIGKILL the hook mid-await and orphan a Telegram button.</li>
+    <li><strong>Boot-time gate-script assertion</strong>: <code>resolveGateScript()</code> throws loud if neither <code>dist/cli/kiro-gate.js</code> nor the dev fallback exists, instead of falling through to a non-existent path that would fail-closed every Kiro tool call with a confusing "daemon unreachable" deny.</li>
+  </ul>
+
+  <h3>0.3 Threat model (v0.6 surface)</h3>
+  <ul>
+    <li>HTTP gate binds 127.0.0.1 only — no LAN/external reach. <code>node:http</code> with explicit host arg.</li>
+    <li>Authn is the telecode session UUIDv4 in <code>x-telecode-session</code>. Practically unguessable for the single-user local daemon model. <strong>P2</strong> follow-up: add per-boot HMAC token to <code>TELECODE_GATE_URL</code> for defence-in-depth against same-user-different-process attackers.</li>
+    <li>kiro-cli's env (including <code>TELECODE_GATE_URL</code>) is inherited by any child process it spawns. Acceptable for the single-user model; documented.</li>
+    <li>Gate script lives in <code>dist/</code> at the daemon's install root. Build chmod +x'es it; tampering protection inherits from filesystem ownership.</li>
+  </ul>
+
+  <h3>0.4 v0.6 test additions</h3>
+  <ul>
+    <li><code>tests/kiro.test.ts</code> — ANSI strip + session-UUID regex.</li>
+    <li><code>tests/kiro-hook-server.test.ts</code> — allow / deny / unknown-session / ask→deny / 404 (5 cases).</li>
+    <li><code>tests/policy.test.ts</code> — Kiro <code>operations[].path</code> unwrap, <code>shell</code> / <code>execute_bash</code> command match (3 new cases, brings policy suite to 9).</li>
+    <li>Net: 21 → 31 tests across 7 files, all green.</li>
+  </ul>
+
+  <h3>0.5 P2 follow-ups not blocking ship</h3>
+  <ul>
+    <li>Per-boot HMAC token on <code>TELECODE_GATE_URL</code>.</li>
+    <li><code>KiroHookServer.stop()</code>: drain or fail in-flight <code>broker.ask</code> calls so shutdown doesn't block on 5-min approvals.</li>
+    <li>Daemon singleton lockfile (so <code>npm run dev</code> and launchd don't fight over <code>~/.kiro/agents/telecode.json</code>).</li>
+    <li>Cache <code>--list-sessions</code> per cwd to avoid an extra subprocess after every completed prompt.</li>
+    <li>Cover <code>writeKiroTelecodeAgent</code> with idempotency + atomic-rename + mode-0o600 tests.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>1. Overview &amp; diff vs plan (v0.4)</h2>
   <p>v0.4 plan implemented end-to-end. No scope cuts. Deviations:</p>
   <ul>
-    <li>Policy glob matcher uses a hand-rolled <code>globToRegex</code> instead of <code>picomatch</code>: command-style args like <code>rm -rf*</code> need <code>*</code> to span spaces and slashes (picomatch's <code>*</code> is single-segment by default). The custom matcher treats <code>*</code> as <code>.*</code> — closer to plan §8 expected behaviour. <code>picomatch</code> dep removed.</li>
+    <li>Policy glob matcher uses a hand-rolled <code>globToRegex</code> instead of <code>picomatch</code>: command-style args like <code>rm -rf*</code> need <code>*</code> to span spaces and slashes (picomatch's <code>*</code> is single-segment by default). The custom matcher treats <code>*</code> as <code>.*</code> — closer to plan §8 expected behaviour. <code>picomatch</code> dep removed in v0.6.</li>
     <li>Hono left out (plan §6 already marked optional).</li>
-    <li>Kiro adapter is phase-1 fire-and-notify per plan §9 M4.</li>
+    <li>Kiro adapter was phase-1 fire-and-notify per plan §9 M4 — superseded by v0.5 (kiro-cli headless) + v0.6 (preToolUse bridge). See §0 above.</li>
   </ul>
 </section>
 

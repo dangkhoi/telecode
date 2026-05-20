@@ -80,9 +80,19 @@ function renderInputForMatch(toolName: string, input: unknown): string {
     }
     // Kiro-CLI tools (preToolUse hook payload uses lowercase names)
     if (toolName === 'shell' && typeof o.command === 'string') return o.command;
-    if ((toolName === 'fs_read' || toolName === 'fs_write' || toolName === 'read' || toolName === 'write') &&
-        typeof o.path === 'string') {
-      return o.path;
+    if ((toolName === 'execute_bash') && typeof o.command === 'string') return o.command;
+    // Kiro's `read` / `fs_read` / `fs_write` payloads are: { operations: [{ mode, path, ... }, ...] }.
+    // Match against the first operation's path (the policy engine evaluates each
+    // rule against a single string; if a future tool batches multiple paths we
+    // can extend to per-op matching, but in practice kiro-cli batches reads of
+    // the SAME file at multiple line ranges — a single path is sufficient).
+    if (toolName === 'read' || toolName === 'write' || toolName === 'fs_read' || toolName === 'fs_write') {
+      if (typeof o.path === 'string') return o.path;
+      const ops = (o as { operations?: unknown }).operations;
+      if (Array.isArray(ops) && ops.length > 0) {
+        const first = ops[0] as Record<string, unknown> | undefined;
+        if (first && typeof first.path === 'string') return first.path;
+      }
     }
     if (typeof o.path === 'string') return o.path;
     try {

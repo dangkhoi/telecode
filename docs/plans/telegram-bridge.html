@@ -233,7 +233,7 @@
 <main class="page">
 
 <header class="hero">
-  <div class="eyebrow">Plan · v0.4 (ready-to-implement) · 2026-05-20</div>
+  <div class="eyebrow">Plan · v0.6 (shipped) · 2026-05-20</div>
   <h1>Telecode</h1>
   <p class="subtitle">Chat với Claude Code &amp; Kiro trên máy mình qua Telegram — vibecode mọi lúc mọi nơi, có notification khi cần để mắt.</p>
   <div class="meta">
@@ -245,6 +245,19 @@
     <span class="tag">Claude CLI + Kiro CLI</span>
   </div>
   <div class="card callout" style="margin-top: 24px;">
+    <strong>v0.6 changelog (interactive Kiro permissions):</strong>
+    <ul style="margin: 8px 0 16px;">
+      <li><strong>Kiro adapter ≈ Claude UX</strong>: daemon spin loopback HTTP server (127.0.0.1, ephemeral port) + sinh <code>~/.kiro/agents/telecode.json</code> với <code>preToolUse</code> hook. Mỗi tool call của kiro-cli → daemon decide (PolicyEngine → ApprovalBroker → Telegram inline button) → exit 0/2 (allow/deny). Mid-session approve real-time, không phải "fire-and-notify" nữa.</li>
+      <li>Spawn <code>kiro-cli chat --no-interactive --agent telecode --trust-all-tools</code> + env <code>TELECODE_SESSION_ID</code> + <code>TELECODE_GATE_URL</code>. <code>--trust-all-tools</code> chỉ bypass kiro-cli's built-in prompt; preToolUse hook vẫn fire → daemon là gate thật.</li>
+      <li>PolicyEngine xử lý cả tool name dạng Claude (<code>Bash</code>, <code>Edit</code>) và Kiro (<code>shell</code>, <code>read</code>, <code>write</code>, <code>fs_read</code>, <code>fs_write</code>, <code>execute_bash</code>) + payload shape khác nhau (Kiro batch reads dùng <code>operations[].path</code>).</li>
+      <li>Senior review P1 fix: Kiro <code>read</code>/<code>write</code> payload unwrap <code>operations[]</code> — trước đó <code>deny: ["read(~/.ssh/**)"]</code> silently no-op. Patched + regression tests.</li>
+    </ul>
+    <strong>v0.5 changelog (kiro-cli headless):</strong>
+    <ul style="margin: 8px 0 16px;">
+      <li>Discover: <code>kiro-cli</code> v2.3+ là binary RIÊNG khỏi <code>kiro</code> IDE launcher — full headless với <code>--no-interactive</code>, stream stdout, <code>--resume-id</code>, <code>--list-sessions</code>, <code>--trust-tools</code>.</li>
+      <li>Adapter rewrite: spawn kiro-cli thay vì IDE, ANSI strip, parse session UUID, persist <code>sdk_session_id</code> như Claude. Stream output về Telegram qua existing notifier debounce pipeline.</li>
+      <li>Switch <code>telegraf</code> → <code>grammy</code> + <code>@grammyjs/runner</code> (v0.4 commit, không phải v0.5).</li>
+    </ul>
     <strong>v0.3 changelog (sau user feedback):</strong>
     <ul style="margin: 8px 0 0;">
       <li><strong>Multi-session model</strong>: 1 Telegram chat có thể có nhiều session đồng thời, mỗi session là (agent × project × thread). Commands <code>/session new|list|switch|close|rename</code>.</li>
@@ -342,7 +355,7 @@
     </div>
     <div class="card">
       <h4>Kiro Adapter</h4>
-      <p>Spawn <code>kiro chat --mode agent --reuse-window &lt;prompt&gt;</code> qua <code>execa</code>. Phase 1: fire prompt → notify Telegram "đã gửi vào Kiro IDE, check window". Phase 2 (optional): tail Kiro log file hoặc viết Kiro extension để stream output back.</p>
+      <p>Spawn <code>kiro-cli chat --no-interactive --agent telecode --trust-all-tools</code> qua <code>execa</code> với env <code>TELECODE_SESSION_ID</code> + <code>TELECODE_GATE_URL</code>. Stream stdout → strip ANSI → notifier edit Telegram message. Sau khi xong, đọc <code>--list-sessions</code> để persist UUID cho <code>--resume-id</code> lần sau. Permission qua preToolUse hook bridge → ApprovalBroker (mid-session interactive approve y hệt Claude).</p>
     </div>
     <div class="card">
       <h4>ApprovalBroker</h4>
@@ -442,7 +455,7 @@ status thế nào rồi?                            → tiếp tục chat trong 
     <tbody>
       <tr><td>Runtime</td><td>Node 22 LTS + TypeScript 5.x (ESM)</td><td>Match Claude Agent SDK, execa v9+ ESM-only.</td></tr>
       <tr><td>Claude integration</td><td><code>@anthropic-ai/claude-agent-sdk</code> (pin exact version)</td><td>Official, streaming, hooks, canUseTool, resume, settingSources.</td></tr>
-      <tr><td>Kiro integration</td><td><code>kiro chat</code> CLI subcommand</td><td>Spawn qua <code>execa</code>; modes <code>ask|edit|agent</code>; <code>--reuse-window</code>.</td></tr>
+      <tr><td>Kiro integration</td><td><code>kiro-cli</code> 2.3+ (headless binary, khác <code>kiro</code> IDE)</td><td><code>chat --no-interactive --agent telecode --trust-all-tools</code>; <code>--resume-id</code> cho session resume; preToolUse hook → daemon HTTP loopback cho permission gating.</td></tr>
       <tr><td>Telegram</td><td><code>grammy</code> + <code>@grammyjs/runner</code></td><td>Active maintain, TS-first, modern plugin ecosystem (conversations, ratelimiter). Thay <code>telegraf</code> đang stale.</td></tr>
       <tr><td>HTTP (optional)</td><td><code>hono</code> + <code>@hono/node-server</code></td><td>Chỉ load nếu bật health endpoint / future web UI. Core không cần.</td></tr>
       <tr><td>Storage</td><td><code>better-sqlite3</code> v12.x (WAL mode)</td><td>Synchronous, zero-config, embedded.</td></tr>
@@ -472,7 +485,8 @@ status thế nào rồi?                            → tiếp tục chat trong 
 │   ├── agents/
 │   │   ├── types.ts                       ← AgentAdapter interface
 │   │   ├── claude.ts                      ← Claude Agent SDK adapter
-│   │   ├── kiro.ts                        ← Kiro CLI (`kiro chat`) adapter
+│   │   ├── kiro.ts                        ← kiro-cli (headless) adapter, env-injected session id
+│   │   ├── kiro-agent-config.ts           ← sinh ~/.kiro/agents/telecode.json (preToolUse hook)
 │   │   └── registry.ts                    ← agent factory by name
 │   ├── approval/
 │   │   ├── broker.ts                      ← ApprovalBroker (pending map + resolver)
@@ -587,13 +601,15 @@ deny:                                      # auto-deny in canUseTool
     <li><code>/status logs [n]</code> tail từ <code>tool_log</code> table cho session active.</li>
   </ul>
 
-  <h3>M4 — Kiro adapter via CLI (1 buổi)</h3>
+  <h3>M4 — Kiro adapter (v0.6: kiro-cli headless + preToolUse bridge)</h3>
   <ul class="checklist">
-    <li>Spawn <code>kiro chat --mode agent --reuse-window &lt;prompt&gt;</code> qua execa, <code>cwd</code> = project path.</li>
-    <li>Notify Telegram: "✉️ Đã gửi prompt vào Kiro IDE window. Mở Kiro để xem agent run." (phase 1 fire-and-forget).</li>
-    <li><code>/screenshot</code> helper (dùng <code>screencapture</code> CLI macOS, không cần Accessibility) để check Kiro UI state từ xa.</li>
-    <li><strong>Stretch goal phase 2</strong>: tail Kiro log dir hoặc viết Kiro extension để stream output. KHÔNG block M4.</li>
-    <li>E2E: <code>/session new kiro x ~/some-project</code> + plain text → Kiro window mở với prompt loaded.</li>
+    <li>Spawn <code>kiro-cli chat --no-interactive --agent telecode --trust-all-tools [--resume-id ...]</code> với env <code>TELECODE_SESSION_ID</code> + <code>TELECODE_GATE_URL</code>; <code>cwd</code> = project path.</li>
+    <li>Stream stdout chunk-by-chunk, strip ANSI/cursor codes, emit <code>text</code> event → notifier edit Telegram message (cùng pipeline với Claude).</li>
+    <li>Boot tasks: <code>writeKiroTelecodeAgent</code> sinh <code>~/.kiro/agents/telecode.json</code> (preToolUse hook trỏ về <code>dist/cli/kiro-gate.js</code>); <code>KiroHookServer</code> bind 127.0.0.1 ephemeral port; gate script existence assertion fail-loud.</li>
+    <li>Hook flow: kiro-cli → gate script → POST <code>/kiro-hook</code> → daemon PolicyEngine.decide → allow/deny ngay hoặc ask qua ApprovalBroker (Telegram inline button) → exit 0/2 (deny kèm stderr cho LLM).</li>
+    <li>Cross-restart resume: sau mỗi prompt, parse <code>kiro-cli chat --list-sessions</code> để lấy session UUID, persist vào <code>sessions.sdk_session_id</code>.</li>
+    <li><code>/screenshot</code> helper qua <code>screencapture</code> với friendlier error nếu Screen Recording permission missing.</li>
+    <li>E2E: <code>/session new kiro x ~/work/api</code> + "đọc file README" → Telegram nhận approval button cho <code>read</code>, tap allow → Kiro thực thi, output stream về Telegram.</li>
   </ul>
 
   <h3>M5 — Hardening (1 buổi)</h3>
@@ -614,8 +630,11 @@ deny:                                      # auto-deny in canUseTool
   <table>
     <thead><tr><th>Risk</th><th>Sev</th><th>Mitigation</th></tr></thead>
     <tbody>
-      <tr><td><code>kiro chat</code> CLI subcommand không stream output ra stdout — chỉ load prompt vào IDE window. Bot không "đọc" được agent reply.</td><td><span class="badge p1">P1</span></td><td>Phase 1: fire-and-notify, user mở Kiro IDE để xem. Phase 2 stretch: tail Kiro log file (<code>~/Library/Application Support/Kiro/logs/</code>) hoặc viết extension publish events. Document hạn chế rõ trong README.</td></tr>
-      <tr><td>Kiro CLI có thể đổi flags / subcommand giữa các version (forked VS Code, evolve nhanh)</td><td><span class="badge p2">P2</span></td><td>Wrap <code>kiro chat</code> invocation trong adapter; capability detect ở startup (<code>kiro chat --help</code>); pin tested version trong README.</td></tr>
+      <tr><td><strong>RESOLVED v0.5/v0.6</strong>: trước đây <code>kiro chat</code> (IDE launcher) không stream stdout. v0.5 chuyển sang <code>kiro-cli</code> headless (stream OK). v0.6 thêm preToolUse hook bridge → interactive permission y hệt Claude.</td><td><span class="badge ok">OK</span></td><td>—</td></tr>
+      <tr><td>kiro-cli HTTP gate loopback bị process local khác (cùng user) curl với UUID đoán đúng → false-allow</td><td><span class="badge p2">P2</span></td><td>UUIDv4 không guessable thực tế; daemon single-user local. Hardening tương lai: per-boot HMAC token trong <code>TELECODE_GATE_URL</code> verify ở handler.</td></tr>
+      <tr><td>kiro-cli timeout vs broker timeout race → orphan Telegram button + leak pending row</td><td><span class="badge p2">P2</span></td><td>v0.6 fix: <code>writeKiroTelecodeAgent</code> set kiro-cli <code>timeout_ms = approval_timeout_sec*1000 + 10_000</code> grace, broker luôn timeout trước, cleanup pending map.</td></tr>
+      <tr><td>Gate script <code>dist/cli/kiro-gate.js</code> không build / không chmod +x → mọi Kiro tool call fail-closed deny với error khó hiểu</td><td><span class="badge p2">P2</span></td><td>v0.6 fix: <code>resolveGateScript()</code> throw loud ở boot nếu không tìm thấy script; build script chmod +x sau khi tsc.</td></tr>
+      <tr><td>Kiro CLI flag schema có thể đổi giữa các version</td><td><span class="badge p3">P3</span></td><td>Adapter wrap; pin tested kiro-cli 2.3+ trong README prereqs; tương lai capability-detect ở boot.</td></tr>
       <tr><td>Telegram bot token leak → ai cũng spawn được Claude trên máy</td><td><span class="badge p0">P0</span></td><td>Token chỉ trong env var (<code>~/.telecode/.env</code>, chmod 600); whitelist user ID cứng; log scrub; nếu detect lạ → daemon panic-exit.</td></tr>
       <tr><td>Policy allow pattern quá rộng → Claude tự chạy lệnh phá máy</td><td><span class="badge p0">P0</span></td><td>PolicyEngine default-deny mọi <code>Bash(rm*)</code>, <code>git push --force</code>, <code>curl|sh</code>; allow tối thiểu; mọi <code>Edit/Write</code> pattern phải scope dưới <code>{{project_dir}}</code>; tool ngoài pattern → bắt buộc human approve qua Telegram; periodic audit qua hook log.</td></tr>
       <tr><td>Telegram edit rate limit thực tế: Bot API không document số chính xác cho <code>editMessageText</code> (đồn ~1 edit/sec per chat, hard cap 30 msg/sec global). Debounce 700ms vẫn có thể trigger 429 khi stream dày.</td><td><span class="badge p2">P2</span></td><td>Token-bucket per chat (1 edit/sec, burst 3); khi 429 → đọc <code>retry_after</code> từ response, back off đúng số giây đó; gom token thành chunk có ý nghĩa; nếu queue dài → rotate sang message mới thay vì edit.</td></tr>
@@ -645,7 +664,7 @@ deny:                                      # auto-deny in canUseTool
     <li>Khi Claude định chạy lệnh ngoài allow/deny pattern (vd <code>git push</code>) → Telegram nhận message với header <code>[session-label]</code> + inline buttons [Allow once] [Allow always] [Deny] trong &lt; 2s; tap → đẩy ngược vào <code>canUseTool</code> đúng session, Claude tiếp tục.</li>
     <li>Hook log lưu mọi tool call trong 7 ngày, <code>/status logs 30</code> show 30 dòng cuối của session active.</li>
     <li>Approval timeout: không tap trong 5 phút → auto-deny + Telegram báo "⏱ timeout, denied" kèm session label.</li>
-    <li><code>/session new kiro x ~/some-project</code> + plain text → Kiro IDE window mở với prompt loaded ở chat panel mode agent.</li>
+    <li><code>/session new kiro x ~/some-project</code> + plain text → kiro-cli headless chạy, stream reply về Telegram; mọi tool call hỏi approval qua inline button y hệt Claude.</li>
     <li><code>/allow Bash(npm run lint)</code> append vào <code>policy.yaml</code>; user edit <code>policy.yaml</code> ngoài daemon → daemon tự reload qua <code>fs.watchFile</code>.</li>
     <li>Không có dependency nào ở trạng thái deprecated tại thời điểm ship (verify Context7).</li>
     <li>Senior review pass — không còn <code>[P0]</code>/<code>[P1]</code> finding.</li>
@@ -661,7 +680,8 @@ deny:                                      # auto-deny in canUseTool
       <tr><td>Whitelist user_id</td><td><code>123456789</code> (koi, @u2526) — hardcode vào <code>config.example.yaml</code>.</td></tr>
       <tr><td>Project seed</td><td>Auto-scan <code>~/Documents/workspaces/*</code> depth 1, exclude <code>node_modules/.git/dist/build</code>. User có thể <code>/add</code> path khác sau.</td></tr>
       <tr><td>Switch preview</td><td>Bot reply "📍 [label]" + 3 dòng transcript cuối của session đó.</td></tr>
-      <tr><td>Kiro stream-back</td><td>STRETCH — sau M5. M4 chỉ fire-and-notify.</td></tr>
+      <tr><td>Kiro stream-back</td><td><strong>SHIPPED v0.5</strong>. kiro-cli <code>--no-interactive</code> stream stdout về Telegram.</td></tr>
+      <tr><td>Kiro interactive permissions</td><td><strong>SHIPPED v0.6</strong>. preToolUse hook bridge → daemon HTTP loopback → ApprovalBroker (inline button). Cross-agent policy syntax: <code>shell(rm*)</code> mirrors <code>Bash(rm*)</code>.</td></tr>
       <tr><td>canUseTool interactive approve</td><td>Phase 1 (M3).</td></tr>
       <tr><td>settingSources</td><td><code>['user','project','local']</code>.</td></tr>
       <tr><td>Policy persistence</td><td><code>~/.telecode/policy.yaml</code> riêng, atomic write + fs.watchFile reload.</td></tr>
@@ -669,7 +689,7 @@ deny:                                      # auto-deny in canUseTool
       <tr><td><code>/status logs</code></td><td>Giữ.</td></tr>
     </tbody>
   </table>
-  <p class="footnote">Plan v0.4 = ready-to-implement. Sau senior review pass → kick off sub-agent DAG.</p>
+  <p class="footnote">Plan v0.6 = shipped. v0.4 v0.5 v0.6 đã ship lên <a href="https://git2.fptshop.com.vn/frt-public-projects/toys/telecode">git2.fptshop.com.vn/frt-public-projects/toys/telecode</a>, 31/31 tests pass, 2 lần senior review (P0/P1 cleared).</p>
 </section>
 
 <hr />

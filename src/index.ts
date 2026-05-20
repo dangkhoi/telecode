@@ -16,11 +16,16 @@ import { writeKiroTelecodeAgent } from './agents/kiro-agent-config.js';
 
 function resolveGateScript(): string {
   // Find the compiled cli/kiro-gate.js next to this file (dist/) or fall back
-  // to the source path when running via tsx.
+  // to the source path when running via tsx. Fail loudly if NEITHER exists —
+  // a missing gate script would make every Kiro tool call fail-closed with a
+  // confusing 'daemon unreachable' deny, masking the root cause.
   const here = dirname(fileURLToPath(import.meta.url));
   const candidates = [resolve(here, 'cli/kiro-gate.js'), resolve(here, '../src/cli/kiro-gate.ts')];
   for (const c of candidates) if (existsSync(c)) return c;
-  return candidates[0]!;
+  throw new Error(
+    `kiro-gate script not found. Looked in:\n  ${candidates.join('\n  ')}\n` +
+      'Run `npm run build` (which chmods dist/cli/kiro-gate.js) before starting the daemon.',
+  );
 }
 
 async function main(): Promise<void> {
@@ -40,7 +45,11 @@ async function main(): Promise<void> {
   const gateScriptPath = resolveGateScript();
   writeKiroTelecodeAgent({
     gateScriptPath,
-    approvalTimeoutMs: config.daemon.approval_timeout_sec * 1000,
+    // Give kiro-cli's hook 10s extra grace beyond the broker's own timeout so
+    // the broker is always the one that "expires" first, cleans up its pending
+    // map, and writes a tool_log row — instead of kiro-cli SIGKILL'ing the
+    // hook process mid-await and orphaning a Telegram button.
+    approvalTimeoutMs: config.daemon.approval_timeout_sec * 1000 + 10_000,
     model: config.agents.kiro.model,
   });
 

@@ -239,10 +239,29 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
   bot.command('screenshot', async (ctx) => {
     const tmp = `/tmp/telecode-screen-${Date.now()}.png`;
     try {
-      await execa('screencapture', ['-x', tmp], { timeout: 10_000 });
+      const r = await execa('screencapture', ['-x', tmp], { timeout: 10_000, reject: false });
+      // macOS screencapture exits 0 even when Screen Recording permission is
+      // missing — it just writes a black image (or fails to write at all).
+      // Surface a clearer hint when the file is missing or suspiciously tiny.
+      const { statSync } = await import('node:fs');
+      let size = 0;
+      try {
+        size = statSync(tmp).size;
+      } catch {
+        size = 0;
+      }
+      if (r.exitCode !== 0 || size < 1024) {
+        await ctx.reply(
+          '📸 screencapture failed or returned empty image.\n' +
+            'Most often this means *Screen Recording* permission is missing.\n' +
+            'System Settings → Privacy & Security → Screen & System Audio Recording → enable the binary running the daemon (Terminal / node / launchd) → restart daemon.',
+          { parse_mode: 'Markdown' },
+        );
+        return;
+      }
       await ctx.replyWithPhoto(new InputFile(tmp));
     } catch (err) {
-      await ctx.reply(`screencapture failed: ${String(err).slice(0, 200)}`);
+      await ctx.reply(`screencapture error: ${String(err).slice(0, 200)}`);
     }
   });
 
