@@ -16,21 +16,27 @@ launchctl load ~/Library/LaunchAgents/dev.telecode.daemon.plist
 ## 1. Verify boot — phải thấy các log sau
 
 ```bash
-tail -n 200 -f ~/.telecode/logs/telecode.log | jq -r '.msg + " " + (.port // .path // "" | tostring)'
+tail -n 200 -f ~/.telecode/logs/telecode.1.log | jq -r '.msg + " " + (.port // .path // "" | tostring)'
 ```
 
-Expected lines:
+Expected lines (cờ `telegram bot connected` không emit explicit — daemon "telecode ready" sau khi startBot resolve nghĩa là grammY đã start polling):
 ```
 telecode booting
 policy loaded
 kiro hook server listening on loopback <port>
 kiro telecode agent config written /Users/<you>/.kiro/agents/telecode.json
 workspace scan complete
-telegram bot connected
 telecode ready
 ```
 
+Lưu ý log file dùng tên `telecode.1.log` (pino-roll daily rotation), không phải `telecode.log`. File `.log` cha là 0 byte placeholder.
+
 Nếu thấy log `kiro-gate script not found` → `npm run build` chưa chạy / `dist/cli/kiro-gate.js` không tồn tại. Fail-loud assertion (v0.6 fix) — không phải bug daemon, build lại.
+
+Verify stderr không leak token nào (v0.6.1 fix):
+```bash
+grep -c "bot[0-9]\|sk-ant" ~/.telecode/logs/stderr.log    # phải = 0
+```
 
 ## 2. Verify Kiro custom agent file
 
