@@ -29,8 +29,16 @@ const ConfigSchema = z.object({
         .default(['user', 'project', 'local']),
     }),
     kiro: z.object({
-      binary: z.string().default('kiro'),
-      default_mode: z.enum(['ask', 'edit', 'agent']).default('agent'),
+      // kiro-cli binary (separate from the `kiro` IDE launcher). Supports
+      // headless `chat --no-interactive` with stdout streaming + resume-id.
+      binary: z.string().default('kiro-cli'),
+      // Tool names the kiro-cli process is allowed to invoke without prompting.
+      // Empty = trust nothing (model can answer but cannot read/write files).
+      // Safe defaults focus on read-only inspection; widen via /allow as needed.
+      trust_tools: z.array(z.string()).default(['fs_read']),
+      // Optional kiro-cli agent profile (--agent) and model (--model).
+      agent: z.string().optional(),
+      model: z.string().optional(),
     }),
   }),
   defaults: z

@@ -28,7 +28,9 @@ async function main(): Promise<void> {
     },
     kiro: {
       binary: config.agents.kiro.binary,
-      defaultMode: config.agents.kiro.default_mode,
+      trustTools: config.agents.kiro.trust_tools,
+      agent: config.agents.kiro.agent,
+      model: config.agents.kiro.model,
     },
   });
 

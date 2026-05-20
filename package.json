@@ -1,6 +1,6 @@
 {
   "name": "telecode",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Telegram bridge for Claude Code & Kiro — vibecode from anywhere",
   "type": "module",
   "private": true,

@@ -14,8 +14,10 @@ agents:
     binary: claude
     setting_sources: [user, project, local]
   kiro:
-    binary: kiro
-    default_mode: agent
+    binary: kiro-cli                   # NOT the `kiro` IDE launcher — needs the headless `kiro-cli` (v2.3+)
+    trust_tools: [fs_read]             # tools kiro-cli may run without prompt; widen via /allow
+    # agent: my-agent                  # optional: kiro-cli --agent
+    # model: claude-sonnet-4.6         # optional: kiro-cli --model
 defaults:
   agent: claude
 session_switch_preview_lines: 3

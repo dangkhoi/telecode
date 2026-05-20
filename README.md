@@ -43,7 +43,7 @@ Telecode là 1 local daemon chạy nền trên Mac, bắc cầu giữa Telegram 
 | Node.js | **22 LTS** | `node -v` |
 | npm | đi kèm Node 22 | `npm -v` |
 | `claude` CLI | 2.1+ | `which claude && claude --version` |
-| `kiro` CLI (optional) | 0.12+ | `which kiro && kiro --version` |
+| `kiro-cli` (optional) | 2.3+ | `which kiro-cli && kiro-cli --version` |
 | Telegram account | bất kỳ | — |
 
 **Cài Node 22** nếu chưa có:
@@ -58,9 +58,16 @@ brew link --overwrite node@22
 curl -fsSL https://claude.ai/install.sh | sh
 ```
 
-**Cài Kiro** (nếu muốn dùng song song): tải từ https://kiro.dev → mở `.dmg` → kéo vào `/Applications` → mở Kiro 1 lần để nó cài CLI shim. Test bằng `kiro --version`.
+**Cài Kiro CLI** (nếu muốn dùng song song): cần `kiro-cli` (headless CLI), KHÁC với `kiro` IDE launcher.
+```bash
+# Theo hướng dẫn chính thức: https://kiro.dev/docs/cli/installation
+curl -fsSL https://kiro.dev/install.sh | sh    # hoặc xem doc cho method khác
+kiro-cli --version    # phải in ra 2.3+
+```
 
-Không có Kiro vẫn dùng được — Telecode tự skip kiro adapter.
+> **Lưu ý**: `kiro` (IDE launcher) và `kiro-cli` (headless CLI) là 2 binary khác nhau. `kiro` chỉ mở IDE window, `kiro-cli` mới stream stdout headless được — Telecode dùng `kiro-cli`.
+
+Không có Kiro CLI vẫn dùng được — Telecode tự skip kiro adapter, dùng Claude là chính.
 
 ---
 
@@ -396,12 +403,12 @@ macOS cần Screen Recording permission cho `screencapture`:
 ### `/session new kiro ...` không mở IDE
 
 ```bash
-# Kiro CLI có không?
-which kiro
-kiro chat --help
+# Kiro CLI (headless) có không?
+which kiro-cli
+kiro-cli --version   # phải in ra 2.3+
 ```
 
-Nếu không có → cài Kiro (xem [Yêu cầu máy](#yêu-cầu-máy)).
+Nếu không có → cài kiro-cli (xem [Yêu cầu máy](#yêu-cầu-máy)). `kiro` (IDE) ≠ `kiro-cli` (headless).
 
 ### Daemon crash loop
 
@@ -467,7 +474,7 @@ Tóm tắt stack:
 - Node 22 ESM + TypeScript strict
 - [grammY](https://grammy.dev) + `@grammyjs/runner` (Telegram bot)
 - `@anthropic-ai/claude-agent-sdk` (Claude integration, `canUseTool` + hooks + resume)
-- `kiro chat --mode agent` (Kiro integration via CLI spawn)
+- `kiro-cli chat --no-interactive` (Kiro headless integration, streaming stdout + resume-id)
 - `better-sqlite3` WAL (state)
 - `pino` + `pino-roll` (logs)
 - `async-mutex` (per-session serialization)
@@ -479,12 +486,12 @@ Tóm tắt stack:
 
 - **macOS only** (launchd). Linux/Windows hỗ trợ sau (cần systemd / service manager).
 - **Single user per daemon** — multi-tenant không support. Mỗi người 1 daemon + 1 bot riêng.
-- **Kiro output không stream về Telegram** — phase 1 fire-and-notify, mở Kiro IDE để xem agent run.
+- **Kiro permission gating per-session** — kiro-cli không hỗ trợ interactive approve mid-session như Claude `canUseTool`. Trust list phải set trước (config `agents.kiro.trust_tools` hoặc `/allow` rồi restart session). Mở rộng trust list sau session restart sẽ apply lần kế.
 - **Mac sleep → bot offline** — chưa có VPS relay mode.
 - **Không có web UI** — quản qua Telegram + edit YAML là chính.
 
 Roadmap ngắn:
-- Kiro log-tail stream-back (stretch).
+- Kiro interactive permission via wrapper PTY (mid-session approve).
 - Linux/systemd support.
 - VPS relay mode cho 24/7.
 - Cursor / Codex adapter qua interface chung.
