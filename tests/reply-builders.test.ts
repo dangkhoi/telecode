@@ -128,15 +128,24 @@ describe('buildSessionList', () => {
     expect(payload.text).toBe(expected);
 
     const rows = payload.reply_markup.inline_keyboard;
-    // 3 switch buttons + 1 new-session row
+    // 3 session rows (switch + 🗑 close per row) + 1 new-session row
     expect(rows).toHaveLength(4);
+    expect(rows[0]).toHaveLength(2);
     expect(rows[0]![0]).toMatchObject({
       text: 'refactor-auth',
       callback_data: `session:switch:${sessions[0]!.id}`,
     });
+    expect(rows[0]![1]).toMatchObject({
+      text: '🗑',
+      callback_data: `session:close:${sessions[0]!.id}`,
+    });
     expect(rows[1]![0]).toMatchObject({
       text: 'debug-api',
       callback_data: `session:switch:${sessions[1]!.id}`,
+    });
+    expect(rows[1]![1]).toMatchObject({
+      text: '🗑',
+      callback_data: `session:close:${sessions[1]!.id}`,
     });
     expect(rows[2]![0]).toMatchObject({
       text: 'mobile-ui',
@@ -159,20 +168,24 @@ describe('buildSessionList', () => {
     ], NOW);
 
     const rows = payload.reply_markup.inline_keyboard;
-    // 1 switch + new-session + 2 extra = 4 rows
+    // 1 session row ([label] + [🗑]) + new-session + 2 extra = 4 rows
     expect(rows).toHaveLength(4);
+    expect(rows[0]).toHaveLength(2); // switch + close
+    expect(rows[0]![1]).toMatchObject({ text: '🗑' });
     expect(rows[2]![0]).toMatchObject({ text: '🔁 Resume' });
     expect(rows[3]).toHaveLength(2);
     expect(rows[3]![1]).toMatchObject({ text: '🛑 Stop' });
   });
 
-  it('keeps session:switch callback_data well under Telegram 64-byte limit', () => {
+  it('keeps session:switch + session:close callback_data well under Telegram 64-byte limit', () => {
     const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'; // 36-char UUID v4
     const sessions = [mkSession(id, 'long-label-name', 'claude', 1_000)];
     const payload = buildSessionList(sessions, id, [], NOW);
     const rows = payload.reply_markup.inline_keyboard;
-    const data = (rows[0]![0] as { callback_data: string }).callback_data;
-    expect(Buffer.byteLength(data, 'utf8')).toBeLessThan(64);
+    const switchData = (rows[0]![0] as { callback_data: string }).callback_data;
+    const closeData = (rows[0]![1] as { callback_data: string }).callback_data;
+    expect(Buffer.byteLength(switchData, 'utf8')).toBeLessThan(64);
+    expect(Buffer.byteLength(closeData, 'utf8')).toBeLessThan(64);
   });
 });
 

@@ -104,9 +104,9 @@ export function relativeTime(ts: number, now: number = Date.now()): string {
  *   labels align visually.
  *
  * Inline keyboard:
- * - 1 button per session — `[label]` → `session:switch:<full-uuid>`
- *   (UUID 36 chars + `session:switch:` 15 = 51 bytes, well under the 64-byte
- *   callback_data limit, so no truncation/collision risk.)
+ * - 2 buttons per session — `[label]` → `session:switch:<full-uuid>` and
+ *   `[🗑]` → `session:close:<full-uuid>`. Both callbacks are well under the
+ *   64-byte Telegram limit (`session:close:` 14 + UUID 36 = 50 bytes).
  * - Trailing row: `[➕ New session]` → `wizard:new-start`.
  * - `extraButtons` rows appended after the new-session row (T3 hook).
  *
@@ -132,7 +132,8 @@ export function buildSessionList(
   let first = true;
   for (const s of sessions) {
     if (!first) kb.row();
-    kb.text(s.label, `session:switch:${s.id}`);
+    kb.text(s.label, `session:switch:${s.id}`)
+      .text('🗑', `session:close:${s.id}`);
     first = false;
   }
   if (!first) kb.row();

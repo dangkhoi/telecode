@@ -373,9 +373,11 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng li
 | **Top-level (slash menu)** | |
 | `/start` | Welcome + active session info + re-issue persistent reply keyboard. |
 | `/new` | Wizard tạo session (agent → project → label). |
-| `/sessions` | Enhanced list — active marker `●`, agent 🤖/⚡, last activity. Tap = switch. |
+| `/sessions` | Enhanced list — active marker `●`, agent 🤖/⚡, last activity. Mỗi dòng có nút `[label]` (switch) + `[🗑]` (close). |
 | `/projects` | Inline picker, 1 nút per project = tên project, active prefix `●`. Pagination >8. |
 | `/status` | Active session, agent, project, last 5 tool calls. |
+| `/clear` | Clear context của session active (wipe sdk_session_id + transcript). Label giữ nguyên, gõ prompt mới là fresh. |
+| `/handoff` | Agent self-summarize context (5–15 dòng) → wipe context → inject summary làm preamble cho prompt kế tiếp (1-shot). Dùng khi context window đầy nhưng muốn giữ task. |
 | `/stop` | Interrupt task đang chạy. |
 | `/screenshot` | Chụp desktop gửi về (cần Screen Recording perm). |
 | `/help` | Hướng dẫn nhanh — list 6 nút keyboard + slash commands. |
@@ -384,8 +386,8 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng li
 | `/session list` | List sessions + inline keyboard switch (cũ, format ngắn gọn). |
 | `/session switch <label>` | Đổi active session + show 3 dòng context cuối. |
 | `/session rename <new-label>` | Đổi tên session active. |
-| `/session close [label]` | Đóng session (mặc định = active). |
-| `/session reset` | Giữ label, wipe resume id. |
+| `/session close [label]` | Đóng session (mặc định = active). Hoặc tap nút `[🗑]` trong `/sessions`. |
+| `/session clear` | Clear context (alias của top-level `/clear`). `/session reset` là legacy alias. |
 | **Project** | |
 | `/add <path> [name]` | Register path làm project. |
 | `/cd <name\|path>` | Đổi project cho session active. |
@@ -394,6 +396,31 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng li
 | `/allow <pattern>` | Append pattern vào policy allow. |
 | `/deny <pattern>` | Append pattern vào policy deny. |
 | `<plain text>` | Dispatch vào active session. |
+
+### Session lifecycle — clear / handoff / close
+
+3 hành động AI-agentic để quản context window khi làm việc lâu trong 1 session:
+
+| Lệnh | Khi nào dùng | Hiệu ứng |
+|---|---|---|
+| **`/clear`** | Context cũ không còn liên quan, muốn fresh start nhưng giữ session + label | Wipe `sdk_session_id` + `transcript_tail`. Lần prompt tiếp theo = session mới hoàn toàn (claude tạo resume id mới). |
+| **`/handoff`** | Context window sắp đầy, nhưng muốn giữ task — cần tóm tắt + tiếp tục | (1) Agent self-summarize 5–15 dòng (2) Save summary vào DB (3) Wipe context (4) Prompt KẾ TIẾP tự inject summary làm preamble — 1-shot, không lặp. |
+| **`/session close`** hoặc nút `[🗑]` | Xong việc với session này, không cần nữa | Interrupt task đang chạy + mark closed + discard buffer. Session ẩn khỏi `/sessions` (vẫn còn trong DB với `status='closed'`). |
+
+**Flow `/handoff` chi tiết**:
+```
+You> /handoff
+Bot> 🤝 [refactor-auth] requesting handoff summary từ agent…
+Agent> "We're refactoring src/auth.ts. Done: extracted validateToken into
+        separate file. Next: write unit tests for the new validator..."
+Bot> [refactor-auth] 🤝 handoff complete — 387 chars saved.
+     Context window đã clear. Gõ prompt tiếp theo, summary sẽ inject làm preamble (1-shot).
+
+You> tiếp tục viết unit test
+Bot> 📥 [refactor-auth] inject handoff context (387 chars) vào prompt — sẽ chỉ chạy 1 lần.
+     [refactor-auth] dispatching…
+Agent> [resumes with summary + new prompt, in fresh context window]
+```
 
 ### Reply keyboard (6 nút persistent)
 

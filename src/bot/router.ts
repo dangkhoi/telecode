@@ -289,6 +289,44 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     }
   };
 
+  // `session:close:<id>` — inline [🗑] button from /sessions list. Mirrors the
+  // legacy `/session close <label>` subcommand: interrupt running task,
+  // mark status='closed', discard the RAM output buffer, clear active if it
+  // was this session.
+  const closeSessionHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const id = payload;
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    const row = deps.store.getSession(id);
+    if (!row || row.chat_id !== chatId) {
+      await ctx.answerCallbackQuery({ text: 'not found' });
+      return;
+    }
+    deps.manager.interrupt(id);
+    deps.store.updateSession(id, { status: 'closed' });
+    deps.manager.discardBuffer(id);
+    const st = deps.store.getChatState(chatId);
+    if (st.active_session_id === id) {
+      deps.store.setActiveSession(chatId, null);
+    }
+    await ctx.answerCallbackQuery({ text: `🗑 closed ${row.label}` });
+    // Strip the inline keyboard from the /sessions message so the just-closed
+    // row's button can't be tapped again (defensive — taps would hit the
+    // not-found branch anyway, but cleaner UX).
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+    } catch {
+      /* message may be too old to edit — ignore */
+    }
+    await ctx.reply(`🗑 closed [${row.label}]`);
+  };
+
   // Wizard new-session entry from inline [➕ New session] taps. Acknowledges
   // the spinner then defers to `ctx.conversation.enter('newSession')` so the
   // same code path runs as `/new`. The conversations plugin handles the
@@ -328,6 +366,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     .on('apv', 'deny', (ctx, payload) => resolveApproval(ctx, payload, 'deny'))
     // New ns used by reply-builders / B1+ inline buttons.
     .on('session', 'switch', switchSessionHandler)
+    .on('session', 'close', closeSessionHandler)
     // Backward-compat: legacy `ses:switch:<id>` from `sessionPickKeyboard`
     // (still emitted by `/session list`). Same handler closure.
     .on('ses', 'switch', switchSessionHandler)

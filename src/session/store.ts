@@ -26,6 +26,12 @@ export interface SessionRow {
   updated_at: number;
   last_message: string | null;
   transcript_tail: string;
+  /**
+   * Set by `/handoff`: a self-generated summary that should be injected once
+   * into the next plain-text dispatch (then cleared). `null` means no pending
+   * handoff context. See commands/index.ts plain-text handler.
+   */
+  handoff_context: string | null;
 }
 
 export interface ToolLogRow {
@@ -58,6 +64,17 @@ export class SessionStore {
       schemaSql = readFileSync(`${here}/../../src/session/schema.sql`, 'utf8');
     }
     this.db.exec(schemaSql);
+
+    // ---- one-time idempotent migrations ----
+    // SQLite CREATE TABLE IF NOT EXISTS skips the table entirely on
+    // upgrade, so adding columns to an existing schema needs PRAGMA-guarded
+    // ALTER. Add new columns here as the schema evolves; ALTER TABLE ADD
+    // COLUMN errors if the column already exists, so we probe first.
+    const cols = this.db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+    const colNames = new Set(cols.map((c) => c.name));
+    if (!colNames.has('handoff_context')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN handoff_context TEXT`);
+    }
   }
 
   // ---------- Projects ----------
@@ -84,7 +101,7 @@ export class SessionStore {
   }
 
   // ---------- Sessions ----------
-  createSession(row: Omit<SessionRow, 'created_at' | 'updated_at' | 'transcript_tail' | 'last_message'> & {
+  createSession(row: Omit<SessionRow, 'created_at' | 'updated_at' | 'transcript_tail' | 'last_message' | 'handoff_context'> & {
     transcript_tail?: string;
     last_message?: string | null;
   }): SessionRow {
@@ -123,7 +140,7 @@ export class SessionStore {
       : `SELECT * FROM sessions WHERE chat_id = ? AND status != 'closed' ORDER BY updated_at DESC`;
     return this.db.prepare(sql).all(chatId) as SessionRow[];
   }
-  updateSession(id: string, patch: Partial<Pick<SessionRow, 'status' | 'sdk_session_id' | 'last_message' | 'transcript_tail' | 'label' | 'project_id'>>): void {
+  updateSession(id: string, patch: Partial<Pick<SessionRow, 'status' | 'sdk_session_id' | 'last_message' | 'transcript_tail' | 'label' | 'project_id' | 'handoff_context'>>): void {
     const fields: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) {

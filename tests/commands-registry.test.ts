@@ -12,8 +12,8 @@ import {
 } from '../src/bot/keyboard-actions.js';
 
 describe('commands-registry: COMMANDS', () => {
-  it('exports exactly 8 entries', () => {
-    expect(COMMANDS).toHaveLength(8);
+  it('exports exactly 10 entries', () => {
+    expect(COMMANDS).toHaveLength(10);
   });
 
   it('each entry has non-empty command + description', () => {
@@ -39,6 +39,8 @@ describe('commands-registry: COMMANDS', () => {
       'sessions',
       'projects',
       'status',
+      'clear',
+      'handoff',
       'stop',
       'screenshot',
       'help',

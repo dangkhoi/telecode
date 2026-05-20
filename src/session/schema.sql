@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   created_at      INTEGER NOT NULL,
   updated_at      INTEGER NOT NULL,
   last_message    TEXT,
-  transcript_tail TEXT DEFAULT ''              -- newline-joined preview
+  transcript_tail TEXT DEFAULT '',             -- newline-joined preview
+  handoff_context TEXT                          -- /handoff summary; injected once into next prompt then cleared
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_chat_label
   ON sessions(chat_id, label) WHERE status != 'closed';

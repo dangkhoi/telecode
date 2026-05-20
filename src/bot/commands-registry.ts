@@ -12,9 +12,11 @@ import type { BotCommand } from 'grammy/types';
 export const COMMANDS: readonly BotCommand[] = [
   { command: 'start', description: 'Welcome + list session' },
   { command: 'new', description: 'Tạo session mới (wizard)' },
-  { command: 'sessions', description: 'List + switch session' },
+  { command: 'sessions', description: 'List + switch + close session' },
   { command: 'projects', description: 'List + chọn project' },
   { command: 'status', description: 'Trạng thái session active' },
+  { command: 'clear', description: 'Clear context của session active' },
+  { command: 'handoff', description: 'Summary context → clear → inject vào prompt kế tiếp' },
   { command: 'stop', description: 'Dừng task đang chạy' },
   { command: 'screenshot', description: 'Chụp desktop Mac' },
   { command: 'help', description: 'Hướng dẫn nhanh' },

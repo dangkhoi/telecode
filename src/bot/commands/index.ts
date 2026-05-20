@@ -186,18 +186,137 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         await ctx.reply(`🗑 closed [${target.label}]`);
         break;
       }
+      // `clear` is the AI-agentic terminology — wipes the agent's context
+      // (sdk resume id + transcript tail) so the next prompt starts fresh
+      // while keeping the session row + label intact. `reset` is kept as a
+      // legacy alias (Telecode v0.4–v0.8 used that name).
+      case 'clear':
       case 'reset': {
         const cur = activeSession(ctx, store);
         if (!cur) return ctx.reply('no active session');
         store.updateSession(cur.id, { sdk_session_id: null, transcript_tail: '' });
-        await ctx.reply(`🔄 reset [${cur.label}]`);
+        await ctx.reply(`🧹 cleared [${cur.label}] — context wiped, gõ prompt mới`);
         break;
       }
       default:
         await ctx.reply(
-          'session subcommands: new <agent> <label> [path] | list | switch <label> | rename <label> | close [label] | reset',
+          'session subcommands: new <agent> <label> [path] | list | switch <label> | rename <label> | close [label] | clear',
         );
     }
+  });
+
+  // Top-level `/clear` — shortcut for `/session clear` on the active session.
+  // AI-agentic muscle memory: most LLM CLIs use "/clear" to drop context.
+  bot.command('clear', async (ctx) => {
+    const cur = activeSession(ctx, store);
+    if (!cur) return ctx.reply('no active session');
+    store.updateSession(cur.id, { sdk_session_id: null, transcript_tail: '' });
+    await ctx.reply(`🧹 cleared [${cur.label}] — context wiped, gõ prompt mới`);
+  });
+
+  // ----- /handoff — AI-agentic context handoff -----
+  // 1. Ask the agent to self-summarize current context (5–15 lines).
+  // 2. Capture the summary text via the dispatch's `done` event.
+  // 3. Store summary in sessions.handoff_context, wipe sdk_session_id +
+  //    transcript_tail (clear context).
+  // 4. The NEXT plain-text dispatch detects handoff_context, prepends it as
+  //    preamble to the user prompt, then clears it (1-shot).
+  //
+  // Net effect: session continues with fresh context window but carries
+  // forward a compact AI-curated summary instead of full transcript.
+  const HANDOFF_PROMPT =
+    'Tóm tắt context của session hiện tại (5–15 dòng): chúng ta đang làm gì, ' +
+    'đã đi đến đâu, các file/module/lệnh quan trọng đã đụng vào, và bước tiếp ' +
+    'theo. Mục đích: dùng làm starting context cho 1 instance mới (sau khi ' +
+    'clear context window). Output thuần text, không markdown nặng, không list ' +
+    'dài; viết như note ngắn cho chính mình.';
+
+  bot.command('handoff', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const cur = activeSession(ctx, store);
+    if (!cur) return ctx.reply('no active session — /new để tạo');
+    if (manager.isBusy(cur.id)) {
+      return ctx.reply(
+        `[${cur.label}] session đang busy — /stop xong rồi /handoff lại.`,
+      );
+    }
+    if (!cur.sdk_session_id) {
+      return ctx.reply(
+        `[${cur.label}] chưa có resume id (session fresh, chưa chạy prompt nào) — không có context để handoff.`,
+      );
+    }
+
+    const projPath = projectPathOf(cur, store, process.cwd());
+    const notifier = notifierFor(chatId);
+    const labelPrefix = `[${cur.label}] `;
+    const summaryChunks: string[] = [];
+
+    await ctx.reply(
+      `🤝 [${cur.label}] requesting handoff summary từ agent…\n` +
+        `Khi xong, context sẽ clear + summary lưu cho prompt kế tiếp.`,
+      { disable_notification: true },
+    );
+
+    void manager
+      .dispatch({
+        sessionId: cur.id,
+        sessionLabel: cur.label,
+        chatId,
+        cwd: projPath,
+        agent: cur.agent,
+        resumeId: cur.sdk_session_id,
+        prompt: HANDOFF_PROMPT,
+        onEvent: (e) => {
+          // Stream the summary live to chat so user can see what got captured.
+          // Per-session gating still applies — if session went background mid
+          // way, output goes to buffer like normal dispatches.
+          const activeId = store.getChatState(chatId).active_session_id;
+          const isActive = cur.id === activeId;
+
+          if (e.type === 'text') {
+            summaryChunks.push(e.text);
+            if (isActive) {
+              notifier.appendStream(`s:${cur.id}`, e.text, {
+                prefix: labelPrefix,
+                silent: true,
+              });
+            }
+            // (deliberately NOT appendTranscript — we're about to wipe it)
+          } else if (e.type === 'tool_use') {
+            // Agent shouldn't tool-use for a summarize prompt, but if it does
+            // we just ignore (no-op) — we only want the text.
+          } else if (e.type === 'error') {
+            void notifier.sendPlain(
+              `${labelPrefix}❌ handoff failed: ${e.error}\n` +
+                `Context KHÔNG bị clear (an toàn).`,
+            );
+          } else if (e.type === 'done') {
+            const summary = summaryChunks.join('').trim();
+            if (!summary) {
+              void notifier.sendPlain(
+                `${labelPrefix}⚠️ handoff: agent trả về empty summary, không clear context.`,
+              );
+              return;
+            }
+            // Save summary, wipe context. Keep label + agent + project.
+            store.updateSession(cur.id, {
+              handoff_context: summary,
+              sdk_session_id: null,
+              transcript_tail: '',
+            });
+            // Also close any open stream so next prompt starts fresh bubble.
+            void notifier.closeStream(`s:${cur.id}`).then(() =>
+              notifier.sendPlain(
+                `${labelPrefix}🤝 handoff complete — ${summary.length} chars saved.\n` +
+                  `Context window đã clear. Gõ prompt tiếp theo, summary sẽ inject làm preamble (1-shot).`,
+              ),
+            );
+          }
+        },
+      })
+      .catch((err: unknown) => {
+        logger.error({ err: String(err) }, 'handoff dispatch crash');
+      });
   });
 
   // ----- /projects — inline picker with pagination -----
@@ -345,6 +464,24 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const notifier = notifierFor(chatId);
     const streamKey = `s:${cur.id}`;
     const labelPrefix = `[${cur.label}] `;
+
+    // `/handoff` may have written a self-summary into the session; we inject
+    // it ONCE as a preamble to the next user prompt, then clear it. This is
+    // the "start tiếp session bằng summary context vừa handoff" half of the
+    // handoff loop — the summarize+clear half lives in the `/handoff` command
+    // handler below.
+    let effectivePrompt = text;
+    if (cur.handoff_context) {
+      effectivePrompt =
+        `Context từ session trước (handoff summary):\n${cur.handoff_context}\n\n` +
+        `User prompt mới:\n${text}`;
+      store.updateSession(cur.id, { handoff_context: null });
+      await ctx.reply(
+        `📥 [${cur.label}] inject handoff context (${cur.handoff_context.length} chars) vào prompt — sẽ chỉ chạy 1 lần.`,
+        { disable_notification: true },
+      );
+    }
+
     store.appendTranscript(cur.id, `> ${text.slice(0, 200)}`);
     await ctx.reply(`[${cur.label}] dispatching…`);
     // Fire-and-forget, await inside dispatch.
@@ -370,7 +507,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         cwd: projPath,
         agent: cur.agent,
         resumeId: cur.sdk_session_id,
-        prompt: text,
+        prompt: effectivePrompt,
         onEvent: (e) => {
           // Re-read on every event — active session can change during dispatch.
           const activeId = store.getChatState(chatId).active_session_id;
