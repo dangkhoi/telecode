@@ -186,7 +186,7 @@ Nếu không thấy → xem [Troubleshooting](#troubleshooting).
 
 1. Trong Telegram, search bot của bạn theo username (vd `@khoa_telecode_bot`), bấm **Start**.
 2. Gửi `/start`. Bot reply welcome + show **persistent reply keyboard** (6 nút phía dưới ô gõ: 📋 Sessions, 📁 Projects, 📊 Status, 🛑 Stop, 📸 Screen, ❓ Help). Cạnh paperclip có thêm nút **Menu** — bấm vào hiện đủ 8 slash command. Gõ `/` cũng ra cùng menu.
-3. Gửi `/projects` (hoặc tap nút 📁 Projects). Bot list tất cả project nó scan được từ `~/Documents/workspaces/`, mỗi project có 2 nút inline `[📍 Switch] [➕ New]`. Pagination tự bật khi >8 project.
+3. Gửi `/projects` (hoặc tap nút 📁 Projects). Bot list tất cả project nó scan được từ `~/Documents/workspaces/`, mỗi project là 1 nút inline có **tên project**; tap = set project đó làm active. Project hiện đang active có prefix `●` (vd `● telecode`). Pagination tự bật khi >8 project.
 4. Tạo session bằng **wizard** — gõ `/new`. Bot dẫn 3 bước inline:
    1. Chọn agent → `[🤖 Claude] [⚡ Kiro] [✖ Cancel]`
    2. Chọn project → inline list (paginate 8/page nếu nhiều)
@@ -218,7 +218,7 @@ Cách nhanh — gõ `/new` (hoặc tap `[➕ New session]` cuối list `/session
 2. Pick project: inline list (pagination khi >8); cũng có `[← Back] [✖ Cancel]`
 3. Gõ label: `/^[a-zA-Z0-9_-]{1,40}$/` — bot reject + xin lại nếu sai format.
 
-Khi đã active 1 project (qua `/projects` → Switch hoặc `/cd`), step 2 có thể skip bằng cách vào wizard từ `[➕ New]` cạnh project — wizard sẽ pre-fill project đó và nhảy thẳng tới step 3.
+Muốn tạo session cho 1 project cụ thể? Vào wizard `/new` rồi pick project ở step 2 — đó là single source of truth cho luồng tạo session.
 
 Legacy syntax vẫn được hỗ trợ — nhanh hơn nếu nhớ rõ path:
 
@@ -374,7 +374,7 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng li
 | `/start` | Welcome + active session info + re-issue persistent reply keyboard. |
 | `/new` | Wizard tạo session (agent → project → label). |
 | `/sessions` | Enhanced list — active marker `●`, agent 🤖/⚡, last activity. Tap = switch. |
-| `/projects` | Inline picker `[📍 Switch] [➕ New]` per project, pagination >8. |
+| `/projects` | Inline picker, 1 nút per project = tên project, active prefix `●`. Pagination >8. |
 | `/status` | Active session, agent, project, last 5 tool calls. |
 | `/stop` | Interrupt task đang chạy. |
 | `/screenshot` | Chụp desktop gửi về (cần Screen Recording perm). |
@@ -417,7 +417,7 @@ Multi-step inline, mỗi step có nút Cancel / Back, callback data namespaced `
 | 2. Project | 1 nút / project, `[← Prev] [page x/y] [Next →]` khi >8, `[← Back] [✖ Cancel]` | Project phải tồn tại + còn registered. |
 | 3. Label | Plain text reply | `/^[a-zA-Z0-9_-]{1,40}$/`. Reject + xin lại nếu sai. |
 
-Vào wizard từ project picker (`[➕ New]` cạnh project) sẽ pre-fill step 2 và nhảy thẳng step 3. Conversation state persist trong SQLite (`conversations` table) — restart daemon giữa wizard không mất step.
+Conversation state persist trong SQLite (`conversations` table) — restart daemon giữa wizard không mất step.
 
 ---
 
