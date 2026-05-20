@@ -50,3 +50,12 @@ CREATE TABLE IF NOT EXISTS chat_state (
   active_session_id TEXT,
   active_project_id INTEGER
 );
+
+-- Persisted state for the @grammyjs/conversations plugin (v0.7 wizards).
+-- key is plugin-generated (e.g. "conversation-<chatId>"); data is JSON-encoded
+-- VersionedState. Updated_at is a Date.now() ms timestamp for debugging/janitor.
+CREATE TABLE IF NOT EXISTS conversation_state (
+  key        TEXT PRIMARY KEY,
+  data       TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);

@@ -1,4 +1,4 @@
-import type { Bot, Context } from 'grammy';
+import type { Bot } from 'grammy';
 import { execa } from 'execa';
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
@@ -12,6 +12,14 @@ import type { Notifier } from '../notifier.js';
 import { expandHome } from '../../util/paths.js';
 import { scrubSecrets } from '../../util/scrub.js';
 import { sessionPickKeyboard } from '../keyboards.js';
+import {
+  buildSessionList,
+  buildProjectList,
+  buildPersistentKeyboard,
+  splitCatchUp,
+  type SessionListItem,
+  type ProjectListItem,
+} from '../reply-builders.js';
 import { logger } from '../../util/logger.js';
 
 export interface CommandDeps {
@@ -23,7 +31,12 @@ export interface CommandDeps {
   notifierFor: (chatId: number) => Notifier;
 }
 
-function activeSession(ctx: Context, store: SessionStore): SessionRow | null {
+// Loosely-typed ctx so callers from Bot<any> (with conversation flavor) pass
+// through without casting; we only read `ctx.chat?.id`.
+function activeSession(
+  ctx: { chat?: { id?: number } },
+  store: SessionStore,
+): SessionRow | null {
   const chatId = ctx.chat?.id;
   if (!chatId) return null;
   const st = store.getChatState(chatId);
@@ -41,7 +54,13 @@ function projectPathOf(session: SessionRow, store: SessionStore, fallback: strin
   return fallback;
 }
 
-export function registerCommands(bot: Bot, deps: CommandDeps): void {
+// `bot` is typed loosely as `Bot<any>` because router.ts upgrades the context
+// flavor to `BotContext = ConversationFlavor<Context>` once the @grammyjs/
+// conversations plugin is installed. `Bot<C>` is invariant in `C` in grammY,
+// so this is the simplest way to keep `registerCommands` agnostic to the
+// outside flavor while still using the bare Context APIs inside.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   const { store, manager, policy, config, notifierFor } = deps;
 
   bot.command('start', async (ctx) => {
@@ -56,7 +75,38 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
       '',
       'Commands: `/session`, `/projects`, `/cd`, `/stop`, `/status`, `/allow`, `/deny`, `/screenshot`',
     ];
-    await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    // Send the persistent reply keyboard alongside the welcome text. Telegram
+    // keeps the keyboard visible across subsequent messages until explicitly
+    // removed — re-issuing on every `/start` is idempotent and gives users a
+    // reliable way to restore the keyboard if a client briefly cleared it.
+    await ctx.reply(lines.join('\n'), {
+      parse_mode: 'Markdown',
+      reply_markup: buildPersistentKeyboard(),
+    });
+  });
+
+  // ----- /sessions (B1) — enhanced list with active marker + switch buttons -----
+  // Additive to the legacy `/session list` subcommand below; surfaces the new
+  // reply-builders payload so users get inline switch buttons + a
+  // [➕ New session] entry point. See plan §5.3 / SDD §B1.
+  bot.command('sessions', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    // listSessions(chatId) already filters out status='closed' by default —
+    // matches the §5.3 spec ("only open sessions in the picker").
+    const rows = store.listSessions(chatId);
+    const activeId = store.getChatState(chatId).active_session_id;
+    const items: SessionListItem[] = rows.map((r) => ({
+      id: r.id,
+      label: r.label,
+      agent: r.agent,
+      updatedAt: r.updated_at,
+      status: r.status,
+    }));
+    const payload = buildSessionList(items, activeId);
+    await ctx.reply(payload.text, {
+      reply_markup: payload.reply_markup,
+      ...(payload.parse_mode ? { parse_mode: payload.parse_mode } : {}),
+    });
   });
 
   // ----- /session ... -----
@@ -128,6 +178,9 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         if (!target) return ctx.reply('no session');
         manager.interrupt(target.id);
         store.updateSession(target.id, { status: 'closed' });
+        // v0.8 P2: drop the per-session output buffer so a long-lived daemon
+        // doesn't accumulate buffers for sessions the user has dismissed.
+        manager.discardBuffer(target.id);
         const st = store.getChatState(chatId);
         if (st.active_session_id === target.id) store.setActiveSession(chatId, null);
         await ctx.reply(`🗑 closed [${target.label}]`);
@@ -147,11 +200,20 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
     }
   });
 
-  // ----- projects -----
+  // ----- /projects (B2) — inline picker with pagination -----
+  // Uses buildProjectList (reply-builders) which emits one row per project
+  // with [📍 Switch] + [➕ New] buttons (callbacks `project:cd:<id>` and
+  // `project:new:<id>`) and a `[← Prev] [page x/y] [Next →]` nav row when
+  // total > 8. Callback handlers are wired in src/bot/router.ts. See plan
+  // §5.2 / SDD §B2.
   bot.command('projects', async (ctx) => {
     const rows = store.listProjects();
-    if (!rows.length) return ctx.reply('no projects — /add <path>');
-    await ctx.reply(rows.map((p) => `• \`${p.name}\` → ${p.path}`).join('\n'), { parse_mode: 'Markdown' });
+    const items: ProjectListItem[] = rows.map((p) => ({ id: p.id, name: p.name, path: p.path }));
+    const payload = buildProjectList(items, { page: 1 });
+    await ctx.reply(payload.text, {
+      reply_markup: payload.reply_markup,
+      ...(payload.parse_mode ? { parse_mode: payload.parse_mode } : {}),
+    });
   });
 
   bot.command('add', async (ctx) => {
@@ -278,9 +340,24 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
     const projPath = projectPathOf(cur, store, process.cwd());
     const notifier = notifierFor(chatId);
     const streamKey = `s:${cur.id}`;
+    const labelPrefix = `[${cur.label}] `;
     store.appendTranscript(cur.id, `> ${text.slice(0, 200)}`);
     await ctx.reply(`[${cur.label}] dispatching…`);
     // Fire-and-forget, await inside dispatch.
+    //
+    // v0.8 per-session gating (plan §2 behavior matrix):
+    //   - text / tool_use → if session is currently ACTIVE for its chat,
+    //     stream live (silent, with `[label] ` prefix). If BACKGROUND,
+    //     append to the per-session OutputBuffer instead. Buffer is flushed
+    //     either on /session switch or when a critical event (done/error)
+    //     arrives.
+    //   - error / done → ALWAYS live + NOTIFY. If background and buffer
+    //     has content, drain it first as a catch-up message so the user
+    //     sees the context that led to the failure/completion.
+    //
+    // Important: `cur` is captured at dispatch-start time, but the user can
+    // switch active session mid-dispatch. We MUST re-read activeId from the
+    // store on EVERY event — never cache it outside the callback.
     void manager
       .dispatch({
         sessionId: cur.id,
@@ -291,20 +368,59 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         resumeId: cur.sdk_session_id,
         prompt: text,
         onEvent: (e) => {
+          // Re-read on every event — active session can change during dispatch.
+          const activeId = store.getChatState(chatId).active_session_id;
+          const isActive = cur.id === activeId;
+
           if (e.type === 'text') {
-            notifier.appendStream(streamKey, e.text);
+            if (isActive) {
+              notifier.appendStream(streamKey, e.text, {
+                prefix: labelPrefix,
+                silent: true,
+              });
+            } else {
+              manager.appendBuffer(cur.id, {
+                type: 'text',
+                data: e.text,
+                createdAt: Date.now(),
+              });
+            }
             store.appendTranscript(cur.id, e.text.split('\n').slice(-1)[0] ?? '');
           } else if (e.type === 'tool_use') {
-            void notifier.sendPlain(`🔧 ${e.tool} — ${scrubSecrets(JSON.stringify(e.input).slice(0, 200))}`);
+            const line = `🔧 ${e.tool} — ${scrubSecrets(
+              JSON.stringify(e.input).slice(0, 200),
+            )}`;
+            if (isActive) {
+              void notifier.sendPlain(`${labelPrefix}${line}`, { silent: true });
+            } else {
+              manager.appendBuffer(cur.id, {
+                type: 'tool_use',
+                data: line,
+                createdAt: Date.now(),
+              });
+            }
           } else if (e.type === 'error') {
-            void notifier.sendPlain(`❌ ${e.error}`);
+            // ALWAYS live — critical event. Notify (not silent).
+            // Flush buffered context first so the user sees what led here.
+            void (async () => {
+              if (!isActive && manager.hasBuffered(cur.id)) {
+                await flushBufferedAsCatchUp(cur, manager, notifier);
+              }
+              await notifier.sendPlain(`${labelPrefix}❌ ${e.error}`);
+            })();
           } else if (e.type === 'done') {
-            void notifier.closeStream(streamKey).then(() => {
+            // ALWAYS live + notify. Close stream + flush buffer first so
+            // catch-up arrives before the ✅ marker.
+            void (async () => {
+              if (!isActive && manager.hasBuffered(cur.id)) {
+                await flushBufferedAsCatchUp(cur, manager, notifier);
+              }
+              await notifier.closeStream(streamKey);
               const tail = e.result
                 ? `✅ done${e.totalCostUsd ? ` · $${e.totalCostUsd.toFixed(4)}` : ''}`
                 : '✅ done';
-              void notifier.sendPlain(`[${cur.label}] ${tail}`);
-            });
+              await notifier.sendPlain(`${labelPrefix}${tail}`);
+            })();
           } else if (e.type === 'session') {
             // resume id already persisted in adapter
           }
@@ -314,4 +430,36 @@ export function registerCommands(bot: Bot, deps: CommandDeps): void {
         logger.error({ err: String(err) }, 'dispatch crash');
       });
   });
+}
+
+/**
+ * Drain a session's background OutputBuffer and send it as a single
+ * "catch-up" message. Used when a background session emits a critical
+ * event (done/error) or when the user switches to it — the user gets the
+ * recent context before the closing message.
+ *
+ * Catch-up itself is sent silent (`disable_notification:true`) because the
+ * subsequent critical message (or the act of switching) provides the
+ * notification cue.
+ *
+ * No-op when the buffer is empty — callers may invoke unconditionally.
+ */
+export async function flushBufferedAsCatchUp(
+  cur: SessionRow,
+  manager: SessionManager,
+  notifier: Notifier,
+): Promise<void> {
+  const events = manager.drainBuffer(cur.id);
+  if (events.length === 0) return;
+  const lines = events.map((e) => e.data);
+  const header = `[${cur.label}] 📥 catch-up (${events.length} events from background):`;
+  const contHeader = `[${cur.label}] 📥 catch-up (cont.):`;
+  // Per plan §7 risk register (P2): a 50KB buffer joined into one message
+  // would silently get clipped by Notifier (MAX_MSG_CHARS = 3500). Split at
+  // line boundaries so the user sees the whole catch-up across multiple
+  // silent messages.
+  const parts = splitCatchUp(header, contHeader, lines);
+  for (const part of parts) {
+    await notifier.sendPlain(part, { silent: true });
+  }
 }

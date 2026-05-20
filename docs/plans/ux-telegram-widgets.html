@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan — Telegram UX Widgets (T1 + T2)</title>
+<style>
+  :root {
+    --bg: #fbfbfd;
+    --surface: #ffffff;
+    --surface-alt: #f5f5f7;
+    --text: #1d1d1f;
+    --text-dim: #6e6e73;
+    --text-faint: #86868b;
+    --accent: #0071e3;
+    --accent-soft: rgba(0, 113, 227, 0.08);
+    --success: #1c7c54;
+    --warn: #b25000;
+    --danger: #c8102e;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px;
+    --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --surface: #1c1c1e;
+      --surface-alt: #2c2c2e;
+      --text: #f5f5f7;
+      --text-dim: #a1a1a6;
+      --text-faint: #6e6e73;
+      --accent: #2997ff;
+      --accent-soft: rgba(41, 151, 255, 0.12);
+      --success: #30d158;
+      --warn: #ff9f0a;
+      --danger: #ff453a;
+      --border: rgba(255, 255, 255, 0.1);
+      --border-strong: rgba(255, 255, 255, 0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+      "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 80px 32px 120px;
+  }
+  header.hero {
+    margin-bottom: 64px;
+  }
+  .eyebrow {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: 44px;
+    line-height: 1.1;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+    margin: 0 0 16px;
+  }
+  .lede {
+    font-size: 21px;
+    line-height: 1.45;
+    color: var(--text-dim);
+    margin: 0 0 24px;
+    max-width: 700px;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    font-size: 13px;
+    color: var(--text-faint);
+  }
+  .meta-row .pill {
+    background: var(--surface-alt);
+    padding: 6px 12px;
+    border-radius: 999px;
+    color: var(--text-dim);
+  }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 {
+    font-size: 30px;
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 72px 0 8px;
+  }
+  h2 + .section-sub {
+    color: var(--text-dim);
+    margin: 0 0 32px;
+    font-size: 17px;
+  }
+  h3 {
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 40px 0 12px;
+  }
+  h4 {
+    font-size: 15px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    margin: 32px 0 12px;
+  }
+  p { margin: 0 0 16px; }
+  ul, ol {
+    margin: 0 0 16px;
+    padding-left: 24px;
+  }
+  li { margin-bottom: 8px; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 14px;
+    background: var(--surface-alt);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: var(--text);
+  }
+  pre {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13.5px;
+    line-height: 1.55;
+    margin: 0 0 16px;
+  }
+  pre code {
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+  .card h3 { margin-top: 0; }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 720px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 34px; }
+    .lede { font-size: 18px; }
+    h2 { font-size: 24px; }
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0 0 24px;
+    font-size: 15px;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    font-weight: 600;
+    color: var(--text-dim);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--surface-alt);
+  }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: rgba(28, 124, 84, 0.12); color: var(--success); }
+  .badge-warn { background: rgba(178, 80, 0, 0.12); color: var(--warn); }
+  .badge-danger { background: rgba(200, 16, 46, 0.1); color: var(--danger); }
+  @media (prefers-color-scheme: dark) {
+    .badge-success { background: rgba(48, 209, 88, 0.16); }
+    .badge-warn { background: rgba(255, 159, 10, 0.16); }
+    .badge-danger { background: rgba(255, 69, 58, 0.16); }
+  }
+  .tldr {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-soft);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin: 32px 0 48px;
+  }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li {
+    padding-left: 28px;
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .checklist li::before {
+    content: "○";
+    position: absolute;
+    left: 0;
+    color: var(--text-faint);
+    font-weight: 700;
+  }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .toc {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    margin-bottom: 48px;
+  }
+  .toc h4 { margin-top: 0; }
+  .toc ol { margin: 0; padding-left: 22px; }
+  .toc a { color: var(--text-dim); text-decoration: none; }
+  .toc a:hover { color: var(--accent); }
+  hr {
+    border: none;
+    height: 1px;
+    background: var(--border);
+    margin: 64px 0;
+  }
+  .step {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+    margin-bottom: 16px;
+  }
+  .step .num {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+  }
+  .step .body { flex: 1; padding-top: 4px; }
+  .step .body strong { display: block; margin-bottom: 4px; }
+  .mock {
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px 20px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 13.5px;
+    margin: 12px 0;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+  .legend {
+    font-size: 13px;
+    color: var(--text-faint);
+    margin-top: -8px;
+    margin-bottom: 24px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Plan · Telecode v0.7</div>
+  <h1>Telegram UX Widgets</h1>
+  <p class="lede">Giảm gõ tay trên di động bằng cách khai thác đầy đủ widget của Telegram: slash menu, persistent reply keyboard, menu button, và wizard nhiều bước cho các command khó.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Author:</strong> koi</span>
+    <span class="pill"><strong>Date:</strong> 2026-05-20</span>
+    <span class="pill"><strong>Target:</strong> v0.7</span>
+    <span class="pill"><strong>Effort:</strong> 1.5–2 ngày</span>
+    <span class="pill"><strong>Status:</strong> <span class="badge badge-warn">Draft — pending review</span></span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p>User hiện phải gõ <code>/session new claude foo /path</code> + nhớ syntax glob policy + nhớ session label. Sprint này thay thế bằng widget Telegram native: 3 quick-wins tier-1 (slash menu, persistent keyboard, menu button) + 3 wizards tier-2 (new session, project picker, session switch enhanced). Build trên 3 shared module mới (<code>CallbackRouter</code>, <code>WizardState</code>, <code>ReplyBuilders</code>) để T3 sau này pure additive, không rework.</p>
+</div>
+
+<div class="toc">
+  <h4>Mục lục</h4>
+  <ol>
+    <li><a href="#goals">Mục tiêu &amp; Non-goals</a></li>
+    <li><a href="#tech">Tech verification (Context7)</a></li>
+    <li><a href="#arch">Architecture &amp; Shared infra</a></li>
+    <li><a href="#tier1">Tier 1 — Quick wins</a></li>
+    <li><a href="#tier2">Tier 2 — Wizards</a></li>
+    <li><a href="#files">File changes</a></li>
+    <li><a href="#dag">DAG execution plan</a></li>
+    <li><a href="#accept">Acceptance criteria</a></li>
+    <li><a href="#risks">Risk register</a></li>
+    <li><a href="#oos">Out of scope</a></li>
+  </ol>
+</div>
+
+<h2 id="goals">1. Mục tiêu &amp; Non-goals</h2>
+<p class="section-sub">Cái này làm để giải quyết gì, và quan trọng hơn — không làm cái gì.</p>
+
+<h3>Mục tiêu</h3>
+<ul>
+  <li><strong>Giảm gõ tay</strong>: 6 command thường dùng nhất chuyển từ "gõ slash + args" sang "tap nút".</li>
+  <li><strong>Discoverable</strong>: user mới chỉ cần tap menu hoặc keyboard để khám phá command — không cần đọc README.</li>
+  <li><strong>0 rework cho T3</strong>: bake sẵn <code>CallbackRouter</code>, <code>WizardState</code>, <code>ReplyBuilders</code>. T3 (follow-up suggestions, one-tap allow, dashboard) sẽ là pure additive.</li>
+  <li><strong>Persistent</strong>: reply keyboard luôn hiện (mode 2A) — quen tay như app native, không bật/tắt.</li>
+  <li><strong>Resume</strong>: nếu daemon restart giữa lúc user đang trong wizard, conversation state phải restore được (qua SQLite-backed storage).</li>
+</ul>
+
+<h3>Non-goals (NOT làm trong sprint này)</h3>
+<ul>
+  <li>❌ Telegram Web App (Tier 4) — cần HTTPS public, vi phạm single-user / no-public-port principle.</li>
+  <li>❌ One-tap "Allow always" trên approval message (Tier 3 #8) — defer.</li>
+  <li>❌ Live status dashboard với <code>editMessageText</code> loop (Tier 3 #9) — defer.</li>
+  <li>❌ Follow-up inline suggestions sau action (Tier 3 #7) — defer.</li>
+  <li>❌ Localization (i18n) — single-user, single-language (vi).</li>
+  <li>❌ Group chat support — vẫn single-user DM only.</li>
+</ul>
+
+<h2 id="tech">2. Tech verification (Context7)</h2>
+<p class="section-sub">Đã verify qua Context7 trước khi viết plan. Tất cả API dùng đều là latest non-deprecated pattern.</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Package</th>
+      <th>Current</th>
+      <th>Latest</th>
+      <th>API dùng</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>grammy</code></td>
+      <td>1.43.0</td>
+      <td>1.43.0</td>
+      <td><code>setMyCommands</code>, <code>Keyboard</code>, <code>InlineKeyboard</code>, <code>setChatMenuButton</code>, <code>bot.callbackQuery()</code></td>
+      <td><span class="badge badge-success">✅ Latest</span></td>
+    </tr>
+    <tr>
+      <td><code>@grammyjs/runner</code></td>
+      <td>2.0.3</td>
+      <td>2.0.3</td>
+      <td>(no change)</td>
+      <td><span class="badge badge-success">✅ Latest</span></td>
+    </tr>
+    <tr>
+      <td><code>@grammyjs/conversations</code></td>
+      <td>—</td>
+      <td>2.1.1</td>
+      <td><code>conversations()</code>, <code>createConversation()</code>, <code>conversation.form.select()</code>, <code>conversation.waitFor("callback_query:data")</code></td>
+      <td><span class="badge badge-accent">➕ New dep</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<h4>Decisions từ docs review</h4>
+<ul>
+  <li><strong>Skip <code>@grammyjs/commands</code> plugin</strong>: overkill cho single-user (chủ yếu giá trị ở localization + scoped admin commands). Dùng <code>bot.api.setMyCommands([...])</code> built-in.</li>
+  <li><strong>Conversations storage</strong>: dùng custom adapter trỏ vào <code>~/.telecode/state.db</code> (đã có better-sqlite3). Schema thêm 1 bảng <code>conversation_state(key TEXT PRIMARY KEY, data TEXT, updated_at INTEGER)</code>. Không thêm dep <code>@grammyjs/storage-file</code> hoặc redis.</li>
+  <li><strong>Conversation version</strong>: bắt đầu <code>version: 1</code>. Tăng nếu sau này thay đổi logic wizard (sẽ wipe state cũ — chấp nhận được vì user phải restart wizard, không mất dữ liệu thực).</li>
+  <li><strong>Callback data format</strong>: <code>ns:action:payload</code> — vd <code>session:switch:abc123</code>, <code>wizard:new:agent:claude</code>, <code>project:cd:proj_42</code>. <code>CallbackRouter</code> parse và dispatch theo <code>ns:action</code>, payload là phần còn lại. Giới hạn 64 bytes của Telegram callback_data — dùng project_id (uuid prefix 8 ký tự) thay vì full path.</li>
+</ul>
+
+<h2 id="arch">3. Architecture &amp; Shared infra</h2>
+<p class="section-sub">3 module mới phải build trong sprint này. T3 sau này reuse hoàn toàn — đây là chốt chặn không rework.</p>
+
+<div class="card">
+  <h3>3.1 <code>CallbackRouter</code> (src/telegram/callback-router.ts)</h3>
+  <p>Wrap <code>bot.callbackQuery()</code> thành dispatcher có namespace. Mỗi feature đăng ký handler qua <code>router.on(ns, action, handler)</code> thay vì <code>if/else</code> trên <code>ctx.callbackQuery.data</code>.</p>
+  <pre><code>// src/telegram/callback-router.ts
+export type CallbackHandler = (ctx: CallbackQueryContext&lt;BotContext&gt;, payload: string) =&gt; Promise&lt;void&gt;;
+
+export class CallbackRouter {
+  private handlers = new Map&lt;string, CallbackHandler&gt;();
+
+  on(ns: string, action: string, handler: CallbackHandler): this {
+    this.handlers.set(`${ns}:${action}`, handler);
+    return this;
+  }
+
+  attach(bot: Bot&lt;BotContext&gt;): void {
+    bot.on("callback_query:data", async (ctx) =&gt; {
+      const data = ctx.callbackQuery.data;
+      const [ns, action, ...rest] = data.split(":");
+      const handler = this.handlers.get(`${ns}:${action}`);
+      if (!handler) {
+        logger.warn({ data }, "callback_router: no handler");
+        await ctx.answerCallbackQuery();
+        return;
+      }
+      try {
+        await handler(ctx, rest.join(":"));
+      } catch (err) {
+        logger.error({ err, data }, "callback_router: handler failed");
+        await ctx.answerCallbackQuery({ text: "⚠️ Lỗi xử lý, thử lại sau", show_alert: true });
+      }
+    });
+  }
+}</code></pre>
+  <p><strong>T3 reuse</strong>: <code>router.on("approval", "allow-always", handler)</code> cho one-tap allow. <code>router.on("dashboard", "refresh", handler)</code> cho dashboard.</p>
+</div>
+
+<div class="card">
+  <h3>3.2 <code>WizardState</code> (qua @grammyjs/conversations + SQLite adapter)</h3>
+  <p>State machine multi-step được cung cấp bởi plugin <code>@grammyjs/conversations</code>. Ta wrap với SQLite storage adapter để persist qua restart.</p>
+  <pre><code>// src/telegram/conversation-storage.ts
+import type { StorageAdapter } from "@grammyjs/conversations";
+import type { Database } from "better-sqlite3";
+
+export function createSqliteConversationStorage(db: Database): StorageAdapter&lt;unknown&gt; {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS conversation_state (
+      key TEXT PRIMARY KEY,
+      data TEXT NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  const stmt = {
+    read: db.prepare("SELECT data FROM conversation_state WHERE key = ?"),
+    write: db.prepare("INSERT INTO conversation_state(key, data, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data, updated_at=excluded.updated_at"),
+    delete: db.prepare("DELETE FROM conversation_state WHERE key = ?"),
+  };
+  return {
+    read: (key) =&gt; {
+      const row = stmt.read.get(key) as { data: string } | undefined;
+      return row ? JSON.parse(row.data) : undefined;
+    },
+    write: (key, data) =&gt; {
+      stmt.write.run(key, JSON.stringify(data), Date.now());
+    },
+    delete: (key) =&gt; { stmt.delete.run(key); },
+  };
+}</code></pre>
+  <p><strong>T3 reuse</strong>: dashboard edit-flow, "rename session inline" v.v. có thể dùng conversation pattern tương tự, share cùng storage.</p>
+</div>
+
+<div class="card">
+  <h3>3.3 <code>ReplyBuilders</code> (src/telegram/reply-builders.ts)</h3>
+  <p>Tập hợp factory tạo <code>{ text, reply_markup }</code> tái sử dụng. Mỗi builder nhận thêm <code>extraButtons?: InlineKeyboardButton[][]</code> để T3 chèn nút follow-up mà không sửa logic.</p>
+  <pre><code>// src/telegram/reply-builders.ts
+export interface ReplyPayload {
+  text: string;
+  reply_markup: InlineKeyboard | Keyboard | { remove_keyboard: true };
+  parse_mode?: "Markdown" | "HTML";
+}
+
+export function buildSessionList(
+  sessions: Session[],
+  activeId: string | null,
+  extraButtons: InlineKeyboardButton[][] = [],
+): ReplyPayload { ... }
+
+export function buildProjectList(
+  projects: Project[],
+  extraButtons: InlineKeyboardButton[][] = [],
+): ReplyPayload { ... }
+
+export function buildPersistentKeyboard(): Keyboard { ... }
+export function buildMainMenuInline(): InlineKeyboard { ... }</code></pre>
+  <p><strong>T3 reuse</strong>: <code>buildApprovalPayload(approval, extraButtons: [[{text: "+ Allow always", callback_data: "approval:allow-always:..."}]])</code>.</p>
+</div>
+
+<h2 id="tier1">4. Tier 1 — Quick wins</h2>
+<p class="section-sub">Ship trước, không phụ thuộc wizard.</p>
+
+<h3>4.1 Slash command menu (<code>setMyCommands</code>)</h3>
+<p>Khi user gõ <code>/</code> trong chat, Telegram hiện list command với mô tả. Tap để insert.</p>
+<pre><code>// src/telegram/commands-registry.ts
+export const COMMANDS: BotCommand[] = [
+  { command: "start", description: "Welcome + list session" },
+  { command: "new", description: "Tạo session mới (wizard)" },
+  { command: "sessions", description: "List + switch session" },
+  { command: "projects", description: "List + chọn project" },
+  { command: "status", description: "Trạng thái session active" },
+  { command: "stop", description: "Dừng task đang chạy" },
+  { command: "screenshot", description: "Chụp desktop Mac" },
+  { command: "help", description: "Hướng dẫn nhanh" },
+];
+
+// Apply on boot
+await bot.api.setMyCommands(COMMANDS, { scope: { type: "all_private_chats" } });</code></pre>
+<p><strong>Note</strong>: <code>/session</code> namespace cũ giữ lại làm alias để backward-compat. New surface: <code>/new</code>, <code>/sessions</code> (số nhiều, không kèm <code>switch</code>).</p>
+
+<h3>4.2 Persistent reply keyboard</h3>
+<p>6 nút luôn hiện dưới ô gõ. User tap = bot nhận message text tương ứng, parse như command bình thường.</p>
+<pre><code>// src/telegram/reply-builders.ts
+export function buildPersistentKeyboard(): Keyboard {
+  return new Keyboard()
+    .text("📋 Sessions").text("📁 Projects").row()
+    .text("📊 Status").text("🛑 Stop").row()
+    .text("📸 Screen").text("❓ Help")
+    .resized()
+    .persistent();
+}</code></pre>
+<div class="mock">┌─────────────────────────────┐
+│ Bot reply nội dung ở đây... │
+│                             │
+├─────────────────────────────┤
+│ [📋 Sessions] [📁 Projects] │
+│ [📊 Status]   [🛑 Stop]     │
+│ [📸 Screen]   [❓ Help]     │
+├─────────────────────────────┤
+│ Type message...        🎤 ➤ │
+└─────────────────────────────┘</div>
+<p>Handler: bot match text <code>"📋 Sessions"</code> → dispatch <code>/sessions</code> logic. Map cố định trong <code>src/telegram/keyboard-actions.ts</code>.</p>
+<p><strong>Lưu ý</strong>: khi user vào wizard (multi-step input), keyboard tạm ẩn để tránh nhầm. Hoàn tất wizard → khôi phục.</p>
+
+<h3>4.3 Menu button</h3>
+<p>Nút "Menu" cạnh paperclip, mở list command từ <code>setMyCommands</code>.</p>
+<pre><code>await bot.api.setChatMenuButton({
+  menu_button: { type: "commands" },
+});</code></pre>
+<p>Apply 1 lần khi boot. User thấy nút "Menu" thay cho "/" — tap = mở list.</p>
+
+<h2 id="tier2">5. Tier 2 — Wizards</h2>
+<p class="section-sub">Thay thế gõ args bằng tap nhiều bước. Build trên shared infra ở §3.</p>
+
+<h3>5.1 Wizard <code>/new</code> session (Agent → Project → Label)</h3>
+
+<div class="step"><div class="num">1</div><div class="body">
+  <strong>Trigger</strong>
+  <p>User gõ <code>/new</code> hoặc tap menu. Bot vào conversation <code>newSession</code>.</p>
+</div></div>
+
+<div class="step"><div class="num">2</div><div class="body">
+  <strong>Choose agent</strong>
+  <p>Bot reply inline keyboard:</p>
+  <div class="mock">Tạo session mới — chọn agent:
+[🤖 Claude]  [⚡ Kiro]
+[✖ Cancel]</div>
+  <p>Callback data: <code>wizard:new-agent:claude</code> / <code>wizard:new-agent:kiro</code> / <code>wizard:new-cancel</code>.</p>
+</div></div>
+
+<div class="step"><div class="num">3</div><div class="body">
+  <strong>Choose project</strong>
+  <p>Sau khi tap agent, bot <code>editMessageText</code> show list project (đã register):</p>
+  <div class="mock">Agent: Claude ✓
+Chọn project:
+[📁 telecode]
+[📁 api-service]
+[📁 mobile-app]
+[← Back]  [✖ Cancel]</div>
+  <p>Callback: <code>wizard:new-project:&lt;project_id_short&gt;</code>. Phân trang nếu &gt;10 projects (next/prev buttons).</p>
+</div></div>
+
+<div class="step"><div class="num">4</div><div class="body">
+  <strong>Enter label</strong>
+  <p>Bot <code>editMessageText</code>:</p>
+  <div class="mock">Agent: Claude, Project: telecode ✓
+Nhập label cho session (vd: refactor-auth):</div>
+  <p>Conversation chờ <code>conversation.form.text()</code>. Validate: <code>/^[a-zA-Z0-9_-]{1,40}$/</code>. Sai → <code>otherwise: "Label chỉ chứa chữ-số-_-, tối đa 40 ký tự"</code>.</p>
+</div></div>
+
+<div class="step"><div class="num">5</div><div class="body">
+  <strong>Confirm + create</strong>
+  <p>Bot tạo session qua <code>SessionManager.create()</code> (gọi qua <code>conversation.external()</code>), reply:</p>
+  <div class="mock">✓ Session [refactor-auth] tạo OK
+Agent: Claude · Project: telecode
+
+Gõ prompt để bắt đầu, hoặc:
+[🔀 Switch khác]  [📋 Tail logs]</div>
+</div></div>
+
+<p><strong>Edge cases</strong>: user gõ command khác giữa wizard → conversation tự exit (default behavior plugin), thông báo "Wizard đã hủy, thử lại bằng /new". Daemon restart → conversation state restore từ SQLite, user tiếp tục được.</p>
+
+<h3>5.2 Project picker (<code>/projects</code> + <code>📁 Projects</code> button)</h3>
+<p>Tap <code>📁 Projects</code> → bot reply inline keyboard list project. Mỗi project có 2 action:</p>
+<div class="mock">📁 Projects (12):
+[telecode · /Users/koi/.../telecode]
+  ↳ [Switch active]  [New session here]
+[api-service · /Users/koi/.../api]
+  ↳ [Switch active]  [New session here]
+...</div>
+<p>Callback: <code>project:cd:&lt;id&gt;</code> (đổi project cho session active), <code>project:new:&lt;id&gt;</code> (vào wizard new với project đã pre-fill, skip step 3).</p>
+<p>Phân trang 8 project / page. Buttons <code>[← Prev]</code> <code>[Page 1/2]</code> <code>[Next →]</code> ở dưới.</p>
+
+<h3>5.3 Session switch enhanced (<code>/sessions</code>)</h3>
+<p>Cải tiến từ <code>/session list</code> hiện có. Show:</p>
+<ul>
+  <li>Active marker <code>●</code>.</li>
+  <li>Last activity (vd "2m ago", "1h ago").</li>
+  <li>Agent badge (🤖 / ⚡).</li>
+  <li>Tap = switch.</li>
+</ul>
+<div class="mock">📋 Sessions (3):
+[● refactor-auth · 🤖 · 2m ago]
+[  debug-api    · 🤖 · 1h ago]
+[  mobile-ui    · ⚡ · 3h ago]
+[+ New session]</div>
+<p>Callback: <code>session:switch:&lt;id&gt;</code>, <code>session:new</code> (vào wizard).</p>
+
+<h2 id="files">6. File changes</h2>
+<table>
+  <thead>
+    <tr><th>File</th><th>Status</th><th>Note</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>package.json</code></td><td><span class="badge badge-accent">edit</span></td><td>+<code>@grammyjs/conversations@^2.1.1</code></td></tr>
+    <tr><td><code>src/telegram/commands-registry.ts</code></td><td><span class="badge badge-success">new</span></td><td><code>COMMANDS</code> array + <code>applyCommandsAndMenu(bot)</code></td></tr>
+    <tr><td><code>src/telegram/callback-router.ts</code></td><td><span class="badge badge-success">new</span></td><td>Namespaced dispatcher (§3.1)</td></tr>
+    <tr><td><code>src/telegram/conversation-storage.ts</code></td><td><span class="badge badge-success">new</span></td><td>SQLite adapter (§3.2)</td></tr>
+    <tr><td><code>src/telegram/reply-builders.ts</code></td><td><span class="badge badge-success">new</span></td><td>Builder factory (§3.3)</td></tr>
+    <tr><td><code>src/telegram/keyboard-actions.ts</code></td><td><span class="badge badge-success">new</span></td><td>Map emoji-button text → command dispatch</td></tr>
+    <tr><td><code>src/telegram/wizards/new-session.ts</code></td><td><span class="badge badge-success">new</span></td><td>Conversation function cho wizard <code>/new</code> (§5.1)</td></tr>
+    <tr><td><code>src/telegram/handlers/sessions.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>Refactor <code>/sessions</code> dùng <code>buildSessionList</code> + router (§5.3)</td></tr>
+    <tr><td><code>src/telegram/handlers/projects.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>Project picker với inline + pagination (§5.2)</td></tr>
+    <tr><td><code>src/telegram/bot.ts</code> (or <code>index.ts</code>)</td><td><span class="badge badge-accent">edit</span></td><td>Wire <code>conversations()</code>, <code>createConversation(newSession)</code>, <code>router.attach()</code>, <code>applyCommandsAndMenu()</code></td></tr>
+    <tr><td><code>src/session/schema.sql</code></td><td><span class="badge badge-accent">edit</span></td><td>Thêm table <code>conversation_state</code> (idempotent CREATE)</td></tr>
+    <tr><td><code>tests/telegram/callback-router.spec.ts</code></td><td><span class="badge badge-success">new</span></td><td>Unit test router dispatch + error handling</td></tr>
+    <tr><td><code>tests/telegram/reply-builders.spec.ts</code></td><td><span class="badge badge-success">new</span></td><td>Snapshot keyboards, pagination, extraButtons merge</td></tr>
+    <tr><td><code>tests/telegram/wizards/new-session.spec.ts</code></td><td><span class="badge badge-success">new</span></td><td>Mock conversation context, full flow + cancel + invalid label</td></tr>
+    <tr><td><code>tests/telegram/conversation-storage.spec.ts</code></td><td><span class="badge badge-success">new</span></td><td>SQLite adapter read/write/delete + restart resume</td></tr>
+    <tr><td><code>docs/design/ux-telegram-widgets.html</code></td><td><span class="badge badge-success">new</span></td><td>SDD viết song song khi implement</td></tr>
+    <tr><td><code>README.md</code></td><td><span class="badge badge-accent">edit</span></td><td>Update §Daily workflow + §Bảng lệnh với UI mới</td></tr>
+  </tbody>
+</table>
+
+<h2 id="dag">7. DAG execution plan</h2>
+<p class="section-sub">Sub-agents chạy parallel theo phụ thuộc. SDD viết song song trong cùng DAG.</p>
+
+<h4>Phase A — Shared infra (parallel, không phụ thuộc nhau)</h4>
+<ol>
+  <li><strong>A1</strong>: <code>callback-router.ts</code> + test</li>
+  <li><strong>A2</strong>: <code>conversation-storage.ts</code> + test + schema migration</li>
+  <li><strong>A3</strong>: <code>reply-builders.ts</code> + test (skeleton, các builder cụ thể fill ở phase B)</li>
+  <li><strong>A4</strong>: <code>commands-registry.ts</code> + <code>keyboard-actions.ts</code></li>
+</ol>
+
+<h4>Phase B — Feature wiring (chạy sau A, parallel với nhau)</h4>
+<ol>
+  <li><strong>B1</strong> (depends A1, A3): refactor <code>/sessions</code> handler dùng router + builder (§5.3)</li>
+  <li><strong>B2</strong> (depends A1, A3): refactor <code>/projects</code> picker với pagination (§5.2)</li>
+  <li><strong>B3</strong> (depends A1, A2, A3): wizard <code>newSession</code> + test full flow (§5.1)</li>
+  <li><strong>B4</strong> (depends A4): boot wiring trong <code>bot.ts</code> — apply commands, menu button, install conversations plugin</li>
+</ol>
+
+<h4>Phase C — Consolidate</h4>
+<ol>
+  <li><strong>C1</strong>: run full test suite, manual smoke test (tap qua Telegram thật)</li>
+  <li><strong>C2</strong>: scope completeness check theo §8 acceptance criteria</li>
+  <li><strong>C3</strong>: senior review qua Opus 4.7 (với Context7 tech freshness check)</li>
+  <li><strong>C4</strong>: update SDD <code>docs/design/ux-telegram-widgets.html</code> với verification results</li>
+  <li><strong>C5</strong>: update <code>README.md</code> (bảng lệnh + workflow section)</li>
+</ol>
+
+<h2 id="accept">8. Acceptance criteria</h2>
+<ul class="checklist">
+  <li>Slash menu hiện đủ 8 command với mô tả tiếng Việt khi user gõ <code>/</code></li>
+  <li>Menu button "Menu" hiện cạnh paperclip, tap mở list command</li>
+  <li>6-button reply keyboard hiện persistent, mỗi tap dispatch đúng command tương ứng</li>
+  <li>Reply keyboard tự ẩn khi vào wizard, khôi phục sau khi exit</li>
+  <li><code>/new</code> wizard flow 3 step (agent → project → label) hoạt động end-to-end, tạo session thật trong DB</li>
+  <li>Wizard cancel button hoạt động ở mọi step</li>
+  <li>Wizard label validation từ chối input sai format (vd có space, &gt; 40 chars)</li>
+  <li>Daemon restart giữa wizard → state restore, user gõ tiếp được</li>
+  <li><code>/projects</code> picker show inline list, mỗi project có [Switch active] + [New session here], pagination &gt;8 projects</li>
+  <li><code>/sessions</code> show active marker ●, last activity, agent badge, tap switch</li>
+  <li><code>CallbackRouter</code> dispatch theo <code>ns:action</code>, có test unit cover unknown handler + error in handler</li>
+  <li><code>ReplyBuilders</code> chấp nhận <code>extraButtons</code> param, có test snapshot</li>
+  <li>Conversation storage table tạo idempotent (chạy nhiều lần không lỗi)</li>
+  <li>All tests pass (<code>npm test</code>) — không break test cũ</li>
+  <li>Backward compat: <code>/session new ...</code>, <code>/session switch ...</code> v.v. vẫn chạy được như trước</li>
+  <li>README updated với UI mới</li>
+  <li>SDD viết xong với verification section</li>
+  <li>Senior review (Opus 4.7) verdict APPROVED, 0 finding P0–P3 còn lại</li>
+</ul>
+
+<h2 id="risks">9. Risk register</h2>
+<table>
+  <thead>
+    <tr><th>Risk</th><th>Severity</th><th>Mitigation</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>callback_data</code> vượt 64 bytes (giới hạn Telegram)</td>
+      <td><span class="badge badge-warn">P2</span></td>
+      <td>Dùng id ngắn (uuid 8 chars), không nhét path. Test có 1 case verify length &lt; 64.</td>
+    </tr>
+    <tr>
+      <td>Conversation plugin phá flow command cũ</td>
+      <td><span class="badge badge-warn">P2</span></td>
+      <td>Conversation chỉ trigger qua <code>ctx.conversation.enter("newSession")</code> explicit. Command khác không bị intercept.</td>
+    </tr>
+    <tr>
+      <td>Reply keyboard text trùng nội dung user gõ thường ngày</td>
+      <td><span class="badge badge-warn">P2</span></td>
+      <td>Dùng emoji prefix <code>📋 Sessions</code> — user gõ tay "Sessions" không match. Match exact string trong handler.</td>
+    </tr>
+    <tr>
+      <td>Wizard state cũ trong DB không tương thích version mới sau update</td>
+      <td><span class="badge badge-warn">P2</span></td>
+      <td>Plugin có <code>version</code> param. Bump version → plugin tự discard state cũ. User chỉ mất state wizard dở dang.</td>
+    </tr>
+    <tr>
+      <td>Persistent keyboard không hiển thị trên Telegram desktop cũ</td>
+      <td><span class="badge badge-danger">P3</span></td>
+      <td>Telegram Desktop &lt; 4.6 không support <code>is_persistent</code>. Fallback: vẫn show keyboard nhưng dùng <code>resize_keyboard</code> (non-persistent on old client) — degrade gracefully.</td>
+    </tr>
+    <tr>
+      <td>User gõ <code>/start</code> giữa wizard → mất context</td>
+      <td><span class="badge badge-warn">P2</span></td>
+      <td>Conversations plugin tự exit khi gặp non-matching update. Bot reply: "Wizard hủy, dùng /new để bắt đầu lại". Acceptable.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="oos">10. Out of scope (defer T3/T4)</h2>
+<p>Những item dưới đây <em>không</em> làm trong sprint này, nhưng infra ở §3 đảm bảo T3 sau này không phải refactor:</p>
+<ul>
+  <li><strong>Tier 3 #7</strong> Follow-up inline suggestions (vd sau switch session có nút Resume/Logs/Stop) — reuse <code>ReplyBuilders.extraButtons</code></li>
+  <li><strong>Tier 3 #8</strong> One-tap "Allow always" trên approval — reuse <code>CallbackRouter</code> + <code>ReplyBuilders</code></li>
+  <li><strong>Tier 3 #9</strong> Live status dashboard (<code>editMessageText</code> loop) — reuse <code>CallbackRouter</code> cho refresh button</li>
+  <li><strong>Tier 4</strong> Telegram Web App — chấp nhận skip, ưu tiên principle "no public port"</li>
+  <li>i18n / multi-language — defer indefinitely (single-user)</li>
+  <li>Group chat support — defer indefinitely</li>
+</ul>
+
+<hr />
+
+<p style="color: var(--text-faint); font-size: 14px; text-align: center;">
+  Draft — chờ review &amp; approve.<br />
+  Sau approve: viết SDD <code>docs/design/ux-telegram-widgets.html</code> song song khi implement DAG.
+</p>
+
+</div>
+</body>
+</html>

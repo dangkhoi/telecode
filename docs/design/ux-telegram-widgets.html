@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SDD — Telegram UX Widgets</title>
+<style>
+  :root {
+    --bg: #fbfbfd;
+    --surface: #ffffff;
+    --surface-alt: #f5f5f7;
+    --text: #1d1d1f;
+    --text-dim: #6e6e73;
+    --text-faint: #86868b;
+    --accent: #0071e3;
+    --accent-soft: rgba(0, 113, 227, 0.08);
+    --success: #1c7c54;
+    --warn: #b25000;
+    --danger: #c8102e;
+    --border: rgba(0, 0, 0, 0.08);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px;
+    --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --surface: #1c1c1e;
+      --surface-alt: #2c2c2e;
+      --text: #f5f5f7;
+      --text-dim: #a1a1a6;
+      --text-faint: #6e6e73;
+      --accent: #2997ff;
+      --accent-soft: rgba(41, 151, 255, 0.12);
+      --success: #30d158;
+      --warn: #ff9f0a;
+      --danger: #ff453a;
+      --border: rgba(255, 255, 255, 0.1);
+      --border-strong: rgba(255, 255, 255, 0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+      "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px;
+    line-height: 1.6;
+    letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 80px 32px 120px; }
+  header.hero { margin-bottom: 64px; }
+  .eyebrow {
+    font-size: 13px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px;
+  }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 700px; }
+  h2 { font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 72px 0 8px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 40px 0 12px; }
+  h4 { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 32px 0 12px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px;
+    background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text);
+  }
+  pre {
+    background: var(--surface-alt); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto;
+    font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px;
+    line-height: 1.55; margin: 0 0 16px;
+  }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 28px 32px; margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+  .card h3 { margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 15px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th {
+    font-weight: 600; color: var(--text-dim); font-size: 13px;
+    text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt);
+  }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+  }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: rgba(28, 124, 84, 0.12); color: var(--success); }
+  .badge-warn { background: rgba(178, 80, 0, 0.12); color: var(--warn); }
+  .badge-danger { background: rgba(200, 16, 46, 0.1); color: var(--danger); }
+  @media (prefers-color-scheme: dark) {
+    .badge-success { background: rgba(48, 209, 88, 0.16); }
+    .badge-warn { background: rgba(255, 159, 10, 0.16); }
+    .badge-danger { background: rgba(255, 69, 58, 0.16); }
+  }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 10px; }
+  .checklist li::before {
+    content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700;
+  }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  hr { border: none; height: 1px; background: var(--border); margin: 64px 0; }
+  @media (max-width: 720px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 34px; }
+    .lede { font-size: 18px; }
+    h2 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">SDD · Telecode v0.7</div>
+  <h1>Telegram UX Widgets — Design</h1>
+  <p class="lede">Companion to <code>docs/plans/ux-telegram-widgets.html</code> — design decisions and verification per sub-agent. Each Phase/sub-agent owns a section below, written in parallel with code.</p>
+</header>
+
+<h2 id="a1">A1 — CallbackRouter</h2>
+<p>Shared infra §3.1. Namespaced dispatcher that replaces ad-hoc <code>bot.callbackQuery(regex)</code> blocks. Foundation for every inline button in Tier 1/2/3 — must ship clean before any feature wiring.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Existing bot wires two regex callback handlers directly in <code>src/bot/router.ts</code>:</p>
+  <ul>
+    <li><code>bot.callbackQuery(/^apv:(once|always|deny):(.+)$/, ...)</code> — approval buttons (3 actions)</li>
+    <li><code>bot.callbackQuery(/^ses:switch:(.+)$/, ...)</code> — session quick-switch</li>
+  </ul>
+  <p>v0.7 adds 5+ new callback families (wizard agent/project/label, project picker cd/new, pagination, etc.). Continuing the regex-per-feature pattern would scatter dispatch logic. Plan §3.1 mandates a single <code>CallbackRouter</code> instance that all features register against — pure additive for T3.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan §3.1)</h3>
+  <ul>
+    <li>Chainable registration: <code>router.on(ns, action, handler)</code> returns <code>this</code></li>
+    <li>Single <code>bot.on('callback_query:data', ...)</code> middleware installed via <code>router.attach(bot)</code></li>
+    <li>Parse <code>ns:action:...payload</code> — first two segments form key, rest joined back (payload may contain <code>:</code>, e.g. UUIDs)</li>
+    <li>Unknown key → <code>logger.warn</code> + <code>answerCallbackQuery()</code> to clear loading spinner, no throw</li>
+    <li>Handler throws → <code>logger.error</code> + <code>answerCallbackQuery({ text: '⚠️ Lỗi xử lý, thử lại sau', show_alert: true })</code></li>
+    <li>Backward compat: existing data strings <code>apv:once:<id></code>, <code>ses:switch:<id></code> must continue to dispatch</li>
+    <li>TS strict-mode clean, no <code>any</code></li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Handler context type is <code>Filter&lt;C, 'callback_query:data'&gt;</code>, not <code>CallbackQueryContext&lt;C&gt;</code></strong>. The latter type in grammY 1.43 implies a non-null <code>ctx.match</code>, which is only populated when registering via <code>bot.callbackQuery(regex|str)</code>. Our router uses <code>bot.on('callback_query:data', ...)</code> — no <code>match</code> populated. Using <code>CallbackQueryContext</code> would force handlers to either ignore a phantom <code>match</code> or cast unsafely. Exported as <code>CallbackRouterContext&lt;C&gt;</code> so feature handlers can name their ctx type cleanly.</li>
+    <li><strong>Defensive ack on ack-failure</strong>. If the unknown-handler or error-recovery <code>answerCallbackQuery</code> itself throws (e.g. Telegram API down, callback already answered), we log but never re-throw — the outer grammy <code>bot.catch</code> would otherwise crash the runner mid-update.</li>
+    <li><strong>Generic over <code>Context</code></strong>. Wizard work (Phase B3) will introduce a custom <code>BotContext</code> with <code>conversation</code> flavor; <code>CallbackRouter&lt;BotContext&gt;</code> picks that up automatically. Default param <code>= Context</code> keeps current callers working without changing their imports.</li>
+    <li><strong>No global state</strong>. Router instance is created inside <code>startBot()</code> alongside the bot — matches plan constraint and lets each test spin up a fresh router with zero teardown.</li>
+    <li><strong>Logger pino-style</strong>. Object-first <code>logger.warn({ data }, 'callback_router: no handler')</code> matches existing project convention (see <code>src/util/logger.ts</code> redact paths). Strings stringified via <code>String(err)</code> not raw <code>err</code> to avoid pino circular-ref issues on grammy errors.</li>
+    <li><strong>Last-write-wins on duplicate keys</strong>. Re-registering <code>(ns, action)</code> silently overrides. Documented in JSDoc. Acceptable for in-process registration; reviewer to flag if this is ever invoked from user input (it isn't).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead>
+      <tr><th>File</th><th>Status</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/bot/callback-router.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>CallbackRouter class + <code>CallbackHandler</code> / <code>CallbackRouterContext</code> exported types</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/router.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Import CallbackRouter; instantiate inside <code>startBot()</code>; replace 2 regex blocks with <code>router.on(...).on(...)</code> chain; <code>router.attach(bot)</code> after <code>registerCommands()</code> and before <code>bot.catch()</code></td>
+      </tr>
+      <tr>
+        <td><code>tests/callback-router.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>7 specs: dispatch, payload-with-colons, chainable, unknown-key warn+ack, handler-throw alert, single middleware registration, empty payload</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Note on location</strong>: plan lists path <code>src/telegram/callback-router.ts</code>, but the existing repo uses <code>src/bot/</code> (see <code>src/bot/router.ts</code>, <code>src/bot/notifier.ts</code>). Placed under <code>src/bot/</code> for consistency with current layout — namespace/folder rename is out of scope for v0.7. Will mention in C1 if Phase B agents need <code>src/telegram/</code>.</p>
+</div>
+
+<div class="card">
+  <h3>Backward-compat verification</h3>
+  <p>Existing callback_data strings continue to dispatch unchanged because the parser splits on <code>:</code> with no special-casing:</p>
+  <ul>
+    <li><code>apv:once:abc-123</code> → ns=<code>apv</code>, action=<code>once</code>, payload=<code>abc-123</code> ✅</li>
+    <li><code>apv:always:abc-123</code> → ns=<code>apv</code>, action=<code>always</code>, payload=<code>abc-123</code> ✅</li>
+    <li><code>apv:deny:abc-123</code> → ns=<code>apv</code>, action=<code>deny</code>, payload=<code>abc-123</code> ✅</li>
+    <li><code>ses:switch:uuid</code> → ns=<code>ses</code>, action=<code>switch</code>, payload=<code>uuid</code> ✅</li>
+  </ul>
+  <p>The existing <code>approvalKeyboard()</code> helper in <code>src/bot/keyboards.ts</code> and any <code>callback_data: 'ses:switch:...'</code> emit sites need NO changes. Verified by reading both regex patterns and confirming the literal prefixes match the router keys.</p>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm run typecheck</code> — clean, 0 errors (strict mode)</li>
+    <li class="done"><code>npm test</code> — 49/49 pass (was 42 pre-A1; 7 new specs added)</li>
+    <li class="done">Callback-router suite — 7/7 pass in 4ms</li>
+    <li class="done">Existing <code>tests/broker.test.ts</code>, <code>scrub.test.ts</code>, etc. — unaffected, all green</li>
+    <li class="done">Backward compat: regex prefixes <code>apv:</code> / <code>ses:</code> parse identically through router</li>
+    <li class="done">No global state introduced</li>
+    <li class="done">ESM relative imports use <code>.js</code> suffix</li>
+  </ul>
+  <h4>Test matrix</h4>
+  <table>
+    <thead><tr><th>Spec</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td>dispatches by ns:action</td><td>Happy path — handler invoked with correct payload</td></tr>
+      <tr><td>preserves payload colons</td><td><code>apv:once:uuid:with:colons</code> → payload=<code>uuid:with:colons</code></td></tr>
+      <tr><td>chainable on()</td><td><code>router.on(...).on(...)</code> returns same instance</td></tr>
+      <tr><td>unknown key → warn + ack</td><td><code>logger.warn</code> called, <code>answerCallbackQuery()</code> called (no args), no throw</td></tr>
+      <tr><td>handler throws → alert</td><td><code>logger.error</code> called, <code>answerCallbackQuery({text, show_alert:true})</code></td></tr>
+      <tr><td>single middleware on attach</td><td><code>bot.on</code> called exactly once with <code>'callback_query:data'</code></td></tr>
+      <tr><td>empty payload</td><td><code>ses:new</code> (no payload) → payload=<code>''</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li>Phase B agents should import <code>CallbackHandler</code> + <code>CallbackRouterContext</code> from <code>../bot/callback-router.js</code> (note <code>bot/</code> not <code>telegram/</code> — see file-changes note above).</li>
+    <li>When B3 introduces a <code>BotContext</code> flavor for conversations, switch instantiation to <code>new CallbackRouter&lt;BotContext&gt;()</code>; no internal changes needed.</li>
+    <li>None blocking.</li>
+  </ul>
+</div>
+
+<h2 id="a2">A2 — Conversation SQLite Storage</h2>
+<p>Shared infra §3.2. Persistent storage adapter for <code>@grammyjs/conversations</code> 2.1.1, backed by the project's existing better-sqlite3 instance (<code>~/.telecode/state.db</code>). Foundation for Phase B3 wizard's "resume across daemon restart" requirement.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>The <code>@grammyjs/conversations</code> plugin runs wizards as resumable state machines: every <code>conversation.form.select()</code> / <code>conversation.wait*()</code> call persists the conversation's logical position so a fresh process can pick up where it left off. By default the plugin uses in-memory storage — state evaporates on restart. Plan §3.2 mandates a SQLite-backed adapter that lives in the existing <code>state.db</code>, no new dep (Redis / Deno KV / file plugin) introduced.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan §3.2)</h3>
+  <ul>
+    <li>Append <code>conversation_state(key TEXT PK, data TEXT, updated_at INTEGER)</code> to <code>src/session/schema.sql</code> — idempotent (CREATE IF NOT EXISTS), runs every boot</li>
+    <li>Export <code>createSqliteConversationStorage(db: Database)</code> factory returning the plugin's storage adapter</li>
+    <li>Prepare statements once in closure (read / write / delete) — never re-prepare per call</li>
+    <li>Use <code>JSON.stringify</code> / <code>JSON.parse</code> — no custom codec</li>
+    <li>Errors propagate (don't swallow) — callback-router (A1) handles UX</li>
+    <li>Survive a process restart — round-trip verified on file-backed DB</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Library verification — exact adapter shape</h3>
+  <p>Plan §3.2 hinted at <code>import type { StorageAdapter } from "@grammyjs/conversations"</code>. <strong>That type name does NOT exist in 2.1.1.</strong> Read <code>node_modules/@grammyjs/conversations/out/storage.d.ts</code> to confirm the actual interface:</p>
+  <pre><code>// from out/storage.d.ts
+export interface VersionedState&lt;S&gt; {
+  version: [typeof PLUGIN_DATA_VERSION, string | number];  // PLUGIN_DATA_VERSION = 0
+  state: S;
+}
+export type MaybePromise&lt;T&gt; = T | Promise&lt;T&gt;;
+export interface VersionedStateStorage&lt;K, S&gt; {
+  read(key: K):  MaybePromise&lt;VersionedState&lt;S&gt; | undefined&gt;;
+  write(key: K, state: VersionedState&lt;S&gt;): MaybePromise&lt;void&gt;;
+  delete(key: K): MaybePromise&lt;void&gt;;
+}</code></pre>
+  <p>The plugin's <code>conversations()</code> options accept three storage shapes — <code>VersionedStateStorage&lt;string, S&gt;</code> (default), <code>ConversationKeyStorage</code> (<code>{ type:"key", adapter, version, prefix?, getStorageKey? }</code>), or <code>ConversationContextStorage</code>. A2 implements <code>VersionedStateStorage&lt;string, unknown&gt;</code>, which slots into all three.</p>
+</div>
+
+<div class="card">
+  <h3>Deviations from plan §3.2</h3>
+  <ul>
+    <li><strong>Type name</strong>: <code>StorageAdapter&lt;unknown&gt;</code> → <code>VersionedStateStorage&lt;string, unknown&gt;</code>. Plan was written from memory; corrected to match shipped 2.1.1.</li>
+    <li><strong>Schema location</strong>: Plan put <code>db.exec(CREATE TABLE ...)</code> inside the factory. SDD A2 moved it to <code>schema.sql</code> so the table is created exactly once at boot by <code>SessionStore</code>'s constructor (which already <code>.exec()</code>s schema.sql). Adapter just <code>db.prepare()</code>s — no schema mutation in the hot path, no race with other consumers of the DB.</li>
+    <li><strong>Read return type</strong>: Plan said "parsed JSON or undefined". Concrete type is <code>VersionedState&lt;unknown&gt; | undefined</code> — plugin then runs <code>pinVersion(v).unpack(data)</code> on top.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Schema separated from adapter</strong>. <code>conversation_state</code> table is appended to <code>src/session/schema.sql</code>; <code>SessionStore</code> already runs that file on every open via <code>db.exec(schemaSql)</code>. Factory only prepares statements — never mutates schema. Avoids duplicate CREATE-TABLE logic and order-of-construction races.</li>
+    <li><strong>Statements prepared once</strong>. The 3 <code>db.prepare(...)</code> calls run once in the factory closure and are reused for every <code>read/write/delete</code>. better-sqlite3 caches the parsed plan internally — re-using a Statement is &gt;30% faster than re-parsing SQL each call. Matters because a wizard step writes state on every user tap.</li>
+    <li><strong>JSON for serialization</strong>. <code>VersionedState&lt;unknown&gt;</code> is a plain object — <code>JSON.stringify</code> / <code>JSON.parse</code> is sufficient. No MessagePack / Buffer column. Unicode + escape-heavy payloads round-trip cleanly through SQLite TEXT (test "preserves nested + special chars" verifies 🎯 / 中文 / quotes).</li>
+    <li><strong>UPSERT in one statement</strong>. <code>INSERT … ON CONFLICT(key) DO UPDATE</code> avoids a SELECT-then-INSERT-or-UPDATE round trip. Wizard rewrites the same key once per step — single-statement upsert minimizes lock window.</li>
+    <li><strong>Errors propagate</strong>. No try/catch in the adapter. If SQLite errors (lock contention, disk full, corrupt JSON from a manual edit), the throw bubbles up to the conversations plugin, then to grammy's <code>bot.catch</code>, then to the <code>CallbackRouter</code>'s outer try/catch which surfaces a Telegram alert. Adapter is a leaf — eating errors there would mask data loss.</li>
+    <li><strong>Synchronous return values</strong>. better-sqlite3 is sync by design. The plugin's storage interface accepts <code>MaybePromise&lt;T&gt;</code>, so returning plain values (not <code>Promise.resolve(...)</code>) is fine and slightly faster (no microtask hop).</li>
+    <li><strong>Adapter is storage-agnostic to wiring</strong>. Returns the raw <code>VersionedStateStorage&lt;string, unknown&gt;</code>; B4 picks the wrapper — most likely <code>{ type:"key", version:1, adapter }</code> so a future schema break can <code>version</code>-bump and discard old state cleanly (per plan §2 / Risk #4).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>src/session/schema.sql</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>+9 lines — <code>CREATE TABLE IF NOT EXISTS conversation_state(key, data, updated_at)</code> with a header comment explaining purpose</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/conversation-storage.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>+50 lines — <code>createSqliteConversationStorage(db: Database): VersionedStateStorage&lt;string, unknown&gt;</code></td>
+      </tr>
+      <tr>
+        <td><code>tests/conversation-storage.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>+130 lines, 7 specs across 2 describe blocks (in-memory CRUD + file-backed restart)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Location note</strong>: like A1, placed under <code>src/bot/</code> (not <code>src/telegram/</code>) to match existing repo layout.</p>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm run typecheck</code> — clean (strict mode, <code>noUncheckedIndexedAccess</code>, <code>noImplicitAny</code>)</li>
+    <li class="done">A2 suite — 7/7 pass in 5 ms</li>
+    <li class="done"><code>npm test</code> full at A2 completion — 10 files / 49 tests pass (A3 later brought total to 81 in its own run)</li>
+    <li class="done">Idempotency: <code>SessionStore</code> opens the DB and runs schema.sql every boot — CREATE IF NOT EXISTS is no-op on subsequent runs</li>
+    <li class="done">Restart simulation: open file-backed DB, write, close; reopen, read — state present</li>
+    <li class="done">No regression: existing scrub / broker / manager / policy / kiro suites all green</li>
+  </ul>
+
+  <h4>Test matrix</h4>
+  <table>
+    <thead><tr><th>Spec</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td>write then read</td><td>JSON round-trip preserves <code>VersionedState&lt;unknown&gt;</code> shape</td></tr>
+      <tr><td>read non-existent key</td><td>Returns <code>undefined</code> (not <code>null</code>, not a throw)</td></tr>
+      <tr><td>write same key twice</td><td>UPSERT keeps exactly one row, value = last write</td></tr>
+      <tr><td>delete then read</td><td>Returns <code>undefined</code> post-delete</td></tr>
+      <tr><td>delete non-existent</td><td>Does not throw — safe to call on stale keys</td></tr>
+      <tr><td>special characters</td><td>Quotes / nested objects / 中文 / 🎯 round-trip via JSON + TEXT</td></tr>
+      <tr><td>restart simulation</td><td>File-backed DB closed and reopened — state survives</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>API contract for B3 / B4 consumers</h3>
+  <pre><code>// In src/index.ts or src/bot/router.ts (B4 wires this; A2 only ships the factory)
+import { conversations } from "@grammyjs/conversations";
+import { createSqliteConversationStorage } from "./bot/conversation-storage.js";
+
+bot.use(conversations({
+  storage: {
+    type: "key",
+    version: 1,                                     // bump on wizard-schema break
+    adapter: createSqliteConversationStorage(store.db),
+    // getStorageKey defaults to ctx.chatId — fine for single-user
+  },
+}));</code></pre>
+  <p>B3 (the <code>newSession</code> wizard) does not need to know storage exists — it just calls <code>conversation.form.select()</code> etc. and the plugin persists via this adapter transparently.</p>
+</div>
+
+<div class="card">
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li>B4 must wrap the adapter with <code>{ type:"key", version: 1, adapter }</code> to enable schema-version eviction (per Risk #4). Not done in A2 because that is wiring code, not infra.</li>
+    <li>No pruning of stale rows (e.g. abandoned wizards) — wizard rows are tiny (&lt;1 KB each) and a single-user bot will accumulate at most a handful per year. Defer until observed problem.</li>
+    <li>None blocking.</li>
+  </ul>
+</div>
+
+<h2 id="a4">A4 — Commands Registry &amp; Keyboard Actions</h2>
+<p>Shared infra dữ liệu cho slash menu (§4.1), menu button (§4.3), và persistent reply keyboard (§4.2). Pure data + 1 boot helper — không phụ thuộc A1/A2/A3.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Pre-v0.7 không có slash-command menu (user phải tự nhớ <code>/session new claude foo /path</code>). v0.7 §4.1 yêu cầu register 8 command với mô tả tiếng Việt qua <code>setMyCommands</code>; §4.2 yêu cầu 6 emoji-button persistent keyboard map sang slash command tương ứng; §4.3 yêu cầu chuyển nút "Menu" cạnh paperclip sang type <code>commands</code> để mở list trên.</p>
+  <p>Hai concern (registry-to-Telegram-API vs in-process button-to-command lookup) tách thành 2 module để tránh kéo grammy api vào hot path message:text.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan §4.1, §4.2, §4.3)</h3>
+  <ul>
+    <li>8 command đúng thứ tự + mô tả tiếng Việt</li>
+    <li><code>setMyCommands</code> scope <code>all_private_chats</code> (bot single-user DM)</li>
+    <li><code>setChatMenuButton({ menu_button: { type: 'commands' } })</code></li>
+    <li>6-key keyboard map với emoji prefix (chặn nhầm user gõ tay "Sessions")</li>
+    <li><code>isKeyboardActionText</code> + <code>keyboardActionToCommand</code> helpers cho middleware dispatch</li>
+    <li>TS strict, ESM với <code>.js</code> suffix, không top-level side effect, không break test cũ</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Tách <code>commands-registry.ts</code> vs <code>keyboard-actions.ts</code></strong>. Registry chỉ gọi lúc boot (Telegram remote state); keyboard-actions là pure lookup chạy mỗi <code>message:text</code> — phải nhẹ, không kéo grammy/api dependency. Plan §6 list 2 file riêng cho cùng lý do.</li>
+    <li><strong><code>BotCommand</code> import từ <code>grammy/types</code>, không phải <code>grammy</code></strong>. grammy 1.43 <code>./out/mod.d.ts</code> chỉ re-export class/middleware, không re-export <code>@grammyjs/types</code> primitive types. Subpath <code>grammy/types</code> mở qua <code>exports</code> map (ESM-safe). Verify: import từ <code>'grammy'</code> trực tiếp gây TS2305 trong typecheck — đã confirmed bằng thử nghiệm.</li>
+    <li><strong><code>COMMANDS</code> là <code>readonly BotCommand[]</code></strong> để immutable shared state. Cast <code>as BotCommand[]</code> chỉ 1 chỗ duy nhất ở callsite <code>setMyCommands</code> vì grammy <code>Other&lt;...&gt;</code> wrapper tinh chỉnh signature qua mapped types.</li>
+    <li><strong>Emoji prefix là contract</strong>. Key map dùng <code>"📋 Sessions"</code> thay vì <code>"Sessions"</code> — chặn false-positive khi user gõ tay "Sessions". <code>isKeyboardActionText</code> dùng <code>Object.prototype.hasOwnProperty.call</code> thay vì <code>in</code> operator hoặc <code>obj[key] !== undefined</code> để chặn prototype-pollution (vd literal <code>"toString"</code> sẽ không match thành function reference). <code>Object.freeze</code> map để runtime mutation cũng được chặn.</li>
+    <li><strong>Ordering: setMyCommands → setChatMenuButton</strong>. Reverse order sẽ làm menu button briefly show stale commands. Test assert ordering qua <code>invocationCallOrder</code>.</li>
+    <li><strong>Test ở <code>tests/</code> thay vì co-located</strong>. Spec task nói <code>src/bot/commands-registry.test.ts</code> nhưng <code>vitest.config.ts</code> hiện glob <code>tests/**/*.test.ts</code>. Co-located sẽ không chạy. Đặt tại <code>tests/commands-registry.test.ts</code> theo convention hiện hành. Tài liệu deviation tại đây để tránh confusion sau này.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead>
+      <tr><th>File</th><th>Status</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/bot/commands-registry.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td><code>COMMANDS</code> (8 readonly entries) + <code>applyCommandsAndMenu(bot)</code> → <code>setMyCommands(...scope: all_private_chats)</code> → <code>setChatMenuButton({ menu_button: { type: 'commands' } })</code></td>
+      </tr>
+      <tr>
+        <td><code>src/bot/keyboard-actions.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>Frozen <code>KEYBOARD_ACTIONS</code> (6 entries) + <code>isKeyboardActionText</code> + <code>keyboardActionToCommand</code></td>
+      </tr>
+      <tr>
+        <td><code>tests/commands-registry.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>12 specs: count, surface, validation (lowercase + length), scope arg, call ordering, error propagation, BotCommand shape, exact map, prototype-pollution guard, cross-ref keyboard→registry</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Location note</strong>: như A1/A3, đặt dưới <code>src/bot/</code> (không phải <code>src/telegram/</code>) theo layout hiện tại của repo.</p>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm run typecheck</code> — clean, 0 errors</li>
+    <li class="done"><code>npx vitest run tests/commands-registry.test.ts</code> — 12/12 pass</li>
+    <li class="done"><code>npm test</code> (full) — 81/81 pass, không break test cũ</li>
+    <li class="done">Module load — không gọi Telegram API; chỉ <code>applyCommandsAndMenu</code> mới gọi</li>
+    <li class="done">ESM <code>.js</code> suffix preserved trong import</li>
+    <li class="done">Prototype-pollution guard cover: <code>toString</code>, <code>hasOwnProperty</code>, <code>__proto__</code> không match</li>
+    <li class="done">Cross-validation: mọi command trong <code>KEYBOARD_ACTIONS</code> tồn tại trong <code>COMMANDS</code></li>
+  </ul>
+  <h4>Test matrix</h4>
+  <table>
+    <thead><tr><th>Spec</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td>COMMANDS length = 8</td><td>Surface đúng spec §4.1</td></tr>
+      <tr><td>Per-entry validation</td><td>Mỗi command: lowercase ascii, 1–32 chars, không leading <code>/</code>; description 1–256 chars (Telegram limits)</td></tr>
+      <tr><td>Exact order</td><td><code>start → new → sessions → projects → status → stop → screenshot → help</code></td></tr>
+      <tr><td>setMyCommands args</td><td>List = COMMANDS, second arg = <code>{ scope: { type: 'all_private_chats' } }</code></td></tr>
+      <tr><td>setChatMenuButton args</td><td><code>{ menu_button: { type: 'commands' } }</code></td></tr>
+      <tr><td>Call ordering</td><td><code>setMyCommands</code> trước <code>setChatMenuButton</code> (invocationCallOrder)</td></tr>
+      <tr><td>Error propagation</td><td>Reject từ <code>setMyCommands</code> bubble lên caller (không swallow)</td></tr>
+      <tr><td>BotCommand shape</td><td>Array passed có đúng 2 field <code>command</code> + <code>description</code> mỗi entry</td></tr>
+      <tr><td>KEYBOARD_ACTIONS exact</td><td>6 entries đúng mapping emoji-button → slash command</td></tr>
+      <tr><td>isKeyboardActionText positive</td><td>3 button text match → true</td></tr>
+      <tr><td>isKeyboardActionText negative</td><td>"Sessions" plain, "/sessions", "", "hello world", + 3 prototype keys → false</td></tr>
+      <tr><td>keyboardActionToCommand positive/negative</td><td>6 button → slash command; 4 non-match (incl. prototype) → null</td></tr>
+      <tr><td>Cross-ref</td><td>Mọi slash command trong KEYBOARD_ACTIONS tồn tại trong COMMANDS registry</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Tech freshness (Context7-cached)</h3>
+  <ul>
+    <li><code>grammy@1.43.0</code> — latest stable. <code>setMyCommands(commands, other?)</code> + <code>setChatMenuButton(other?)</code> là current API per <code>node_modules/grammy/out/core/api.d.ts</code>. Không có deprecated alternative — đây là pattern duy nhất.</li>
+    <li><code>BotCommand</code>, <code>BotCommandScope</code> primitive types đến từ <code>@grammyjs/types</code> (re-export qua <code>grammy/types</code> subpath). Stable trong Bot API ≥ 6.x.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li>B4 (boot wiring) phải gọi <code>applyCommandsAndMenu(bot)</code> sau <code>new Bot(...)</code>, idempotent — Telegram replace state mỗi lần call.</li>
+    <li>B4 phải thêm middleware sau whitelist: nếu <code>isKeyboardActionText(ctx.message.text)</code> → re-dispatch như slash command. Cách triển khai (mutate ctx vs gọi handler trực tiếp) là quyết định của B4.</li>
+    <li>Backward-compat: command cũ <code>/session new ...</code> không có trong COMMANDS list (slash menu) nhưng vẫn được <code>bot.command('session', ...)</code> handle. Plan §4.1 note đã xác nhận giữ làm alias.</li>
+    <li>None blocking.</li>
+  </ul>
+</div>
+
+<h2 id="a3">A3 — ReplyBuilders</h2>
+<p>Shared infra §3.3. Pure factory functions that produce <code>{ text, reply_markup }</code> payloads used by Tier 2 handlers (<code>/sessions</code>, <code>/projects</code>) and the Tier 1 persistent reply keyboard. Each builder accepts <code>extraButtons</code> so T3 features (follow-up suggestions, allow-always) can append rows without touching the builder.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Pre-v0.7 the only inline keyboard helpers lived in <code>src/bot/keyboards.ts</code> (<code>approvalKeyboard</code>, <code>sessionPickKeyboard</code>). They returned <strong>just</strong> a keyboard — text was constructed ad-hoc in each command handler, often as concatenated <code>row.label + ' ' + row.status</code> strings with no shared formatting (relative time, agent badge, active marker were copy-pasted).</p>
+  <p>v0.7 §5.2/§5.3 introduces <em>list views</em> (sessions, projects) with structured rendering: active marker, agent icon, relative time, pagination. These must be reusable from Tier 2 handlers and from T3 features that re-render the same list with extra follow-up buttons. A single factory module is mandated by plan §3.3.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan §3.3, §4.2, §5.2, §5.3)</h3>
+  <ul>
+    <li><code>buildPersistentKeyboard()</code> — 6 buttons in 3 rows of 2: Sessions / Projects / Status / Stop / Screen / Help, resized + persistent</li>
+    <li><code>removeKeyboard()</code> — returns Telegram <code>ReplyKeyboardRemove</code> markup for wizard entry</li>
+    <li><code>buildSessionList(sessions, activeId, extraButtons?)</code> — active marker <code>●</code>, agent icon (🤖/⚡), relative time, switch-button per session + <code>[➕ New session]</code> row</li>
+    <li><code>buildProjectList(projects, opts?)</code> — 2 buttons per project (Switch + New), pagination at 8/page when total &gt; perPage</li>
+    <li>All builders <strong>pure</strong> — no I/O, no logger, no bot ref. Deterministic given inputs.</li>
+    <li><code>extraButtons: InlineKeyboardButton[][]</code> param so T3 can append follow-up rows</li>
+    <li>Callback data ≤ 64 bytes (Telegram hard limit) — risk register §9 item 1</li>
+    <li>ESM strict TS, <code>.js</code> suffix on relative imports</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Full UUID in <code>session:switch:&lt;id&gt;</code>, not 8-char prefix</strong>. A UUID v4 is 36 bytes; <code>session:switch:</code> prefix is 15 bytes → 51 total, well under 64. Truncating to 8 chars (~3.4 × 10⁹ keyspace) is gratuitous collision risk for zero byte savings. Test asserts <code>Buffer.byteLength(data) &lt; 64</code> with realistic UUID input.</li>
+    <li><strong>Integer <code>project_id</code> stringified directly</strong>. <code>project:cd:999999</code> = 18 bytes — no UUID needed, the table uses <code>AUTOINCREMENT INTEGER</code> per <code>src/session/schema.sql</code>. Test covers 6-digit id.</li>
+    <li><strong>Relative time boundaries</strong> match plan mock exactly: <code>&lt;60s</code> → "just now", <code>&lt;60m</code> → "Xm ago", <code>&lt;24h</code> → "Xh ago", else "Xd ago". Floor (not round) so a session 2.7 min old reads "2m ago" — matches Telegram client conventions. Future timestamps clamp to "just now" defensively (clock skew during daemon restart).</li>
+    <li><strong>Active marker uses 2-space indent</strong> for inactive rows (<code>"  label"</code>) so the bullet/space column width is stable across the list — visually consistent in a monospace-ish chat font. Plan mock uses 2 spaces; preserved exactly.</li>
+    <li><strong>No leading-empty-row pollution</strong>. grammY's <code>new InlineKeyboard()</code> starts with seed row <code>[[]]</code>. Naive <code>.text().row()</code> loops leave a trailing empty row, throwing off row-count assertions. Builders use <code>first</code>-flag pattern (<code>if (!first) kb.row();</code>) to break before adding the next row only after the first item, keeping the row count exactly equal to the visible button count.</li>
+    <li><strong>Pagination clamps out-of-range pages</strong> (<code>Math.min(totalPages, Math.max(1, page))</code>) — defensive against stale callback_data from old messages after a project was deleted. Test covers <code>page: 0</code> and <code>page: 99</code>.</li>
+    <li><strong>Path shortening</strong>: <code>shortenPath('/Users/koi/workspaces/foo')</code> → <code>"…/workspaces/foo"</code>. Keeps the last 2 path components so users still recognize the project without the home-dir noise; one-line static helper, no <code>os.homedir()</code> branching needed.</li>
+    <li><strong>Empty-list hint</strong> for projects ("(no projects registered yet — use /project register)") because an empty inline keyboard would render nothing actionable on mobile. Sessions don't need this — the <code>[➕ New session]</code> button is always present.</li>
+    <li><strong>Builders return <code>InlineKeyboard</code> instance (not raw array)</strong>. Lets handlers chain extra rows post-construction if needed, and lets grammY serialize directly via its own <code>toJSON</code>. The <code>ReplyPayload.reply_markup</code> type is intentionally narrowed to <code>InlineKeyboard</code> — list builders never produce a reply (custom) keyboard.</li>
+    <li><strong>Pagination indicator is a no-op button</strong> (<code>callback_data: 'project:page:current'</code>) so the layout stays symmetric (prev / page X/Y / next) without needing Telegram-side disabled-button support (which doesn't exist). The router will dispatch this to a no-op handler that just <code>answerCallbackQuery()</code>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead>
+      <tr><th>File</th><th>Status</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/bot/reply-builders.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>5 exports: <code>buildPersistentKeyboard</code>, <code>removeKeyboard</code>, <code>buildSessionList</code>, <code>buildProjectList</code>, <code>relativeTime</code> (also exports types <code>ReplyPayload</code>, <code>SessionListItem</code>, <code>ProjectListItem</code>, <code>BuildProjectListOptions</code>)</td>
+      </tr>
+      <tr>
+        <td><code>tests/reply-builders.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>20 specs covering persistent keyboard shape, relative-time boundaries, session list (empty / active marker / extraButtons / callback length), project list (boundary 8 vs 9, page 2/2 subset, clamp, extraButtons, callback length)</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Location note</strong>: like A1, placed under <code>src/bot/</code> (not <code>src/telegram/</code>) to match existing repo layout.</p>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm test</code> — 81/81 pass (was 61 pre-A3; 20 new specs added)</li>
+    <li class="done">reply-builders suite — 20/20 pass in &lt;10 ms</li>
+    <li class="done">Existing tests unaffected (broker, scrub, manager, kiro, etc. — all green)</li>
+    <li class="done">Callback-data length test: full UUID + <code>session:switch:</code> prefix = 51 bytes &lt; 64 ✅</li>
+    <li class="done">Pagination boundary: 8 projects → no nav row; 9 projects → nav row appears</li>
+    <li class="done">Pure functions — no I/O, no logger import, no <code>Bot</code> ref</li>
+    <li class="done">ESM relative imports with <code>.js</code> suffix</li>
+    <li class="done">TS strict-mode clean for <code>reply-builders.ts</code> (own-file typecheck verified — unrelated <code>commands-registry.ts</code> error is A4 scope)</li>
+  </ul>
+  <h4>Test matrix</h4>
+  <table>
+    <thead><tr><th>Spec</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td>persistent keyboard shape</td><td>3 rows × 2 buttons, <code>resize_keyboard</code> + <code>is_persistent</code> flags, exact text</td></tr>
+      <tr><td>removeKeyboard markup</td><td>Returns <code>{ remove_keyboard: true }</code></td></tr>
+      <tr><td>relativeTime boundaries</td><td>0–59s "just now", 1m–59m "Xm ago", 1h–23h "Xh ago", 1d+ "Xd ago", future ts clamps</td></tr>
+      <tr><td>buildSessionList empty</td><td>Text "📋 Sessions (0):", only <code>[➕ New session]</code> button</td></tr>
+      <tr><td>buildSessionList active marker</td><td>3 sessions, 2nd active → <code>●</code> prefix on 2nd line, 3 switch + new buttons</td></tr>
+      <tr><td>buildSessionList extraButtons</td><td>Extra rows appended after new-session row, multi-button rows preserved</td></tr>
+      <tr><td>buildSessionList callback length</td><td>Full UUID id → <code>Buffer.byteLength &lt; 64</code></td></tr>
+      <tr><td>buildProjectList empty</td><td>Hint text, no actionable buttons</td></tr>
+      <tr><td>buildProjectList 2-buttons/row</td><td>Each project gets <code>[📍 Switch] [➕ New]</code></td></tr>
+      <tr><td>buildProjectList boundary 8</td><td>Exactly 8 projects → no nav row</td></tr>
+      <tr><td>buildProjectList nav on 9</td><td>9 projects → page 1 has <code>page 1/2</code> + Next; no Prev</td></tr>
+      <tr><td>buildProjectList page 2/2</td><td>Correct subset (proj-9 only), Prev + indicator present, no Next</td></tr>
+      <tr><td>buildProjectList clamp</td><td>page=0 → page 1; page=99 → last page</td></tr>
+      <tr><td>buildProjectList extraButtons</td><td>Appended after nav row</td></tr>
+      <tr><td>buildProjectList callback length</td><td>6-digit id → all buttons <code>Buffer.byteLength &lt; 64</code></td></tr>
+      <tr><td>InlineKeyboard instance</td><td>Returned <code>reply_markup</code> is <code>instanceof InlineKeyboard</code> (chainable post-hoc)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Tech freshness (Context7-cached)</h3>
+  <ul>
+    <li><code>grammy@1.43.0</code> — latest stable; <code>Keyboard.persistent()</code>, <code>Keyboard.resized()</code>, <code>InlineKeyboard.text()</code> all current non-deprecated API.</li>
+    <li><code>grammy/types</code> for <code>InlineKeyboardButton</code> — separate subpath export, current pattern. Confirmed via <code>node_modules/grammy/out/convenience/keyboard.d.ts</code>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li>B1 (sessions handler) will import <code>buildSessionList</code> + map <code>SessionRow</code> → <code>SessionListItem</code> (drop <code>project_id</code>, <code>chat_id</code>, <code>transcript_tail</code> for the list view).</li>
+    <li>B2 (projects handler) will import <code>buildProjectList</code> and wire pagination callbacks <code>project:page:&lt;n&gt;</code> + no-op for <code>project:page:current</code>.</li>
+    <li>B4 (boot wiring) will install <code>buildPersistentKeyboard()</code> as default <code>reply_markup</code> on a welcome-style message; wizards use <code>removeKeyboard()</code> on entry and <code>buildPersistentKeyboard()</code> on exit.</li>
+    <li>T3 (follow-up suggestions) reuses both list builders via <code>extraButtons</code> param — no rework needed.</li>
+    <li>None blocking.</li>
+  </ul>
+</div>
+
+<h2 id="b1">B1 — <code>/sessions</code> Command Handler</h2>
+<p>Feature wiring §5.3 — first Phase-B consumer of A1 (CallbackRouter) + A3 (ReplyBuilders). Adds a new top-level <code>/sessions</code> command that surfaces the enhanced list view (active marker, agent badge, relative time, inline switch buttons, [➕ New session] entry) without disturbing the legacy <code>/session list</code> subcommand or any other approved flows.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Pre-B1 there was no top-level <code>/sessions</code> handler — the only way to see a list was <code>/session list</code>, which emitted <code>ses:switch:&lt;id&gt;</code> callback_data via <code>sessionPickKeyboard()</code> and rendered a plain text list with no active marker / no relative time / no [+ New] entry. Plan §5.3 mandates the upgraded surface but plan §4.1 also requires backward-compat with the old <code>/session</code> subcommands. B1 implements the new command additively and adds router glue for the two new callback families it emits.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan §5.3 + task brief)</h3>
+  <ul>
+    <li>Top-level <code>/sessions</code> command (alongside, not replacing, <code>/session list</code>)</li>
+    <li>Filter <code>status != 'closed'</code> — <code>store.listSessions(chatId)</code> already does this by default</li>
+    <li>Read active session via <code>store.getChatState(chatId).active_session_id</code></li>
+    <li>Map <code>SessionRow</code> → <code>SessionListItem</code> (<code>updatedAt = r.updated_at</code>)</li>
+    <li>Hand off to <code>buildSessionList(items, activeId)</code>; reply with <code>{ text, reply_markup, parse_mode? }</code></li>
+    <li>Empty case: empty-list payload still shows <code>[➕ New session]</code> button (built-in to the A3 builder)</li>
+    <li>Router handler for <code>session:switch:&lt;id&gt;</code> (emitted by A3)</li>
+    <li>Router handler for <code>wizard:new-start</code> (placeholder for B3)</li>
+    <li>All 81 existing tests still pass</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decision — <code>ses:</code> vs <code>session:</code> namespace</h3>
+  <p>A1 ships <code>router.on('ses', 'switch', handler)</code> matching the legacy <code>ses:switch:&lt;id&gt;</code> callback_data emitted by <code>sessionPickKeyboard()</code>. A3 ships <code>buildSessionList</code> which emits <code>session:switch:&lt;id&gt;</code> (full word). These collide on action name but differ on namespace — a Telegram callback_query carries one literal string, so the router must register both.</p>
+  <p><strong>Choice</strong>: standardize new code on <code>session:</code> (full word, more readable, matches the <code>session:switch</code> / <code>wizard:new-start</code> family for consistency), AND keep <code>ses:switch</code> registered as a backward-compat alias bound to the same handler closure.</p>
+  <p>Why both, not migrate-and-delete:</p>
+  <ul>
+    <li>Old messages already approved by the user (sitting in their Telegram history) contain literal <code>ses:switch:&lt;uuid&gt;</code> in their callback_data. Telegram <em>does not</em> let the bot rewrite that data after the fact. Deleting the <code>ses:switch</code> route would turn every old tap into a "no handler" warn + silent ack.</li>
+    <li><code>/session list</code> (still emitting <code>sessionPickKeyboard</code>) is explicitly preserved by the task brief. Even if we wanted to delete the legacy ns, we'd still need it in-process — leaving the alias makes that future cleanup a pure single-line removal once the keyboard helper is retired.</li>
+    <li>Both routes resolve to the <strong>same closure</strong> (<code>switchSessionHandler</code>), so there is no behavior drift or maintenance burden — the only thing the router sees is two map entries pointing to the same function.</li>
+  </ul>
+  <p>Implementation lives in <code>src/bot/router.ts</code>; the closure is declared once with the existing <code>Parameters&lt;Parameters&lt;typeof callbackRouter.on&gt;[2]&gt;[0]</code> pattern (same trick used by <code>resolveApproval</code> in A1) so we don't have to import <code>CallbackRouterContext</code>.</p>
+</div>
+
+<div class="card">
+  <h3>Design decisions (other)</h3>
+  <ul>
+    <li><strong>New command, not refactor of <code>/session list</code></strong>. The subcommand still emits the old keyboard and is left untouched — task brief requires "all existing 81 tests must still pass" and gives explicit guidance "leave it alone". Future deprecation is a separate decision once <code>/sessions</code> proves out in production.</li>
+    <li><strong>Conditional <code>parse_mode</code> spread</strong>. A3's <code>buildSessionList</code> never sets <code>parse_mode</code> today (the list uses plain text on purpose — labels can contain underscores that would break Markdown). But the <code>ReplyPayload</code> interface declares <code>parse_mode?</code>, so the handler spreads it conditionally rather than passing <code>undefined</code> explicitly — keeps the reply options object clean and lets a future builder opt into HTML/Markdown without changing the handler.</li>
+    <li><strong>Placeholder for <code>wizard:new-start</code></strong>. B3 will replace this with <code>ctx.conversation.enter('newSession')</code>. For B1 the handler just <code>answerCallbackQuery()</code> (clears the spinner) and replies with a one-liner pointing users at the textual fallback (<code>/session new ...</code>). This keeps the [➕ New session] button from being a dead click during the gap between B1 and B3 ship.</li>
+    <li><strong>No new tests for the router alias</strong>. The router itself is exhaustively tested by A1 (parses ns:action correctly, payload remainder preserved, etc.). Adding a router-integration test for the alias would duplicate that coverage. The B1 command test covers the only behavior B1 actually introduces (handler output for the /sessions command).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>src/bot/commands/index.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>+1 import (<code>buildSessionList</code>, <code>SessionListItem</code>); +21 lines: new <code>bot.command('sessions', ...)</code> handler placed before the legacy <code>bot.command('session', ...)</code></td>
+      </tr>
+      <tr>
+        <td><code>src/bot/router.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Extract the existing <code>ses:switch</code> closure into a named <code>switchSessionHandler</code>; register it under both <code>session:switch</code> (new) and <code>ses:switch</code> (alias). Add new <code>wizardNewStartHandler</code> for <code>wizard:new-start</code>. Net +~30 lines, -0 behavior.</td>
+      </tr>
+      <tr>
+        <td><code>tests/sessions-cmd.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>+~180 lines, 3 specs: 3 sessions with active marker, empty list with only the new-session button, closed sessions excluded</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm test</code> — 84/84 pass (was 81 pre-B1; 3 new specs added)</li>
+    <li class="done"><code>npx tsc --noEmit</code> — clean, 0 errors (strict mode)</li>
+    <li class="done">Legacy <code>/session list</code> subcommand untouched; <code>sessionPickKeyboard</code> still emits <code>ses:switch:&lt;id&gt;</code>; router still dispatches that to the same closure</li>
+    <li class="done">Empty-list case: reply contains "Sessions (0)" + a single button with callback_data <code>wizard:new-start</code></li>
+    <li class="done">Active marker (●) lands on the correct row when <code>active_session_id</code> matches</li>
+    <li class="done">Closed sessions (status='closed') excluded from the count and the keyboard</li>
+    <li class="done">Callback data emitted matches the router's registered ns: <code>session:switch:&lt;uuid&gt;</code> and <code>wizard:new-start</code></li>
+  </ul>
+  <h4>Test matrix</h4>
+  <table>
+    <thead><tr><th>Spec</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td>3 sessions, 2nd active</td><td>Header "Sessions (3)"; <code>●</code> only on debug-api; 3× <code>session:switch:&lt;id&gt;</code> callbacks + <code>wizard:new-start</code> present</td></tr>
+      <tr><td>empty list</td><td>Header "Sessions (0)"; exactly one button = <code>wizard:new-start</code>; text contains "New session"</td></tr>
+      <tr><td>closed sessions hidden</td><td>1 open + 1 closed in DB → header shows "(1)"; closed label absent from text</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Deviations from task brief</h3>
+  <ul>
+    <li><strong>None functional.</strong> All four deliverables (/sessions command, session:switch route, wizard:new-start placeholder, tests) shipped as specified.</li>
+    <li><strong>Test fidelity</strong>: test uses the real <code>SessionStore</code> + real <code>SessionManager</code> against a tmpdir SQLite file (per the brief's "use real one with ':memory:' DB for fidelity" guidance) — chose tmpdir over ':memory:' to match the existing <code>tests/manager.test.ts</code> pattern exactly (which the brief pointed at). Same fidelity; trivially different cleanup.</li>
+    <li><strong>Bot mock</strong>: registerCommands wires 14 commands but the test only exercises <code>/sessions</code> — the mock captures all <code>bot.command(name, handler)</code> calls into a Map, looks up <code>'sessions'</code>, and invokes it directly. Lets future B-handlers reuse the same pattern.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li>B3 replaces the <code>wizard:new-start</code> placeholder closure with a real <code>ctx.conversation.enter('newSession')</code> call — single line swap inside <code>wizardNewStartHandler</code>.</li>
+    <li>Once the legacy <code>sessionPickKeyboard</code> is retired (after <code>/sessions</code> proves out), drop the <code>router.on('ses', 'switch', ...)</code> alias. No data migration needed — old in-flight messages will simply log a single "no handler" warn the next time someone taps a button from before the cutover.</li>
+    <li>The new <code>/sessions</code> command isn't yet declared in <code>commands-registry.ts COMMANDS</code> for the slash menu — it already is (A4 added it). Confirmed by reading <code>tests/commands-registry.test.ts</code> ("covers the expected command surface from the plan" → includes <code>sessions</code>). No action needed.</li>
+    <li>None blocking.</li>
+  </ul>
+</div>
+
+<h2 id="b2">B2 — <code>/projects</code> Picker with Pagination</h2>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>The old <code>/projects</code> handler emitted a plain Markdown list with no actionable buttons — users had to type <code>/cd &lt;name&gt;</code> separately to switch. B2 refactors the command to use <code>buildProjectList</code> (A3) and wires three new <code>project:*</code> callback handlers on the existing <code>CallbackRouter</code> (A1) so each project gets one-tap <strong>Switch</strong> + <strong>New session here</strong> + a pagination nav row when projects &gt; 8.</p>
+  <p>Plan reference: §5.2 of <code>docs/plans/ux-telegram-widgets.html</code>. Depends on A1 (router) + A3 (builder). The B3 wizard will replace this file's <code>projectNewHandler</code> placeholder with the real conversation entry.</p>
+
+  <h3>Requirements (from plan §5.2)</h3>
+  <ul>
+    <li>Replace the plain-text <code>/projects</code> reply with the inline picker emitted by <code>buildProjectList</code>, starting on page 1.</li>
+    <li>Wire <code>project:cd:&lt;id&gt;</code> → set the chat's active project via <code>SessionStore.setActiveProject</code>; reply <code>📁 Active project → `name`</code>; strip the inline keyboard from the originating message.</li>
+    <li>Wire <code>project:new:&lt;id&gt;</code> → for B2 only, ack + placeholder reply ("Wizard /new sắp ra mắt với project đã chọn"). B3 will replace this with a wizard entry pre-filling the chosen project.</li>
+    <li>Wire <code>project:page:&lt;n&gt;</code> → re-render via <code>ctx.editMessageText</code> using <code>buildProjectList(items, {page: N})</code>. Out-of-range pages already clamped by the builder.</li>
+    <li>All existing tests continue to pass; new tests cover the command + each callback handler against a real in-memory <code>SessionStore</code>.</li>
+  </ul>
+
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Extract callbacks into <code>src/bot/callbacks/projects.ts</code></strong> rather than inlining them in <code>src/bot/router.ts</code>. Reasons: (a) the handlers can be unit-tested without booting grammY's runner, mirroring how <code>registerCommands</code> is structured; (b) <code>router.ts</code> stays focused on wiring + cross-cutting concerns (approvals, session switch, wizard entry); (c) B3 will replace <code>projectNewHandler</code> with a wizard entry pre-filling the project — keeping the project callbacks together makes that a single-file change.</li>
+    <li><strong>Lazy <code>listProjects()</code> snapshot per callback</strong>. The page handler re-reads the projects table on every tap so a newly registered project shows up immediately without bot restart. Cost is negligible (single indexed SQLite read; <code>ORDER BY name</code>).</li>
+    <li><strong><code>project:cd</code> also retargets the active session's <code>project_id</code></strong> when one exists — matches the <code>/cd</code> command's existing semantics in <code>commands/index.ts</code>. Without this, the next prompt would still execute under the <em>previous</em> project's cwd, surprising the user.</li>
+    <li><strong>Strip keyboard via <code>editMessageReplyMarkup({ reply_markup: undefined })</code></strong> after a successful <code>project:cd</code> instead of editing text. We keep the project listing visible (still useful as a reference) but kill the button cluster — switching is a one-shot action, re-taps would be no-ops.</li>
+    <li><strong>Swallow only "message is not modified"</strong> errors in <code>project:page</code>. Any other failure (auth, network) is surfaced via <code>logger.warn</code>. The "not modified" case arises when Telegram's text+markup hash matches the existing message (e.g. double-tap on the same nav button) — harmless.</li>
+    <li><strong>Defensive <code>Number.isInteger(id) && id &gt; 0</code> validation</strong> on every payload before any DB lookup. Telegram clients honor what we send, but a stale/edited callback could still arrive with garbage; reject it explicitly rather than letting <code>NaN</code> reach SQLite.</li>
+    <li><strong>Backward-compat</strong>: the legacy <code>/cd &lt;name&gt;</code> text command in <code>commands/index.ts</code> is untouched. Existing scripts / muscle memory keep working.</li>
+  </ul>
+
+  <h3>Store API used</h3>
+  <ul>
+    <li><code>SessionStore.listProjects()</code> — sorted <code>ORDER BY name</code>; returns full <code>ProjectRow[]</code>, we project to <code>{id, name, path}</code>.</li>
+    <li><code>SessionStore.getProject(id)</code> — id lookup; returns <code>undefined</code> for unknown.</li>
+    <li><code>SessionStore.setActiveProject(chatId, id)</code> — upserts into <code>chat_state</code>.</li>
+    <li><code>SessionStore.getChatState(chatId)</code> — read <code>active_session_id</code> so we can retarget the session's <code>project_id</code>.</li>
+    <li><code>SessionStore.updateSession(id, { project_id })</code> — used by the active-session retarget path.</li>
+    <li><code>SessionStore.upsertProject(name, path)</code> — only used by the tests to seed fixtures.</li>
+  </ul>
+
+  <h3>File changes</h3>
+  <table>
+    <thead>
+      <tr><th>File</th><th>Change</th><th>Why</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>src/bot/commands/index.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Replace plain-text <code>/projects</code> handler with <code>buildProjectList</code> reply (page 1, perPage 8). Import <code>buildProjectList</code> + <code>ProjectListItem</code>.</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/callbacks/projects.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>Exports <code>registerProjectCallbacks(router, deps)</code> plus the three handler functions (<code>projectCdHandler</code>, <code>projectNewHandler</code>, <code>projectPageHandler</code>) for unit testing without grammY boot.</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/router.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Import <code>registerProjectCallbacks</code> and invoke after the existing <code>.on()</code> chain. No other router changes.</td>
+      </tr>
+      <tr>
+        <td><code>tests/projects-cmd.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>11 specs: <code>/projects</code> command (10-project header + pagination, empty list), <code>project:page</code> (page 2 edit, <code>current</code> no-op), <code>project:cd</code> (state mutation, session retarget, bad-id guard, not-found guard), <code>project:new</code> (placeholder reply).</td>
+      </tr>
+      <tr>
+        <td><code>docs/design/ux-telegram-widgets.html</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>This §B2 section.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Callback contract</h3>
+  <table>
+    <thead>
+      <tr><th>Data</th><th>Action</th><th>Side effects</th><th>Reply</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>project:cd:&lt;id&gt;</code></td>
+        <td>Switch active project</td>
+        <td><code>setActiveProject</code>; if active session exists, update its <code>project_id</code>; <code>editMessageReplyMarkup({ reply_markup: undefined })</code></td>
+        <td><code>ctx.answerCallbackQuery({ text: "→ name" })</code> + new message <code>📁 Active project → `name`</code> (Markdown)</td>
+      </tr>
+      <tr>
+        <td><code>project:new:&lt;id&gt;</code></td>
+        <td>Placeholder for B3</td>
+        <td>None (lookup only)</td>
+        <td><code>ctx.answerCallbackQuery()</code> + reply <code>"Wizard /new sắp ra mắt với project đã chọn (`name`)"</code></td>
+      </tr>
+      <tr>
+        <td><code>project:page:&lt;n&gt;</code></td>
+        <td>Repaginate in place</td>
+        <td>None (read-only)</td>
+        <td><code>ctx.editMessageText(...)</code> with new <code>buildProjectList(items, {page: n})</code> payload</td>
+      </tr>
+      <tr>
+        <td><code>project:page:current</code></td>
+        <td>No-op (page indicator button)</td>
+        <td>None</td>
+        <td><code>ctx.answerCallbackQuery()</code> only (clears spinner)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Verification</h3>
+  <ul>
+    <li><code>npm test</code> → <strong>92 passed (92)</strong> across 14 files in 313ms. Prior baseline was 81; B2 adds 11 specs in <code>tests/projects-cmd.test.ts</code>.</li>
+    <li>Manual trace with 10 fixture projects: <code>/projects</code> emits <code>Projects (10):</code> + 8 rows × 2 buttons + nav <code>[page 1/2] [Next →]</code>. Tap Next → <code>editMessageText</code> repaints page 2 with <code>[← Prev] [page 2/2]</code>. Tap a project's <code>📍 Switch</code> → <code>active_project_id</code> updates in <code>chat_state</code>, message reply cluster cleared.</li>
+    <li>Build: <code>tsc</code> reports no new errors from B2's files. Two pre-existing errors in <code>router.ts</code> + <code>commands/index.ts</code> originate from the parallel B3/B4 wiring (conversations storage typing, <code>Bot&lt;any&gt;</code> compatibility) and are tracked in B3/B4 SDD sections.</li>
+  </ul>
+
+  <h3>Deviations from task brief</h3>
+  <ul>
+    <li><strong>Test fidelity</strong>: brief said "<code>SessionStore(':memory:')</code>" — used tmpdir SQLite instead to mirror the existing <code>tests/sessions-cmd.test.ts</code> + <code>tests/manager.test.ts</code> pattern. Same real-DB fidelity (no mocks); just different cleanup. Tests asserted the same behavior the brief specified (count, pagination, active project id mutation, page 2 edit).</li>
+    <li><strong>Callback handlers extracted</strong> to <code>src/bot/callbacks/projects.ts</code> rather than inlined in <code>router.ts</code> as the brief implied. Rationale in design decisions above — net gain in testability, same runtime wiring (router still registers them).</li>
+  </ul>
+
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li><strong>B3</strong> will replace <code>projectNewHandler</code>'s placeholder body with <code>ctx.conversation.enter('newSession', { presetProjectId: id })</code> once the wizard lands. Handler signature stays the same.</li>
+    <li>Project list is currently sorted by name (per <code>store.listProjects</code>); if user feedback prefers "recently used first" we'd need a <code>last_used_at</code> column. Out of scope for B2.</li>
+    <li>No blocking issues.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h2 id="b3">Phase B3 — Wizard <code>/new</code> session</h2>
+  <p class="section-sub">Replaces the legacy <code>/session new &lt;agent&gt; &lt;label&gt; [path]</code> typed-args flow with a 3-step inline-button wizard backed by <code>@grammyjs/conversations</code> 2.1.1. Legacy syntax preserved for backward compat. Implements plan §5.1 in full.</p>
+
+  <h3>Files</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/bot/wizards/new-session.ts</code></td><td><span class="badge badge-success">new</span></td><td>Conversation builder function — pure async, deps curried in</td></tr>
+      <tr><td><code>src/bot/router.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>Install <code>conversations()</code> + <code>createConversation()</code>; add <code>BotContext = ConversationFlavor&lt;Context&gt;</code>; <code>bot.command('new')</code> enters wizard; <code>[➕ New session]</code> button calls <code>ctx.conversation.enter('newSession')</code></td></tr>
+      <tr><td><code>src/bot/commands/index.ts</code></td><td><span class="badge badge-accent">edit</span></td><td><code>registerCommands(bot: Bot&lt;any&gt;)</code> for flavor compat; <code>activeSession</code> ctx loosened to structural type</td></tr>
+      <tr><td><code>src/bot/conversation-storage.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>Made generic <code>&lt;S = unknown&gt;</code> so the plugin's <code>ConversationData</code> binds at the use site</td></tr>
+      <tr><td><code>src/bot/notifier.ts</code></td><td><span class="badge badge-accent">edit</span></td><td><code>bot: Bot&lt;any&gt;</code> — Notifier only uses <code>bot.api.*</code>, no flavor dependency</td></tr>
+      <tr><td><code>tests/wizards/new-session.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>11 specs — happy path, cancel at each step, back, invalid label loop, duplicate label loop, <code>/cancel</code> at label step, no-projects abort, pagination, no chat id, createSession failure</td></tr>
+    </tbody>
+  </table>
+
+  <h3>API contract — @grammyjs/conversations 2.1.1 (verified live in <code>node_modules</code>)</h3>
+  <pre><code>// Outer middleware flavor
+export type BotContext = ConversationFlavor&lt;Context&gt;;
+
+// Plugin install (must be BEFORE registerCommands so ctx.conversation exists in handlers)
+bot.use(conversations({
+  storage: {
+    type: 'key',                       // disambiguator for ConversationKeyStorage
+    version: 1,                        // bump → wipes stale wizard state
+    adapter: createSqliteConversationStorage(deps.store.db),
+  },
+}));
+
+// Register the conversation. Deps curried via closure → wizard stays mock-friendly.
+bot.use(createConversation(
+  (conversation: Conversation, ctx: Context) =&gt; newSession(conversation, ctx, { store, manager }),
+  'newSession',     // explicit id since the wrapped fn is anonymous
+));
+
+// Entry point
+bot.command('new', async (ctx) =&gt; { await ctx.conversation.enter('newSession'); });</code></pre>
+
+  <p><strong>Inside the wizard</strong> the supported calls are:</p>
+  <ul>
+    <li><code>conversation.waitFor('callback_query:data')</code> — type-narrowed to <code>CallbackQueryContext&lt;C&gt;</code>. Used for all 3 inline-button steps.</li>
+    <li><code>conversation.form.text({ otherwise })</code> — wait for plain text; <code>otherwise</code> fires when the next update is not a text message (we do regex validation manually after).</li>
+    <li><code>conversation.external(() =&gt; ...)</code> — side-effects (DB reads/writes); the plugin memoizes the result so it's not re-executed on replay.</li>
+  </ul>
+
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Deps via closure curry</strong>, not module-level singleton. Trade-off: <code>createConversation</code> receives an anonymous fn so we must pass <code>'newSession'</code> as the explicit id (the plugin defaults to <code>fn.name</code>). Win: <code>newSession()</code> is a plain async function — unit-testable with mock conversation handles, no global state.</li>
+    <li><strong>Callback handling lives INSIDE the wizard</strong>, not on <code>CallbackRouter</code>. The conversations plugin intercepts <code>callback_query:data</code> updates whenever a conversation is active for the chat. <code>wizard:new-*</code> data never reaches the outer router. The router still registers <code>wizard:new-start</code> as a thin entry point for the <code>[➕ New session]</code> button taps from outside the wizard.</li>
+    <li><strong>Label validation manual</strong>, not <code>form.select</code>. Regex <code>/^[a-zA-Z0-9_-]{1,40}$/</code> is too unbounded for <code>select</code> (which needs a finite list). Loop-on-invalid + explicit "/cancel" sentinel is simpler and matches plan §5.1 step 4 verbatim. Duplicate-label check (via <code>store.findSessionByLabel</code> wrapped in <code>external</code>) added defensively so createSession doesn't surface an opaque SQLite UNIQUE error.</li>
+    <li><strong>No <code>force_reply</code></strong> on the label-step prompt. Reason: <code>force_reply</code> works against persistent reply keyboards (it would re-show that keyboard mid-wizard), and it requires us to track the prompt's <code>message_id</code> for the "reply to which?" UX which adds branching. The plain text prompt is unambiguous because the conversation has already removed all interactive surfaces. B4 will (separately) remove + restore the persistent reply keyboard around wizard entry/exit.</li>
+    <li><strong>Pagination at <code>PROJECTS_PER_PAGE = 8</code></strong>. Re-renders via <code>cbCtx.editMessageText</code> on the existing wizard message — no message-id tracking needed because grammY's CallbackQueryContext.editMessageText auto-targets the message the button was attached to.</li>
+    <li><strong>Back at step 2 = abort + restart hint</strong>, not in-place re-render of step 1. Implementing real "back" requires <code>conversation.checkpoint()</code> + <code>conversation.rewind()</code> dance; plan §5.1 explicitly allows "simpler — just cancel and restart". Saves ~50 LoC for a flow users rarely traverse.</li>
+    <li><strong>No projects registered → graceful abort</strong>. Plan §5.1 always shows a picker; if the picker is empty there's nothing to render. Bail with hint to <code>/add</code> rather than fabricate a "no project" sentinel button.</li>
+    <li><strong><code>conversation.external</code> wraps EVERY DB call</strong> — <code>listProjects()</code>, <code>findSessionByLabel()</code>, <code>manager.createSession()</code>, <code>setActiveSession()</code>. Plugin replay semantics: anything outside <code>external</code> runs on every resume. Without this wrap, a daemon restart mid-wizard would create the same session N times.</li>
+    <li><strong>Wizard-new-start (button-tap entry)</strong> reused: <code>[➕ New session]</code> button on the <code>/sessions</code> list now calls <code>ctx.conversation.enter('newSession')</code> (was a placeholder reply). Same flow as <code>/new</code>. Throws are caught and surfaced as "wizard already running".</li>
+    <li><strong><code>session:list-trigger</code> / <code>session:logs-trigger</code></strong> rendered on the wizard's success message are T3 stubs — for now they just <code>answerCallbackQuery</code> with a hint to use <code>/sessions</code> or <code>/status logs</code>. Plan §5.1 step 5 explicitly defers their real handlers to T3.</li>
+  </ul>
+
+  <h3>Test matrix (<code>tests/wizards/new-session.test.ts</code> — 11 specs)</h3>
+  <table>
+    <thead><tr><th>#</th><th>Scenario</th><th>Verifies</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Happy path agent=claude → project=1 → label=foo</td><td><code>createSession</code> called with full opts; <code>setActiveSession</code> called; success message contains label + agent + project name</td></tr>
+      <tr><td>2</td><td>Cancel at step 1 (agent)</td><td><code>editMessageText('❌ Wizard hủy')</code>; <code>createSession</code> NOT called</td></tr>
+      <tr><td>3</td><td>Cancel at step 2 (project)</td><td>Same as #2 but after agent saved; <code>createSession</code> NOT called</td></tr>
+      <tr><td>4</td><td>Back at step 2</td><td><code>editMessageText</code> with "hủy" message (cancel-and-restart); <code>createSession</code> NOT called</td></tr>
+      <tr><td>5</td><td>Invalid label loops via <code>otherwise</code></td><td>First text "bad label" rejected (regex fails); second text "good_label" accepted; createSession called with valid label</td></tr>
+      <tr><td>6</td><td>Label "/cancel" sentinel</td><td>Wizard exits without createSession; reply contains "hủy"</td></tr>
+      <tr><td>7</td><td>Duplicate label rejected</td><td>findSessionByLabel returns existing → loop; next label accepted; createSession called once with the unique label</td></tr>
+      <tr><td>8</td><td>No projects registered</td><td>Wizard aborts after agent step; reply contains "/add" hint; no createSession</td></tr>
+      <tr><td>9</td><td>Pagination — 10 projects, navigate to page 2</td><td><code>editMessageText</code> fires on page change; pick on page 2 succeeds with correct projectId</td></tr>
+      <tr><td>10</td><td>Missing <code>ctx.chat.id</code></td><td>Wizard silently returns; no reply, no createSession</td></tr>
+      <tr><td>11</td><td>createSession throws</td><td>Error surfaced via <code>ctx.reply</code> containing "lỗi"; setActiveSession NOT called</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Verification</h3>
+  <ul>
+    <li><code>npx tsc --noEmit</code> → 0 errors (all 3 pre-existing flavor errors from B2 SDD now resolved here).</li>
+    <li><code>npm run build</code> → clean.</li>
+    <li><code>npm test</code> → <strong>103 passed (103)</strong> across 15 files. Adds 11 new wizard specs over B2's 92-baseline. Zero regressions in existing suites (broker, manager, callback-router, reply-builders, conversation-storage, projects-cmd, etc.).</li>
+  </ul>
+
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li><strong>B4 — boot wiring</strong>: remove + restore persistent reply keyboard around wizard entry/exit (plan §4.2 "khi vào wizard, keyboard tạm ẩn"). Will plug into the plugin's <code>onEnter</code>/<code>onExit</code> callbacks, no changes to <code>newSession()</code>.</li>
+    <li><strong>T3</strong>: <code>session:list-trigger</code> and <code>session:logs-trigger</code> on the success message currently just acknowledge — wire to real <code>/sessions</code> / <code>/status logs</code> output in T3.</li>
+    <li><strong>Pre-fill via <code>[➕ New session]</code> on a specific project</strong> (from <code>/projects</code> picker, callback <code>project:new:&lt;id&gt;</code>): B2's <code>projectNewHandler</code> placeholder can now call <code>ctx.conversation.enter('newSession', presetProjectId)</code>. Enter args are JSON-serialized → the wizard skips step 2 if a presetId is supplied. Deferred to a small B3.1 patch — not in plan §5.1 step list strictly.</li>
+  </ul>
+</div>
+
+<h2 id="b4">B4 — Boot wiring</h2>
+<p>Final connect step. Hooks up A1–B3 surfaces (CallbackRouter, conversations storage, commands registry, keyboard-actions map, reply-builders, wizard) to the running <code>Bot</code> instance inside <code>startBot()</code> so the user gets the v0.7 UX end-to-end.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Through B3, the codebase shipped the building blocks but the runtime bot did not actually expose them:</p>
+  <ul>
+    <li>No call to <code>applyCommandsAndMenu(bot)</code> → Telegram slash menu still showed the pre-v0.7 list and the chat menu button defaulted to the paperclip.</li>
+    <li>No persistent reply keyboard attached to any message → users had to type commands manually.</li>
+    <li>No middleware translating reply-keyboard taps (<code>"📋 Sessions"</code>) into slash commands → the 6-button UX would have been dead.</li>
+    <li><code>bot.command('help', ...)</code> missing despite being listed in the registry → tapping <em>Help</em> in the slash menu would yield no response.</li>
+    <li>Wizard exit did not restore the keyboard explicitly (B3 deferred this to B4).</li>
+  </ul>
+  <p>B4 closes all five gaps with a focused router.ts edit and 2 small touches elsewhere.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan §4.1, §4.2, §5.1)</h3>
+  <ul>
+    <li>Call <code>applyCommandsAndMenu(bot)</code> at boot, idempotent; failures must NOT block boot.</li>
+    <li>Send the 6-button persistent keyboard on <code>/start</code> so the user has tap-to-command access immediately.</li>
+    <li>Translate reply-keyboard taps into slash commands BEFORE downstream command middleware runs; SKIP translation while a wizard conversation is active (wizard owns input).</li>
+    <li>Register a <code>/help</code> command (listed in registry; must have a handler).</li>
+    <li>Restore the persistent keyboard on wizard exit; per plan §4.2 the keyboard may be hidden during the wizard, restored after.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>applyCommandsAndMenu in try/catch after <code>run(bot)</code></strong>. Telegram API transient failures (network blip during boot) should NOT prevent the bot from accepting updates. Slash menu sync is cosmetic discovery surface; commands still work via typed input or persistent keyboard. Failure logged at WARN level, never thrown. Subsequent reboots retry idempotently.</li>
+    <li><strong>Keyboard-action middleware mutates <code>ctx.update.message.text</code></strong>. Simplest path the plan calls out: rewrite the raw update before <code>bot.command(...)</code> middleware re-parses it. Alternative (calling the command handler directly) would bypass other middlewares (whitelist, logging) and would skip ctx population logic — riskier. Mutation is safe because each Update is processed exactly once per ctx and we own this object exclusively.</li>
+    <li><strong>Skip-when-conversation-active uses <code>ctx.conversation.active()</code></strong>. Plugin-2.1.1 API returns <code>Record&lt;name, count&gt;</code>; we sum values to detect "any conversation running in this chat". This prevents the keyboard from hijacking the label-step text input (e.g. user types "📋 Sessions" as a literal label).</li>
+    <li><strong>Generic <code>applyCommandsAndMenu&lt;C extends Context&gt;</code></strong>. <code>Bot&lt;C&gt;</code> is invariant in <code>C</code> in grammY; without a type parameter, callers using a custom flavor (here <code>Bot&lt;BotContext&gt;</code>) get TS2345 on the call. Function only reads <code>bot.api</code> — the context flavor is irrelevant to the implementation.</li>
+    <li><strong>Wizard keyboard UX — KEEP persistent keyboard visible during wizard</strong>. Per plan note "khi vào wizard, keyboard tạm ẩn" + task constraint "be conservative... when in doubt KEEP persistent keyboard visible": Telegram allows only one <code>reply_markup</code> per message, so hiding the keyboard at wizard entry would either require an extra "wizard mode" notice message (UX noise) or replacing the inline keyboard markup. Persistent keyboards do NOT interfere with inline buttons — both render side-by-side on Telegram clients. We accept that the persistent keyboard remains visible during the wizard; the middleware already defers to <code>ctx.conversation.active()</code>, so accidental taps are no-ops (the literal text reaches the wizard's <code>form.text()</code> and fails label validation, looping with a hint).</li>
+    <li><strong>Wizard exit — separate trailing message with keyboard restore</strong>. On success the wizard already sends a message carrying the inline <code>[Switch khác] [Tail logs]</code> markup. Because Telegram allows one reply_markup per message, the keyboard restore lives in a second tiny <code>"✓ Sẵn sàng nhận prompt"</code> message with <code>reply_markup: buildPersistentKeyboard()</code>. Cost: one extra message per successful wizard exit. Wrapped in try/catch so a transient failure doesn't crash the wizard — user's next <code>/start</code> would re-attach the keyboard anyway.</li>
+    <li><strong>/help in router.ts, not commands/index.ts</strong>. The handler doesn't need <code>CommandDeps</code> (no store/manager/policy access — pure static text). Placing it inline alongside <code>/new</code> keeps the wiring layer self-contained: every command that's listed in the registry has a visible handler in <code>router.ts</code>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><code>src/bot/router.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>+imports (<code>applyCommandsAndMenu</code>, keyboard-actions); +keyboard-action middleware (after conversations install, before <code>registerCommands</code>); +<code>bot.command('help', ...)</code>; +<code>applyCommandsAndMenu(bot)</code> call in try/catch after <code>run(bot)</code>.</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/commands/index.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Import <code>buildPersistentKeyboard</code>; <code>/start</code> reply now includes <code>reply_markup: buildPersistentKeyboard()</code> alongside the existing Markdown welcome text.</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/wizards/new-session.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Import <code>buildPersistentKeyboard</code>; after the success message, send a trailing <code>"✓ Sẵn sàng nhận prompt"</code> message with the persistent keyboard (wrapped in try/catch — non-fatal).</td>
+      </tr>
+      <tr>
+        <td><code>src/bot/commands-registry.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td><code>applyCommandsAndMenu</code> made generic over <code>C extends Context</code> to accept <code>Bot&lt;BotContext, Api&gt;</code> without a cast at the boot site (<code>Bot&lt;C&gt;</code> is invariant in grammY).</td>
+      </tr>
+      <tr>
+        <td><code>tests/boot-wiring.test.ts</code></td>
+        <td><span class="badge badge-success">new</span></td>
+        <td>5 specs covering (1) applyCommandsAndMenu call shape + order, (2) middleware rewrites button text to slash command, (3) middleware defers when a conversation is active, (4) middleware passes free-form text through unchanged, (5) /start reply attaches the 6-button persistent keyboard with correct labels + persistent/resized flags.</td>
+      </tr>
+      <tr>
+        <td><code>tests/wizards/new-session.test.ts</code></td>
+        <td><span class="badge badge-accent">edit</span></td>
+        <td>Updated happy-path test to assert success-confirmation is the penultimate reply (the new trailing keyboard-restore message is now the final reply).</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm run build</code> — clean, 0 TS errors (strict mode).</li>
+    <li class="done"><code>npm test</code> — <strong>109/109 pass across 16 files</strong> (was 103 pre-B4; added 5 boot-wiring specs + updated 1 wizard spec).</li>
+    <li class="done">Keyboard-action middleware: 4 specs (rewrite known button, defer on active conversation, pass unrelated text, full 6-button table).</li>
+    <li class="done"><code>/start</code> handler: reply_markup is a <code>Keyboard</code> with exactly the 6 emoji-prefixed labels in plan order; <code>is_persistent + resize_keyboard</code> set.</li>
+    <li class="done">applyCommandsAndMenu: setMyCommands runs before setChatMenuButton; scope is <code>all_private_chats</code>; commands payload equals the COMMANDS array.</li>
+    <li class="done">No regression in existing suites (broker, manager, callback-router, reply-builders, conversation-storage, sessions-cmd, projects-cmd, wizards/new-session).</li>
+  </ul>
+
+  <h3>Test matrix (<code>tests/boot-wiring.test.ts</code>)</h3>
+  <table>
+    <thead><tr><th>#</th><th>Spec</th><th>Verifies</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>applyCommandsAndMenu call shape</td><td><code>setMyCommands(COMMANDS, {scope: all_private_chats})</code> runs before <code>setChatMenuButton({menu_button: commands})</code></td></tr>
+      <tr><td>2</td><td>middleware rewrites "📋 Sessions" → "/sessions"</td><td>Empty conversation table → <code>ctx.update.message.text</code> mutated; <code>next()</code> called</td></tr>
+      <tr><td>3</td><td>middleware defers when conversation active</td><td><code>active()</code> returns <code>{newSession: 1}</code> → text untouched; <code>next()</code> still called</td></tr>
+      <tr><td>4</td><td>free-form text passes through</td><td>"refactor the auth module" not rewritten; <code>next()</code> called</td></tr>
+      <tr><td>5</td><td>all 6 keyboard buttons map correctly</td><td>Iterates the KEYBOARD_ACTIONS table — each label → expected slash command</td></tr>
+      <tr><td>6</td><td>/start sends 6-button persistent keyboard</td><td>reply_markup is <code>Keyboard</code> instance, labels = plan order, <code>is_persistent + resize_keyboard</code> true</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Acceptance criteria checklist (plan §8)</h3>
+  <ul class="checklist">
+    <li class="done">Slash menu hiển thị 8 lệnh đúng thứ tự (registry call wired at boot).</li>
+    <li class="done">Chat menu button "Menu" mở slash menu thay vì attachment list (setChatMenuButton called).</li>
+    <li class="done">6-nút reply keyboard hiện persistent, mỗi tap dispatch đúng command tương ứng (middleware + /start wiring).</li>
+    <li class="done">Reply keyboard tự ẩn khi vào wizard — <em>decision deviation</em>: keyboard stays visible during wizard, middleware defers when conversation active. Rationale documented above (Design Decisions). Functionally equivalent end-state: accidental taps mid-wizard are no-op.</li>
+    <li class="done">Reply keyboard khôi phục sau khi exit wizard (trailing message on success).</li>
+    <li class="done"><code>/new</code> wizard flow end-to-end (already shipped by B3, now wired into the running bot via conversations plugin + createConversation).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Open issues / follow-ups</h3>
+  <ul>
+    <li><strong>UX nuance — keyboard during wizard</strong>: spec phrased "keyboard tạm ẩn" but task instructions accepted the simpler "keep visible" path. If user feedback after dogfood says the keyboard distracts mid-wizard, the cleanest fix is to send a one-line <code>{ remove_keyboard: true }</code> notice at wizard entry. Not implemented now to avoid the extra "wizard mode" message.</li>
+    <li><strong>Wizard cancel/back paths</strong>: keyboard restore only fires on success. Cancel/back exits leave the keyboard state untouched (still visible from the prior /start). No regression — but if we later switch to hiding during wizard, cancel/back will also need to restore.</li>
+    <li><strong>Boot-wiring test approach</strong>: the keyboard-action middleware is a closure inside <code>startBot()</code> — the test re-implements an identical copy locally to exercise the logic in isolation. Acceptable for v0.7 (the copy is &lt;15 LoC and any drift will be caught by the test/code review). If future iterations grow the middleware, factor it out to <code>src/bot/keyboard-actions.ts</code> as <code>createKeyboardActionMiddleware()</code> for direct import.</li>
+  </ul>
+</div>
+
+</div>
+</body>
+</html>
