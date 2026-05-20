@@ -44,6 +44,143 @@ function activeSession(
   return store.getSession(st.active_session_id) ?? null;
 }
 
+/**
+ * Synthetic prompt the agent receives when the user runs `/handoff` (or taps
+ * the [🤝] button in `/sessions`). Designed so the response is a compact
+ * note suitable as preamble for a fresh context window.
+ *
+ * Exported so the callback handler in router.ts shares the exact wording.
+ */
+export const HANDOFF_PROMPT =
+  'Tóm tắt context của session hiện tại (5–15 dòng): chúng ta đang làm gì, ' +
+  'đã đi đến đâu, các file/module/lệnh quan trọng đã đụng vào, và bước tiếp ' +
+  'theo. Mục đích: dùng làm starting context cho 1 instance mới (sau khi ' +
+  'clear context window). Output thuần text, không markdown nặng, không list ' +
+  'dài; viết như note ngắn cho chính mình.';
+
+export interface HandoffDeps {
+  store: SessionStore;
+  manager: SessionManager;
+  notifier: Notifier;
+}
+
+/**
+ * Shared core of `/handoff`: validate → dispatch summarize prompt → on done,
+ * save summary + wipe context. Fires async (returns immediately after sync
+ * pre-flight checks). Caller is responsible for replying with `message`.
+ *
+ * Used by both `bot.command('handoff')` (acts on active session) and the
+ * `session:handoff:<id>` callback (acts on the tapped session, regardless of
+ * which is currently active).
+ *
+ * Returns sync pre-flight outcome. The async summarize work happens via
+ * manager.dispatch in the background; the notifier handles user-visible
+ * progress + final result.
+ */
+export function executeHandoff(
+  sessionId: string,
+  chatId: number,
+  deps: HandoffDeps,
+): { ok: boolean; message: string } {
+  const { store, manager, notifier } = deps;
+  const cur = store.getSession(sessionId);
+  if (!cur || cur.chat_id !== chatId) {
+    return { ok: false, message: 'session not found' };
+  }
+  if (cur.status === 'closed') {
+    return { ok: false, message: `[${cur.label}] session đã closed — không handoff được.` };
+  }
+  if (manager.isBusy(sessionId)) {
+    return {
+      ok: false,
+      message: `[${cur.label}] session đang busy — /stop xong rồi /handoff lại.`,
+    };
+  }
+  if (!cur.sdk_session_id) {
+    return {
+      ok: false,
+      message: `[${cur.label}] chưa có resume id (session fresh, chưa chạy prompt nào) — không có context để handoff.`,
+    };
+  }
+
+  // Resolve cwd same way the plain-text dispatcher does — uses the session's
+  // project_id (defaults to process.cwd() if project somehow vanished).
+  const proj = cur.project_id
+    ? (store.db.prepare(`SELECT path FROM projects WHERE id = ?`).get(cur.project_id) as
+        | { path: string }
+        | undefined)
+    : undefined;
+  const cwd = proj?.path ?? process.cwd();
+
+  const labelPrefix = `[${cur.label}] `;
+  const summaryChunks: string[] = [];
+
+  // Fire-and-forget; manager.dispatch handles per-session mutex internally.
+  void manager
+    .dispatch({
+      sessionId,
+      sessionLabel: cur.label,
+      chatId,
+      cwd,
+      agent: cur.agent,
+      resumeId: cur.sdk_session_id,
+      prompt: HANDOFF_PROMPT,
+      onEvent: (e) => {
+        // Re-read active id each event — session can flip mid-summarize.
+        const activeId = store.getChatState(chatId).active_session_id;
+        const isActive = sessionId === activeId;
+
+        if (e.type === 'text') {
+          summaryChunks.push(e.text);
+          if (isActive) {
+            notifier.appendStream(`s:${sessionId}`, e.text, {
+              prefix: labelPrefix,
+              silent: true,
+            });
+          }
+          // Deliberately skip appendTranscript — we're about to wipe it.
+        } else if (e.type === 'tool_use') {
+          // Summarize prompt shouldn't tool-use; if it does, ignore.
+        } else if (e.type === 'error') {
+          void notifier.sendPlain(
+            `${labelPrefix}❌ handoff failed: ${e.error}\nContext KHÔNG bị clear (an toàn).`,
+          );
+        } else if (e.type === 'done') {
+          const summary = summaryChunks.join('').trim();
+          if (!summary) {
+            void notifier.sendPlain(
+              `${labelPrefix}⚠️ handoff: agent trả về empty summary, không clear context.`,
+            );
+            return;
+          }
+          // Save summary + wipe sdk_session_id + transcript_tail in one update
+          // so a half-handoff state is impossible (atomic from caller POV).
+          store.updateSession(sessionId, {
+            handoff_context: summary,
+            sdk_session_id: null,
+            transcript_tail: '',
+          });
+          void notifier.closeStream(`s:${sessionId}`).then(() =>
+            notifier.sendPlain(
+              `${labelPrefix}🤝 handoff complete — ${summary.length} chars saved.\n` +
+                `Context window đã clear. Gõ prompt tiếp theo, summary sẽ inject làm preamble (1-shot).`,
+            ),
+          );
+        }
+      },
+    })
+    .catch((err: unknown) => {
+      logger.error({ err: String(err), sessionId }, 'handoff dispatch crash');
+    });
+
+  return {
+    ok: true,
+    message:
+      `🤝 [${cur.label}] requesting handoff summary từ agent…\n` +
+      `Khi xong, context sẽ clear + summary lưu cho prompt kế tiếp.`,
+  };
+}
+
 function projectPathOf(session: SessionRow, store: SessionStore, fallback: string): string {
   if (session.project_id) {
     const p = store.db
@@ -224,99 +361,20 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   //
   // Net effect: session continues with fresh context window but carries
   // forward a compact AI-curated summary instead of full transcript.
-  const HANDOFF_PROMPT =
-    'Tóm tắt context của session hiện tại (5–15 dòng): chúng ta đang làm gì, ' +
-    'đã đi đến đâu, các file/module/lệnh quan trọng đã đụng vào, và bước tiếp ' +
-    'theo. Mục đích: dùng làm starting context cho 1 instance mới (sau khi ' +
-    'clear context window). Output thuần text, không markdown nặng, không list ' +
-    'dài; viết như note ngắn cho chính mình.';
-
   bot.command('handoff', async (ctx) => {
     const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
     if (!cur) return ctx.reply('no active session — /new để tạo');
-    if (manager.isBusy(cur.id)) {
-      return ctx.reply(
-        `[${cur.label}] session đang busy — /stop xong rồi /handoff lại.`,
-      );
+    const result = executeHandoff(cur.id, chatId, {
+      store,
+      manager,
+      notifier: notifierFor(chatId),
+    });
+    if (result.ok) {
+      await ctx.reply(result.message, { disable_notification: true });
+    } else {
+      await ctx.reply(result.message);
     }
-    if (!cur.sdk_session_id) {
-      return ctx.reply(
-        `[${cur.label}] chưa có resume id (session fresh, chưa chạy prompt nào) — không có context để handoff.`,
-      );
-    }
-
-    const projPath = projectPathOf(cur, store, process.cwd());
-    const notifier = notifierFor(chatId);
-    const labelPrefix = `[${cur.label}] `;
-    const summaryChunks: string[] = [];
-
-    await ctx.reply(
-      `🤝 [${cur.label}] requesting handoff summary từ agent…\n` +
-        `Khi xong, context sẽ clear + summary lưu cho prompt kế tiếp.`,
-      { disable_notification: true },
-    );
-
-    void manager
-      .dispatch({
-        sessionId: cur.id,
-        sessionLabel: cur.label,
-        chatId,
-        cwd: projPath,
-        agent: cur.agent,
-        resumeId: cur.sdk_session_id,
-        prompt: HANDOFF_PROMPT,
-        onEvent: (e) => {
-          // Stream the summary live to chat so user can see what got captured.
-          // Per-session gating still applies — if session went background mid
-          // way, output goes to buffer like normal dispatches.
-          const activeId = store.getChatState(chatId).active_session_id;
-          const isActive = cur.id === activeId;
-
-          if (e.type === 'text') {
-            summaryChunks.push(e.text);
-            if (isActive) {
-              notifier.appendStream(`s:${cur.id}`, e.text, {
-                prefix: labelPrefix,
-                silent: true,
-              });
-            }
-            // (deliberately NOT appendTranscript — we're about to wipe it)
-          } else if (e.type === 'tool_use') {
-            // Agent shouldn't tool-use for a summarize prompt, but if it does
-            // we just ignore (no-op) — we only want the text.
-          } else if (e.type === 'error') {
-            void notifier.sendPlain(
-              `${labelPrefix}❌ handoff failed: ${e.error}\n` +
-                `Context KHÔNG bị clear (an toàn).`,
-            );
-          } else if (e.type === 'done') {
-            const summary = summaryChunks.join('').trim();
-            if (!summary) {
-              void notifier.sendPlain(
-                `${labelPrefix}⚠️ handoff: agent trả về empty summary, không clear context.`,
-              );
-              return;
-            }
-            // Save summary, wipe context. Keep label + agent + project.
-            store.updateSession(cur.id, {
-              handoff_context: summary,
-              sdk_session_id: null,
-              transcript_tail: '',
-            });
-            // Also close any open stream so next prompt starts fresh bubble.
-            void notifier.closeStream(`s:${cur.id}`).then(() =>
-              notifier.sendPlain(
-                `${labelPrefix}🤝 handoff complete — ${summary.length} chars saved.\n` +
-                  `Context window đã clear. Gõ prompt tiếp theo, summary sẽ inject làm preamble (1-shot).`,
-              ),
-            );
-          }
-        },
-      })
-      .catch((err: unknown) => {
-        logger.error({ err: String(err) }, 'handoff dispatch crash');
-      });
   });
 
   // ----- /projects — inline picker with pagination -----

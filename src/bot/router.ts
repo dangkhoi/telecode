@@ -13,7 +13,7 @@ import type { SessionManager } from '../session/manager.js';
 import type { ApprovalBroker, ApprovalRequest } from '../approval/broker.js';
 import type { PolicyEngine } from '../approval/policy.js';
 import { Notifier } from './notifier.js';
-import { registerCommands } from './commands/index.js';
+import { registerCommands, executeHandoff } from './commands/index.js';
 import { approvalKeyboard } from './keyboards.js';
 import { buildSessionStrip, splitCatchUp, type SessionListItem } from './reply-builders.js';
 import { CallbackRouter } from './callback-router.js';
@@ -327,6 +327,34 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     await ctx.reply(`🗑 closed [${row.label}]`);
   };
 
+  // `session:handoff:<id>` — inline [🤝] button from /sessions list. Shares
+  // the same core as `bot.command('handoff')` (see executeHandoff in
+  // commands/index.ts). Unlike the /handoff command which acts on the active
+  // session, the button acts on the TAPPED session — useful when you want
+  // to summarize+clear a background session without switching to it first.
+  const handoffSessionHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const id = payload;
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    const result = executeHandoff(id, chatId, {
+      store: deps.store,
+      manager: deps.manager,
+      notifier: notifierFor(chatId),
+    });
+    // Short answer in the cbq toast (Telegram caps at ~200 chars for alerts);
+    // the user-visible progress / completion arrives via notifier.sendPlain.
+    await ctx.answerCallbackQuery({
+      text: result.ok ? '🤝 handoff started' : result.message.slice(0, 180),
+      show_alert: !result.ok,
+    });
+  };
+
   // Wizard new-session entry from inline [➕ New session] taps. Acknowledges
   // the spinner then defers to `ctx.conversation.enter('newSession')` so the
   // same code path runs as `/new`. The conversations plugin handles the
@@ -367,6 +395,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     // New ns used by reply-builders / B1+ inline buttons.
     .on('session', 'switch', switchSessionHandler)
     .on('session', 'close', closeSessionHandler)
+    .on('session', 'handoff', handoffSessionHandler)
     // Backward-compat: legacy `ses:switch:<id>` from `sessionPickKeyboard`
     // (still emitted by `/session list`). Same handler closure.
     .on('ses', 'switch', switchSessionHandler)

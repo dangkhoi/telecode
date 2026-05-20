@@ -373,7 +373,7 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng li
 | **Top-level (slash menu)** | |
 | `/start` | Welcome + active session info + re-issue persistent reply keyboard. |
 | `/new` | Wizard tạo session (agent → project → label). |
-| `/sessions` | Enhanced list — active marker `●`, agent 🤖/⚡, last activity. Mỗi dòng có nút `[label]` (switch) + `[🗑]` (close). |
+| `/sessions` | Enhanced list — active marker `●`, agent 🤖/⚡, last activity. Mỗi dòng có 3 nút: `[label]` (switch) + `[🤝]` (handoff) + `[🗑]` (close). |
 | `/projects` | Inline picker, 1 nút per project = tên project, active prefix `●`. Pagination >8. |
 | `/status` | Active session, agent, project, last 5 tool calls. |
 | `/clear` | Clear context của session active (wipe sdk_session_id + transcript). Label giữ nguyên, gõ prompt mới là fresh. |
@@ -404,7 +404,7 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng li
 | Lệnh | Khi nào dùng | Hiệu ứng |
 |---|---|---|
 | **`/clear`** | Context cũ không còn liên quan, muốn fresh start nhưng giữ session + label | Wipe `sdk_session_id` + `transcript_tail`. Lần prompt tiếp theo = session mới hoàn toàn (claude tạo resume id mới). |
-| **`/handoff`** | Context window sắp đầy, nhưng muốn giữ task — cần tóm tắt + tiếp tục | (1) Agent self-summarize 5–15 dòng (2) Save summary vào DB (3) Wipe context (4) Prompt KẾ TIẾP tự inject summary làm preamble — 1-shot, không lặp. |
+| **`/handoff`** hoặc nút `[🤝]` | Context window sắp đầy, nhưng muốn giữ task — cần tóm tắt + tiếp tục | (1) Agent self-summarize 5–15 dòng (2) Save summary vào DB (3) Wipe context (4) Prompt KẾ TIẾP tự inject summary làm preamble — 1-shot, không lặp. Nút `[🤝]` trong `/sessions` cho phép handoff session bất kỳ (kể cả background, không cần switch trước). |
 | **`/session close`** hoặc nút `[🗑]` | Xong việc với session này, không cần nữa | Interrupt task đang chạy + mark closed + discard buffer. Session ẩn khỏi `/sessions` (vẫn còn trong DB với `status='closed'`). |
 
 **Flow `/handoff` chi tiết**:
