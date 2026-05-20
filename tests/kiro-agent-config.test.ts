@@ -41,14 +41,18 @@ describe('writeKiroTelecodeAgent', () => {
     expect(cfg.includeMcpJson).toBe(true);
   });
 
-  it('declares tools + allowedTools with both built-in (*) and MCP (@*) wildcards', () => {
+  it('declares tools + allowedTools with the documented "*" wildcard (covers built-in + MCP)', () => {
+    // kiro-cli docs: `"*"` matches both built-in tools AND every MCP tool
+    // from servers loaded via includeMcpJson. The undocumented `"@*"` was
+    // tried first but produced no extra effect — stick with the canonical
+    // single-entry array.
     writeKiroTelecodeAgent({
       gateScriptPath: '/abs/path/kiro-gate.js',
       approvalTimeoutMs: 60_000,
     });
     const cfg = JSON.parse(readFileSync(TMP_AGENT_PATH, 'utf8'));
-    expect(cfg.tools).toEqual(['*', '@*']);
-    expect(cfg.allowedTools).toEqual(['*', '@*']);
+    expect(cfg.tools).toEqual(['*']);
+    expect(cfg.allowedTools).toEqual(['*']);
   });
 
   it('registers the preToolUse hook with the gate script + timeout', () => {
@@ -109,6 +113,6 @@ describe('writeKiroTelecodeAgent', () => {
     });
     const cfg = JSON.parse(readFileSync(TMP_AGENT_PATH, 'utf8'));
     expect(cfg.includeMcpJson).toBe(true);
-    expect(cfg.tools).toContain('@*');
+    expect(cfg.tools).toEqual(['*']);
   });
 });

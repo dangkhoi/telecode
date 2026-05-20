@@ -1,6 +1,59 @@
 import { execa } from 'execa';
+import { existsSync, readdirSync } from 'node:fs';
+import { homedir } from 'node:os';
 import type { AgentAdapter, AgentStartOpts } from './types.js';
 import { logger } from '../util/logger.js';
+
+/**
+ * Build a PATH that lets kiro-cli's MCP subprocess servers find their
+ * launchers (npx, uvx, bun, pnpm) regardless of how the daemon itself was
+ * launched. launchd's plist hard-codes PATH to `/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`
+ * which excludes user-installed runtimes — so an MCP server defined as
+ * `{ command: "npx", args: [...] }` in `~/.kiro/settings/mcp.json` would fail
+ * with "No such file or directory" even though `npx` works fine from the
+ * user's terminal. Symptom: `Error loading server context7: No such file
+ * or directory (os error 2)` in `$TMPDIR/kiro-log/kiro-chat.log`.
+ *
+ * We prepend the most common user-runtime directories (filtered to ones that
+ * actually exist on disk) to the existing PATH. For nvm we pick the highest
+ * version directory by lexical sort — same heuristic nvm's own shell wrapper
+ * uses when no `.nvmrc` is present.
+ *
+ * Pure & idempotent — called once per kiro-cli spawn.
+ */
+function buildKiroMcpPath(): string {
+  const home = homedir();
+  const candidates: string[] = [];
+
+  // nvm — pick the latest node version dir if any.
+  try {
+    const nvmRoot = `${home}/.nvm/versions/node`;
+    if (existsSync(nvmRoot)) {
+      const versions = readdirSync(nvmRoot)
+        .filter((v) => /^v\d/.test(v))
+        .sort()
+        .reverse();
+      if (versions[0]) candidates.push(`${nvmRoot}/${versions[0]}/bin`);
+    }
+  } catch {
+    /* ignore — no nvm */
+  }
+
+  // Common user-local runtimes.
+  for (const p of [
+    `${home}/.local/bin`,
+    `${home}/.cargo/bin`,
+    `${home}/.bun/bin`,
+    `${home}/.pyenv/shims`,
+    `${home}/.volta/bin`,
+  ]) {
+    if (existsSync(p)) candidates.push(p);
+  }
+
+  const existing = process.env.PATH ?? '';
+  if (candidates.length === 0) return existing;
+  return `${candidates.join(':')}:${existing}`;
+}
 
 export interface KiroAdapterOpts {
   binary: string;
@@ -48,6 +101,10 @@ export class KiroAdapter implements AgentAdapter {
         encoding: 'utf8',
         env: {
           ...process.env,
+          // Enriched PATH so MCP servers configured as `npx`/`uvx`/`bun`/etc.
+          // can locate their launcher even when telecode runs under launchd's
+          // minimal default PATH. See buildKiroMcpPath() for rationale.
+          PATH: buildKiroMcpPath(),
           TELECODE_SESSION_ID: start.sessionId,
           TELECODE_GATE_URL: this.opts.gateUrl,
         },
