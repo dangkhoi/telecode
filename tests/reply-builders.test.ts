@@ -191,20 +191,32 @@ describe('buildProjectList', () => {
     expect(flat).toHaveLength(0);
   });
 
-  it('shows 2 action buttons per project — Switch + New', () => {
+  it('shows 1 button per project labeled with the project name', () => {
     const projects = mkProjects(2);
     const payload = buildProjectList(projects);
     const rows = payload.reply_markup.inline_keyboard;
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveLength(2);
+    expect(rows[0]).toHaveLength(1);
     expect(rows[0]![0]).toMatchObject({
-      text: '📍 Switch',
+      text: 'proj-1',
       callback_data: 'project:cd:1',
     });
-    expect(rows[0]![1]).toMatchObject({
-      text: '➕ New',
-      callback_data: 'project:new:1',
+    expect(rows[1]![0]).toMatchObject({
+      text: 'proj-2',
+      callback_data: 'project:cd:2',
     });
+  });
+
+  it('prefixes the active project label with ● marker', () => {
+    const projects = mkProjects(3);
+    const payload = buildProjectList(projects, { activeId: 2 });
+    const rows = payload.reply_markup.inline_keyboard;
+    expect(rows[0]![0]).toMatchObject({ text: 'proj-1', callback_data: 'project:cd:1' });
+    expect(rows[1]![0]).toMatchObject({ text: '● proj-2', callback_data: 'project:cd:2' });
+    expect(rows[2]![0]).toMatchObject({ text: 'proj-3', callback_data: 'project:cd:3' });
+    // Text body also marks the active row
+    expect(payload.text).toContain('• ● proj-2');
+    expect(payload.text).toContain('• proj-1');
   });
 
   it('omits pagination at the boundary (exactly 8 projects)', () => {
@@ -222,7 +234,7 @@ describe('buildProjectList', () => {
     const projects = mkProjects(9);
     const payload = buildProjectList(projects);
     const rows = payload.reply_markup.inline_keyboard;
-    // 8 project rows on page 1 + 1 nav row
+    // 8 project rows on page 1 (1 button each) + 1 nav row
     expect(rows).toHaveLength(9);
     const navRow = rows[8]!;
     // Page 1: no Prev, has page indicator + Next
@@ -265,7 +277,7 @@ describe('buildProjectList', () => {
   });
 
   it('keeps project callback_data well under Telegram 64-byte limit', () => {
-    // even a 6-digit project_id stays small: "project:new:999999" = 18 bytes
+    // even a 6-digit project_id stays small: "project:cd:999999" = 17 bytes
     const projects: ProjectListItem[] = [
       { id: 999_999, name: 'huge', path: '/Users/koi/x' },
     ];

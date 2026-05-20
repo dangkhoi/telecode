@@ -339,6 +339,11 @@ export interface BuildProjectListOptions {
   page?: number;
   /** Projects per page. Defaults to `8`. */
   perPage?: number;
+  /**
+   * Currently active project id for the chat. The matching row gets a `●`
+   * prefix on its label. Pass `null` / omit when no project is active.
+   */
+  activeId?: number | null;
   /** Extra rows appended after the (optional) pagination row. */
   extraButtons?: InlineKeyboardButton[][];
 }
@@ -365,10 +370,15 @@ function shortenPath(p: string): string {
  * ```
  *
  * Inline keyboard:
- * - 2 buttons per project row: `[📍 Switch] [➕ New]`
- *   - `project:cd:<id>`  → switch active project for the chat
- *   - `project:new:<id>` → enter new-session wizard pre-filled with project
+ * - 1 button per project (one per row), label = project name. The currently
+ *   active project gets a `●` prefix (e.g. `● telecode`). Callback
+ *   `project:cd:<id>` → switch active project for the chat.
  *   Integer `project_id` keeps callback_data ≤ ~25 bytes (well below 64).
+ *   The previous `[📍 Switch] [➕ New]` two-button layout was removed in the
+ *   post-v0.8 UX revision — users couldn't tell which row belonged to which
+ *   project, and the per-row "New" button duplicated the `/new` wizard's
+ *   project picker. To create a session for a specific project, use `/new`
+ *   and pick the project in step 2.
  * - When `total > perPage`, a pagination nav row is added:
  *   `[← Prev] [page x/y] [Next →]` with callbacks `project:page:<n>` and a
  *   no-op `project:page:current` on the page indicator.
@@ -388,21 +398,23 @@ export function buildProjectList(
   const start = (page - 1) * perPage;
   const end = Math.min(total, start + perPage);
   const slice = projects.slice(start, end);
+  const activeId = opts.activeId ?? null;
 
   const lines: string[] = [`📁 Projects (${total}):`];
   for (const p of slice) {
-    lines.push(`• ${p.name} · ${shortenPath(p.path)}`);
+    const marker = p.id === activeId ? '● ' : '';
+    lines.push(`• ${marker}${p.name} · ${shortenPath(p.path)}`);
   }
   if (total === 0) {
-    lines.push('(no projects registered yet — use /project register)');
+    lines.push('(no projects registered yet — use /add <path> [name])');
   }
 
   const kb = new InlineKeyboard();
   let first = true;
   for (const p of slice) {
     if (!first) kb.row();
-    kb.text('📍 Switch', `project:cd:${p.id}`)
-      .text('➕ New', `project:new:${p.id}`);
+    const label = p.id === activeId ? `● ${p.name}` : p.name;
+    kb.text(label, `project:cd:${p.id}`);
     first = false;
   }
 

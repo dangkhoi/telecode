@@ -135,10 +135,18 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       if (!anyActive) {
         const cmd = keyboardActionToCommand(text);
         if (cmd && ctx.update.message) {
-          // Mutate the raw update so grammY's command middleware re-parses
-          // it as a slash command. Safe: each Update is processed once per
-          // ctx, we own this object exclusively.
-          (ctx.update.message as { text: string }).text = cmd;
+          // Mutate the raw update so grammY's command middleware picks it up.
+          // grammY's `bot.command('x', ...)` matcher checks `message.entities`
+          // for a `bot_command` entity at offset 0 — NOT just the raw text.
+          // Rewriting text alone (as we did originally) didn't trigger any
+          // handler. Inject a synthetic entity covering the slash command so
+          // the matcher recognizes it as a command-typed message.
+          const msg = ctx.update.message as {
+            text: string;
+            entities?: { type: string; offset: number; length: number }[];
+          };
+          msg.text = cmd;
+          msg.entities = [{ type: 'bot_command', offset: 0, length: cmd.length }];
         }
       }
     }

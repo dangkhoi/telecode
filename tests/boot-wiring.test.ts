@@ -114,10 +114,14 @@ describe('boot wiring — applyCommandsAndMenu (B4)', () => {
  *  - Otherwise pass the update through unchanged.
  *  - Always call next().
  */
+interface MwMessage {
+  text: string;
+  entities?: { type: string; offset: number; length: number }[];
+}
 async function keyboardActionMiddleware(
   ctx: {
     message?: { text?: string };
-    update: { message?: { text: string } };
+    update: { message?: MwMessage };
     conversation: { active: () => Record<string, number> };
   },
   next: () => Promise<void>,
@@ -130,6 +134,12 @@ async function keyboardActionMiddleware(
       const cmd = keyboardActionToCommand(text);
       if (cmd && ctx.update.message) {
         ctx.update.message.text = cmd;
+        // Inject synthetic bot_command entity — grammY's bot.command() matcher
+        // checks message.entities, not raw text. Without this the rewrite is
+        // a no-op (the bug fixed post-v0.8 ship).
+        ctx.update.message.entities = [
+          { type: 'bot_command', offset: 0, length: cmd.length },
+        ];
       }
     }
   }
@@ -149,6 +159,9 @@ describe('boot wiring — keyboard-action middleware (B4)', () => {
     await keyboardActionMiddleware(ctx, next);
 
     expect(ctx.update.message.text).toBe('/sessions');
+    expect((ctx.update.message as MwMessage).entities).toEqual([
+      { type: 'bot_command', offset: 0, length: '/sessions'.length },
+    ]);
     expect(next).toHaveBeenCalledTimes(1);
   });
 

@@ -149,12 +149,19 @@ describe('/projects command (B2)', () => {
     expect(allTexts).toContain('Next →');
     expect(allTexts).not.toContain('← Prev');
 
-    // 8 projects on the first page, each with 2 buttons.
+    // 8 projects on the first page, 1 button each (post-v0.8 simplified layout).
     const cdCallbacks = kb.inline_keyboard
       .flat()
       .map((b) => ('callback_data' in b ? b.callback_data : ''))
       .filter((d) => d.startsWith('project:cd:'));
     expect(cdCallbacks).toHaveLength(8);
+    // No more `[➕ New]` per-project buttons — removed because they were
+    // unlabeled and duplicated the /new wizard's project picker.
+    const newCallbacks = kb.inline_keyboard
+      .flat()
+      .map((b) => ('callback_data' in b ? b.callback_data : ''))
+      .filter((d) => d.startsWith('project:new:'));
+    expect(newCallbacks).toHaveLength(0);
   });
 
   it('empty list — shows (0) header + empty hint, no actionable rows', async () => {
@@ -325,7 +332,11 @@ describe('project:* callbacks (B2)', () => {
     expect(store.getChatState(CHAT_ID).active_project_id).toBeNull();
   });
 
-  it('project:new replies with the B3 placeholder + project name', async () => {
+  it('project:new is a no-op ack post-v0.8 (deprecated handler)', async () => {
+    // The per-project [➕ New] button was removed when the /projects picker
+    // was simplified to 1 button per project. Old chat history may still
+    // contain the legacy two-button layout, so we keep the handler registered
+    // as a no-op ack with a hint message — never crashes, never replies.
     const { store } = setup();
     const p1 = store.upsertProject('alpha', '/tmp/alpha');
 
@@ -337,10 +348,8 @@ describe('project:* callbacks (B2)', () => {
     );
 
     expect(ctx.answerCallbackQuery).toHaveBeenCalledTimes(1);
-    expect(ctx.reply).toHaveBeenCalledTimes(1);
-    const [text, opts] = ctx.reply.mock.calls[0]!;
-    expect(text).toContain('Wizard /new sắp ra mắt');
-    expect(text).toContain(p1.name);
-    expect(opts).toMatchObject({ parse_mode: 'Markdown' });
+    expect(ctx.answerCallbackQuery).toHaveBeenCalledWith({ text: 'Dùng /new để tạo session mới' });
+    // No follow-up reply — just the ack.
+    expect(ctx.reply).not.toHaveBeenCalled();
   });
 });

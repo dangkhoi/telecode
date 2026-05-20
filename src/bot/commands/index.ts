@@ -200,16 +200,20 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     }
   });
 
-  // ----- /projects (B2) — inline picker with pagination -----
-  // Uses buildProjectList (reply-builders) which emits one row per project
-  // with [📍 Switch] + [➕ New] buttons (callbacks `project:cd:<id>` and
-  // `project:new:<id>`) and a `[← Prev] [page x/y] [Next →]` nav row when
-  // total > 8. Callback handlers are wired in src/bot/router.ts. See plan
-  // §5.2 / SDD §B2.
+  // ----- /projects — inline picker with pagination -----
+  // Uses buildProjectList (reply-builders) which emits 1 button per project
+  // labeled with the project name. The currently active project gets a `●`
+  // prefix. Tap → `project:cd:<id>` callback switches the chat's active
+  // project. Pagination row `[← Prev] [page x/y] [Next →]` when total > 8.
+  // Callback handlers are wired in src/bot/router.ts. See plan §5.2 / SDD §B2
+  // (the original two-button [Switch][New] layout was simplified post-v0.8
+  // because users couldn't identify which row belonged to which project).
   bot.command('projects', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const rows = store.listProjects();
     const items: ProjectListItem[] = rows.map((p) => ({ id: p.id, name: p.name, path: p.path }));
-    const payload = buildProjectList(items, { page: 1 });
+    const activeId = store.getChatState(chatId).active_project_id;
+    const payload = buildProjectList(items, { page: 1, activeId });
     await ctx.reply(payload.text, {
       reply_markup: payload.reply_markup,
       ...(payload.parse_mode ? { parse_mode: payload.parse_mode } : {}),

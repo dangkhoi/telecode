@@ -100,27 +100,23 @@ export async function projectCdHandler(
 }
 
 /**
- * `project:new:<id>` — B2 placeholder. B3 will replace this with the actual
- * wizard entry pre-filling the chosen project.
+ * `project:new:<id>` — **DEPRECATED** post-v0.8.
+ *
+ * Originally a B2 placeholder for "create new session with this project
+ * pre-filled". The per-project `[➕ New]` button was removed when the
+ * /projects picker was simplified to 1 button per project (showing the name)
+ * — the new-session-with-project flow now lives entirely inside the `/new`
+ * wizard's project picker step.
+ *
+ * Handler kept registered as a no-op + hint so old chat history with the
+ * legacy two-button layout doesn't silently spin a loading indicator.
  */
 export async function projectNewHandler(
   ctx: CallbackRouterContext,
-  payload: string,
-  deps: ProjectCallbackDeps,
+  _payload: string,
+  _deps: ProjectCallbackDeps,
 ): Promise<void> {
-  const { store } = deps;
-  const id = Number(payload);
-  if (!Number.isInteger(id) || id <= 0) {
-    await ctx.answerCallbackQuery({ text: 'bad project id' });
-    return;
-  }
-  const proj = store.getProject(id);
-  await ctx.answerCallbackQuery();
-  const projName = proj ? proj.name : `id=${id}`;
-  await ctx.reply(
-    `Wizard /new sắp ra mắt với project đã chọn (\`${projName}\`)`,
-    { parse_mode: 'Markdown' },
-  );
+  await ctx.answerCallbackQuery({ text: 'Dùng /new để tạo session mới' });
 }
 
 /**
@@ -148,7 +144,9 @@ export async function projectPageHandler(
     return;
   }
   const items = listProjectItems(store);
-  const next = buildProjectList(items, { page });
+  const chatId = ctx.chat?.id ?? 0;
+  const activeId = chatId ? store.getChatState(chatId).active_project_id : null;
+  const next = buildProjectList(items, { page, activeId });
   await ctx.answerCallbackQuery();
   try {
     await ctx.editMessageText(next.text, {
