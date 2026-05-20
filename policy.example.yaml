@@ -1,0 +1,18 @@
+# ~/.telecode/policy.yaml — live; daemon + user co-edit, atomic write.
+allow:
+  - Read
+  - Grep
+  - Glob
+  - "Edit({{project_dir}}/**)"
+  - "Write({{project_dir}}/**)"
+  - "Bash(npm test*)"
+  - "Bash(npm run *)"
+  - "Bash(git status*)"
+  - "Bash(git diff*)"
+  - "Bash(git log*)"
+deny:
+  - "Bash(rm -rf*)"
+  - "Bash(git push --force*)"
+  - "Bash(curl * | sh*)"
+  - "Edit(~/.ssh/**)"
+  - "Edit(~/.aws/**)"

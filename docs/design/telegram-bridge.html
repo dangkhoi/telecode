@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SDD — Telecode v0.4</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #fff; --surface-2: #f5f5f7;
+    --border: rgba(0,0,0,0.08); --text: #1d1d1f; --text-muted: #6e6e73;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.10);
+    --success: #34c759; --warn: #ff9500; --danger: #ff3b30;
+    --code-bg: #f5f5f7; --radius: 14px; --radius-sm: 8px;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #000; --surface: #1c1c1e; --surface-2: #2c2c2e;
+      --border: rgba(255,255,255,0.10); --text: #f5f5f7; --text-muted: #98989d;
+      --accent: #0a84ff; --accent-soft: rgba(10,132,255,0.15);
+      --success: #30d158; --warn: #ff9f0a; --danger: #ff453a; --code-bg: #1c1c1e; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.55; -webkit-font-smoothing: antialiased; }
+  .page { max-width: 880px; margin: 0 auto; padding: 80px 32px 120px; }
+  .eyebrow { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--accent); font-weight: 600; margin-bottom: 12px; }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 16px; }
+  .subtitle { font-size: 20px; color: var(--text-muted); font-weight: 400; max-width: 640px; }
+  h2 { font-size: 28px; font-weight: 700; letter-spacing: -0.01em;
+    margin: 64px 0 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  h3 { font-size: 20px; font-weight: 600; margin: 32px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; margin: 24px 0 8px;
+    color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "SF Mono", Menlo, Monaco, monospace; font-size: 0.88em;
+    background: var(--code-bg); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border); }
+  pre { background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 16px 18px; overflow-x: auto;
+    font-family: "SF Mono", Menlo, Monaco, monospace; font-size: 13px; line-height: 1.6; }
+  pre code { background: none; border: none; padding: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 20px 24px; margin: 16px 0; box-shadow: var(--shadow); }
+  .card.callout { background: var(--accent-soft); border-color: transparent; }
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 12px;
+    text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-2); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px;
+    font-size: 12px; font-weight: 600; }
+  .badge.ok { background: rgba(52,199,89,0.15); color: var(--success); }
+  .badge.warn { background: rgba(255,149,0,0.15); color: var(--warn); }
+  .badge.gap { background: rgba(255,59,48,0.15); color: var(--danger); }
+  .tree { font-family: "SF Mono", Menlo, monospace; font-size: 12.5px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 18px 20px; white-space: pre; overflow-x: auto; }
+</style>
+</head>
+<body>
+<main class="page">
+
+<header>
+  <div class="eyebrow">SDD · v0.4 · 2026-05-20 · Opus 4.7 build sweep</div>
+  <h1>Telecode — Telegram bridge</h1>
+  <p class="subtitle">Single-sweep implementation of M0–M5 from <code>docs/plans/telegram-bridge.html</code>. SDD written alongside code, one section per milestone.</p>
+</header>
+
+<section>
+  <h2>1. Overview &amp; diff vs plan</h2>
+  <p>v0.4 plan implemented end-to-end. No scope cuts. Deviations:</p>
+  <ul>
+    <li>Policy glob matcher uses a hand-rolled <code>globToRegex</code> instead of <code>picomatch</code>: command-style args like <code>rm -rf*</code> need <code>*</code> to span spaces and slashes (picomatch's <code>*</code> is single-segment by default). The custom matcher treats <code>*</code> as <code>.*</code> — closer to plan §8 expected behaviour. <code>picomatch</code> dep removed.</li>
+    <li>Hono left out (plan §6 already marked optional).</li>
+    <li>Kiro adapter is phase-1 fire-and-notify per plan §9 M4.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>2. Tech freshness (Context7 verified)</h2>
+  <table>
+    <thead><tr><th>Library</th><th>Pinned</th><th>Latest</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><code>@anthropic-ai/claude-agent-sdk</code></td><td>0.3.145</td><td>0.3.145</td><td><span class="badge ok">OK</span> — verified <code>query()</code>, <code>canUseTool</code>, <code>options.hooks</code>, <code>permissionMode</code>, <code>settingSources</code> via Context7 (code.claude.com). <code>canUseTool</code> returns <code>{behavior:'allow'|'deny', updatedInput?|message?}</code>.</td></tr>
+      <tr><td><code>grammy</code></td><td>1.43.0</td><td>1.43.0</td><td><span class="badge ok">OK</span> — current. <code>bot.command</code>, <code>bot.callbackQuery</code>, <code>InlineKeyboard</code>, <code>ctx.answerCallbackQuery</code> per docs.</td></tr>
+      <tr><td><code>@grammyjs/runner</code></td><td>2.0.3</td><td>2.0.3</td><td><span class="badge ok">OK</span> — used for concurrent long-poll.</td></tr>
+      <tr><td><code>better-sqlite3</code></td><td>12.10.0</td><td>12.10.0</td><td><span class="badge ok">OK</span> — WAL mode + prepared statements.</td></tr>
+      <tr><td><code>execa</code></td><td>9.6.1</td><td>9.6.1</td><td><span class="badge ok">OK</span> — ESM-only; uses <code>cancelSignal</code> for abort.</td></tr>
+      <tr><td><code>pino</code></td><td>10.3.1</td><td>10.3.1</td><td><span class="badge ok">OK</span> — redact applied.</td></tr>
+      <tr><td><code>pino-roll</code></td><td>4.0.0</td><td>4.0.0</td><td><span class="badge ok">OK</span> — daily rotation, 7-day retention.</td></tr>
+      <tr><td><code>zod</code></td><td>4.4.3</td><td>4.4.3</td><td><span class="badge ok">OK</span> — v4 stable. <code>z.array().default(...)</code> retained.</td></tr>
+      <tr><td><code>yaml</code></td><td>2.9.0</td><td>2.9.0</td><td><span class="badge ok">OK</span>.</td></tr>
+      <tr><td><code>vitest</code></td><td>4.1.7</td><td>4.1.7</td><td><span class="badge ok">OK</span> — test runner.</td></tr>
+      <tr><td><code>async-mutex</code></td><td>0.5.0</td><td>0.5.0</td><td><span class="badge ok">OK</span> — per-session mutex.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>3. Module-by-module design</h2>
+
+  <h3>M0 — Foundation</h3>
+  <h4>Context</h4>
+  <p>Bootstrap, deps pinned, SQLite schema, launchd installer + BotFather wizard.</p>
+  <h4>Requirements</h4>
+  <ul>
+    <li>Node 22 ESM, TS strict NodeNext.</li>
+    <li>SQLite WAL with tables <code>projects</code>, <code>sessions</code>, <code>tool_log</code>, <code>approvals</code>, <code>chat_state</code>.</li>
+    <li>launchd plist with <code>KeepAlive</code>, <code>RunAtLoad</code>, log path → <code>~/.telecode/logs/</code>.</li>
+    <li>Workspace scanner depth 1, exclude <code>node_modules/.git/dist/build</code>.</li>
+  </ul>
+  <h4>Design decisions</h4>
+  <ul>
+    <li>Schema kept in <code>src/session/schema.sql</code>; build copies to <code>dist/session/schema.sql</code> so runtime loads via <code>readFileSync</code>. Test path tries dev fallback.</li>
+    <li>Workspace scan now records every directory at any allowed depth (fixes off-by-one vs plan).</li>
+    <li>Env loader is minimal hand-rolled to avoid <code>dotenv</code> dep.</li>
+  </ul>
+  <h4>File changes</h4>
+  <ul>
+    <li><code>package.json</code>, <code>tsconfig.json</code>, <code>.gitignore</code>, <code>config.example.yaml</code>, <code>policy.example.yaml</code></li>
+    <li><code>src/config.ts</code>, <code>src/util/{paths,env,logger,scrub,workspace-scanner}.ts</code></li>
+    <li><code>src/session/{store.ts,schema.sql}</code></li>
+    <li><code>scripts/install-launchd.sh</code>, <code>scripts/uninstall-launchd.sh</code></li>
+  </ul>
+  <h4>Verification</h4>
+  <p><code>npm install</code> ✅, <code>npm run build</code> ✅, scanner test ✅.</p>
+
+  <h3>M1 — Telegram round-trip + SessionManager</h3>
+  <h4>Design decisions</h4>
+  <ul>
+    <li>grammY + <code>@grammyjs/runner</code>. Whitelist middleware drops non-allowed user IDs before any other handler.</li>
+    <li>Each chat has a <code>chat_state.active_session_id</code>. Plain-text dispatches to active session; commands manipulate the set.</li>
+    <li><code>/session switch</code> reply is <code>📍 [label]</code> + tail <code>session_switch_preview_lines</code> (default 3) of the transcript stored in <code>sessions.transcript_tail</code>.</li>
+    <li>Inline keyboard quick-pick via <code>ses:switch:&lt;id&gt;</code> callback.</li>
+  </ul>
+  <h4>File changes</h4>
+  <ul>
+    <li><code>src/bot/{router,notifier,keyboards}.ts</code>, <code>src/bot/commands/index.ts</code></li>
+    <li><code>src/session/manager.ts</code> (Mutex, abort handle).</li>
+  </ul>
+
+  <h3>M2 — Claude adapter + streaming</h3>
+  <h4>Design decisions</h4>
+  <ul>
+    <li><code>query()</code> with options: <code>cwd</code>, <code>canUseTool</code>, <code>hooks</code>, <code>settingSources: ['user','project','local']</code>, <code>permissionMode: 'default'</code>, conditional <code>resume</code>.</li>
+    <li><code>AbortController</code> wired through <code>abortController: { signal }</code> (matches SDK's accepted shape via cast to bypass private constructor surface).</li>
+    <li>Streaming output flows through <code>Notifier.appendStream(key, chunk)</code> with 700ms debounce + token-bucket rate-limit (1 token/s, burst 3) + edit/rotate (50 edits / 3500 chars / 5 min).</li>
+    <li><code>sdk_session_id</code> captured from every message's <code>session_id</code> field, persisted on first sight.</li>
+  </ul>
+  <h4>File changes</h4>
+  <ul><li><code>src/agents/{types,claude,registry}.ts</code>, <code>src/bot/notifier.ts</code></li></ul>
+
+  <h3>M3 — canUseTool + Policy + interactive approve</h3>
+  <h4>Design decisions</h4>
+  <ul>
+    <li><code>PolicyEngine</code> compiles each rule once at load. Form: <code>Tool(arg-glob)</code> or bare <code>Tool</code>. Arg-glob uses custom <code>globToRegex</code> (<code>*</code> → <code>.*</code>). Substitution: <code>{{project_dir}}</code> swapped per call.</li>
+    <li>Decision order: deny first, then allow, else <code>ask</code>.</li>
+    <li><code>ApprovalBroker</code> in-process <code>Map&lt;requestId, {resolve, timer, request}&gt;</code>. <code>callback_data = apv:once|always|deny:&lt;requestId&gt;</code> — requestId only (plan §10).</li>
+    <li><code>allow_always</code> tap appends bare tool name to <code>policy.yaml</code> via atomic tmp+rename (broad; user refines by hand).</li>
+    <li>Timeout fallback resolves <code>'timeout'</code>, which adapter coerces to deny + notify.</li>
+    <li><code>fs.watch</code> on <code>policy.yaml</code> with 150ms debounce → reload.</li>
+    <li>Inline hooks (<code>PreToolUse</code>, <code>Stop</code>) registered through <code>options.hooks</code> for logging only — <code>canUseTool</code> owns permission decisions.</li>
+  </ul>
+  <h4>File changes</h4>
+  <ul><li><code>src/approval/{broker,policy}.ts</code>, hook callbacks inline in <code>src/agents/claude.ts</code></li></ul>
+
+  <h3>M4 — Kiro adapter via CLI</h3>
+  <h4>Design decisions</h4>
+  <ul>
+    <li><code>execa(binary, ['chat', '--mode', mode, '--reuse-window', prompt], { cwd, cancelSignal })</code>.</li>
+    <li>Fire-and-notify: emits a single Telegram text "Sent to Kiro IDE" on success.</li>
+    <li>Aborts via <code>cancelSignal</code> from <code>SessionManager</code>.</li>
+    <li><code>/screenshot</code> uses <code>screencapture -x /tmp/&hellip;.png</code> then sends as photo.</li>
+  </ul>
+  <h4>File changes</h4>
+  <ul><li><code>src/agents/kiro.ts</code>, <code>/screenshot</code> in <code>src/bot/commands/index.ts</code></li></ul>
+
+  <h3>M5 — Hardening</h3>
+  <h4>Design decisions</h4>
+  <ul>
+    <li>pino redact paths cover bot token, ANTHROPIC_API_KEY, Authorization, env-leak shapes.</li>
+    <li>Notifier scrub regex catches Telegram tokens (<code>\d+:[A-Za-z0-9_-]{35}</code>), <code>sk-ant-*</code>, OpenAI <code>sk-*</code>, GitHub <code>gh[psoru]_*</code>, Bearer headers — applied before any send/edit.</li>
+    <li>On boot: <code>markRunningAsInterrupted()</code> flips stale sessions and the daemon notifies the original chat_id.</li>
+    <li>Per-session <code>Mutex.isLocked()</code> emits <code>⏳ busy</code> error event if another dispatch hits an active session.</li>
+    <li>Notifier rotates to a new message after 50 edits, 3500 chars, or 5 min.</li>
+    <li>Policy write: tmp file + <code>fs.renameSync</code>, mode 0600.</li>
+    <li>Tool log pruned hourly beyond 7 days.</li>
+    <li>All SQL via <code>db.prepare(&hellip;).run/get/all</code>.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>4. SQLite schema</h2>
+  <pre><code>projects(id, name UNIQUE, path, created_at)
+sessions(id PK, label, agent, project_id → projects, chat_id,
+         sdk_session_id, status, created_at, updated_at,
+         last_message, transcript_tail)
+  unique(chat_id, label) where status != 'closed'
+tool_log(id PK, session_id, tool_name, input_preview, decision, duration_ms, created_at)
+approvals(id PK, session_id, tool_name, input_json, decision, created_at, resolved_at)
+chat_state(chat_id PK, active_session_id, active_project_id)</code></pre>
+  <p>WAL mode + <code>synchronous = NORMAL</code> + <code>foreign_keys = ON</code>.</p>
+</section>
+
+<section>
+  <h2>5. File tree</h2>
+  <div class="tree">telecode/
+├── README.md
+├── config.example.yaml
+├── policy.example.yaml
+├── package.json
+├── tsconfig.json
+├── vitest.config.ts
+├── .gitignore
+├── docs/
+│   ├── plans/telegram-bridge.html
+│   └── design/telegram-bridge.html        ← this SDD
+├── scripts/
+│   ├── install-launchd.sh
+│   └── uninstall-launchd.sh
+├── src/
+│   ├── index.ts
+│   ├── config.ts
+│   ├── agents/{types,claude,kiro,registry}.ts
+│   ├── approval/{broker,policy}.ts
+│   ├── bot/{router,notifier,keyboards}.ts
+│   ├── bot/commands/index.ts
+│   ├── session/{manager,store,schema.sql}
+│   └── util/{paths,env,logger,scrub,workspace-scanner}.ts
+└── tests/
+    ├── policy.test.ts
+    ├── broker.test.ts
+    ├── scrub.test.ts
+    ├── manager.test.ts
+    └── scanner.test.ts</div>
+</section>
+
+<section>
+  <h2>6. Test coverage</h2>
+  <table>
+    <thead><tr><th>Suite</th><th>Cases</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>policy.test.ts</code></td><td>6 (allow match, deny-beats-allow, ask fallback, <code>{{project_dir}}</code> substitution, atomic append, empty file)</td><td><span class="badge ok">PASS</span></td></tr>
+      <tr><td><code>broker.test.ts</code></td><td>3 (resolve, timeout, no-prompter deny)</td><td><span class="badge ok">PASS</span></td></tr>
+      <tr><td><code>scrub.test.ts</code></td><td>4 (TG token, Anthropic key, GH PAT, passthrough)</td><td><span class="badge ok">PASS</span></td></tr>
+      <tr><td><code>manager.test.ts</code></td><td>2 (mutex serializes same session, distinct sessions run parallel)</td><td><span class="badge ok">PASS</span></td></tr>
+      <tr><td><code>scanner.test.ts</code></td><td>2 (depth-1 + excludes, non-existent root)</td><td><span class="badge ok">PASS</span></td></tr>
+    </tbody>
+  </table>
+  <p>Total: <strong>5 files / 17 tests / 17 passing</strong>.</p>
+</section>
+
+<section>
+  <h2>7. Verification</h2>
+  <ul>
+    <li><code>npm install</code> ✅ (clean, 0 high vulnerabilities reported on this run).</li>
+    <li><code>npm run build</code> ✅ (<code>tsc</code> strict, 0 errors).</li>
+    <li><code>npm test</code> ✅ (17/17).</li>
+  </ul>
+  <h3>Acceptance criteria mapping (plan §11)</h3>
+  <table>
+    <thead><tr><th>#</th><th>Criterion</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Daemon installs via <code>install-launchd.sh</code>, auto-start on reboot</td><td><span class="badge ok">✅ achievable</span> — script + plist with <code>RunAtLoad</code>+<code>KeepAlive</code></td></tr>
+      <tr><td>2</td><td><code>/session new claude smoke &lt;path&gt;</code> + prompt → real file list</td><td><span class="badge ok">✅ achievable</span> — Claude adapter wires <code>cwd</code> + Read tool via canUseTool</td></tr>
+      <tr><td>3</td><td>Prompt changes file, resume across restart</td><td><span class="badge ok">✅ achievable</span> — <code>sdk_session_id</code> persisted in SQLite, passed as <code>resume</code></td></tr>
+      <tr><td>4</td><td>Multi-session: 2 Claude + 1 Kiro, switch, independent</td><td><span class="badge ok">✅ achievable</span> — per-session mutex, distinct labels, manager test proves parallelism</td></tr>
+      <tr><td>5</td><td>Out-of-policy tool → Telegram approval &lt;2s, tap → resume</td><td><span class="badge ok">✅ achievable</span> — ApprovalBroker direct send, in-process resolve</td></tr>
+      <tr><td>6</td><td>Hook log 7 days, <code>/status logs 30</code></td><td><span class="badge ok">✅</span> — <code>tool_log</code> with hourly prune, command implemented</td></tr>
+      <tr><td>7</td><td>Approval timeout 5min → auto-deny + Telegram notify</td><td><span class="badge ok">✅</span> — broker timeout + adapter coerces to deny</td></tr>
+      <tr><td>8</td><td>Kiro session opens IDE with prompt</td><td><span class="badge ok">✅ achievable</span> — <code>kiro chat --mode agent --reuse-window</code> spawned</td></tr>
+      <tr><td>9</td><td><code>/allow</code> appends to policy.yaml, external edits hot-reload</td><td><span class="badge ok">✅</span> — atomic write + <code>fs.watch</code></td></tr>
+      <tr><td>10</td><td>No deprecated deps</td><td><span class="badge ok">✅</span> — all pinned to latest stable (see §2)</td></tr>
+      <tr><td>11</td><td>Senior review pass, no P0/P1</td><td><span class="badge warn">pending</span> — task #6 in parent DAG</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>8. Known gaps / deviations</h2>
+  <ul>
+    <li><strong>Kiro stream-back</strong>: out of scope per plan §9 M4 (phase 1 only).</li>
+    <li><strong>Hono</strong>: dropped per plan §6 (optional health endpoint).</li>
+    <li><strong>picomatch</strong>: replaced by inline <code>globToRegex</code>; rationale in §1.</li>
+    <li><strong>E2E Telegram test</strong>: not runnable from agent (needs real bot + chat). Unit suites cover the logical pieces; manual smoke-run via <code>npm start</code> is straightforward once <code>~/.telecode/.env</code> is present.</li>
+    <li><strong>SDK abort cast</strong>: <code>abortController: { signal }</code> uses a structural cast — the SDK accepts a duck-typed object but the type omits this shape. Safe at runtime; flagged for future SDK type alignment.</li>
+  </ul>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Plan — Telecode: Telegram Bridge for Claude Code &amp; Kiro</title>
+<style>
+  :root {
+    --bg: #fbfbfd;
+    --surface: #ffffff;
+    --surface-2: #f5f5f7;
+    --border: rgba(0,0,0,0.08);
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    --accent: #0071e3;
+    --accent-soft: rgba(0,113,227,0.10);
+    --success: #34c759;
+    --warn: #ff9500;
+    --danger: #ff3b30;
+    --code-bg: #f5f5f7;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px;
+    --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --surface: #1c1c1e;
+      --surface-2: #2c2c2e;
+      --border: rgba(255,255,255,0.10);
+      --text: #f5f5f7;
+      --text-muted: #98989d;
+      --accent: #0a84ff;
+      --accent-soft: rgba(10,132,255,0.15);
+      --success: #30d158;
+      --warn: #ff9f0a;
+      --danger: #ff453a;
+      --code-bg: #1c1c1e;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.4);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 80px 32px 120px;
+  }
+  header.hero {
+    margin-bottom: 56px;
+  }
+  .eyebrow {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  h1 {
+    font-size: 44px;
+    line-height: 1.1;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin: 0 0 16px;
+  }
+  .subtitle {
+    font-size: 20px;
+    color: var(--text-muted);
+    font-weight: 400;
+    max-width: 640px;
+  }
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 28px;
+  }
+  .tag {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    padding: 6px 12px;
+    border-radius: 999px;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  h2 {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 64px 0 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 32px 0 12px;
+    letter-spacing: -0.005em;
+  }
+  h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 24px 0 8px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code {
+    font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 0.88em;
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-family: "SF Mono", Menlo, Monaco, Consolas, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin: 20px 0;
+    box-shadow: var(--shadow);
+  }
+  .card.callout {
+    background: var(--accent-soft);
+    border-color: transparent;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin: 20px 0;
+  }
+  .grid .card { margin: 0; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: var(--surface-2);
+  }
+  tr:last-child td { border-bottom: none; }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .badge.p0 { background: rgba(255,59,48,0.15); color: var(--danger); }
+  .badge.p1 { background: rgba(255,149,0,0.15); color: var(--warn); }
+  .badge.p2 { background: rgba(0,113,227,0.12); color: var(--accent); }
+  .badge.p3 { background: var(--surface-2); color: var(--text-muted); }
+  .badge.ok { background: rgba(52,199,89,0.15); color: var(--success); }
+  .arch {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    font-family: "SF Mono", Menlo, Monaco, monospace;
+    font-size: 12.5px;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 48px 0;
+  }
+  .footnote {
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .checklist {
+    list-style: none;
+    padding-left: 0;
+  }
+  .checklist li {
+    padding-left: 28px;
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .checklist li::before {
+    content: "○";
+    position: absolute;
+    left: 6px;
+    color: var(--text-muted);
+    font-weight: 700;
+  }
+</style>
+</head>
+<body>
+<main class="page">
+
+<header class="hero">
+  <div class="eyebrow">Plan · v0.4 (ready-to-implement) · 2026-05-20</div>
+  <h1>Telecode</h1>
+  <p class="subtitle">Chat với Claude Code &amp; Kiro trên máy mình qua Telegram — vibecode mọi lúc mọi nơi, có notification khi cần để mắt.</p>
+  <div class="meta">
+    <span class="tag">TypeScript + Node</span>
+    <span class="tag">grammY</span>
+    <span class="tag">Local daemon (launchd)</span>
+    <span class="tag">Single user · multi-session</span>
+    <span class="tag">Interactive approve (canUseTool)</span>
+    <span class="tag">Claude CLI + Kiro CLI</span>
+  </div>
+  <div class="card callout" style="margin-top: 24px;">
+    <strong>v0.3 changelog (sau user feedback):</strong>
+    <ul style="margin: 8px 0 0;">
+      <li><strong>Multi-session model</strong>: 1 Telegram chat có thể có nhiều session đồng thời, mỗi session là (agent × project × thread). Commands <code>/session new|list|switch|close|rename</code>.</li>
+      <li><strong>Kiro adapter dùng CLI thật</strong> (<code>kiro chat --mode agent</code>) — drop AppleScript / UI automation hoàn toàn. Caveat: Kiro CLI runs trong IDE window, không stream output ra stdout như <code>claude -p</code>; phase 1 fire-and-notify, phase 2 mới stream-back nếu cần.</li>
+      <li><strong>grammY thay telegraf</strong>: active maintain, TS-first hơn, plugin ecosystem hiện đại hơn. Telegraf v4 đang stale.</li>
+      <li><code>settingSources: ['user','project','local']</code> — daemon load đầy đủ Claude config như khi chạy local CLI, đồng nhất hành vi.</li>
+      <li>Allow rules persist sang <code>~/.telecode/policy.yaml</code> riêng (linh động, user edit được), tách khỏi <code>config.yaml</code>.</li>
+    </ul>
+  </div>
+  <div class="card callout" style="margin-top: 16px;">
+    <strong>v0.2 changelog (Context7 review):</strong> <code>canUseTool</code> phase 1 · hooks inline · drop Hono core.
+  </div>
+</header>
+
+<section>
+  <h2>1. Mục tiêu</h2>
+  <p>Build 1 daemon chạy local trên macOS, đóng vai trò cầu nối hai chiều giữa Telegram và các coding agent (<strong>Claude Code</strong>, <strong>Kiro</strong>):</p>
+  <ul>
+    <li>Từ Telegram: gửi prompt → agent thực thi trên máy → kết quả stream về chat.</li>
+    <li>Từ agent: notify ra Telegram khi cần approve tool ngoài policy, khi xong task, khi có lỗi.</li>
+    <li><strong>Multi-session đồng thời</strong>: có thể chạy song song nhiều session — vd "Claude #1 đang refactor module A", "Claude #2 đang viết test cho module B", "Kiro #1 đang fix bug ở project khác" — mỗi session độc lập về context, agent, project.</li>
+    <li>Đổi agent linh hoạt: khi tạo session chọn <code>claude</code> hoặc <code>kiro</code>; sau này extend thêm Cursor / Codex / khác qua adapter interface.</li>
+    <li>Single user — chỉ Telegram ID của mình mới interact được.</li>
+  </ul>
+
+  <h4>Không thuộc scope phase này</h4>
+  <ul>
+    <li>Multi-user / team mode.</li>
+    <li>Cloud-hosted (vẫn local).</li>
+    <li>Voice / file upload phức tạp (chỉ text + screenshot reply trước mắt).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>2. Kiến trúc tổng quan</h2>
+  <div class="arch">┌──────────────┐                ┌─────────────────────────────────────────┐
+│              │   bot API      │              telecode daemon            │
+│   Telegram   │ ◀────────────▶ │  (Node, launchd background service)     │
+│   (mobile)   │   long-poll    │                                         │
+└──────────────┘                │  ┌──────────────┐    ┌───────────────┐  │
+        ▲                       │  │ Bot Router   │───▶│ SessionStore  │  │
+        │ approve via            │  │ (telegraf)   │    │ (SQLite)      │  │
+        │ inline button          │  └──────┬───────┘    └───────────────┘  │
+        │                       │         │                               │
+        │                       │         ▼                               │
+        │                       │  ┌──────────────────────────────┐       │
+        │                       │  │ ApprovalBroker (in-process)  │       │
+        │                       │  │ pendingApprovals: Map<id, P> │◀──┐   │
+        │                       │  └──────────────┬───────────────┘   │   │
+        │                       │                 │                   │   │
+        │                       │                 ▼                   │   │
+        │                       │       ┌──────────────┐              │   │
+        │                       │       │ AgentRouter  │              │   │
+        │                       │       └──┬────────┬──┘              │   │
+        │                       │          │        │                 │   │
+        │                       │          ▼        ▼                 │   │
+        │                       │   ┌────────┐ ┌──────────────┐       │   │
+        │                       │   │Claude  │ │ Kiro adapter │       │   │
+        │                       │   │adapter │ │ (UI auto)    │       │   │
+        │                       │   │(SDK)   │ │              │       │   │
+        │                       │   └───┬────┘ └──────┬───────┘       │   │
+        │                       │       │             │               │   │
+        │  notify + ask ────────┼───────┘             ▼               │   │
+        └───────────────────────┤             ┌──────────────────┐    │   │
+                                │  canUseTool │ Kiro.app         │    │   │
+                                │  hooks      │ (AppleScript /   │    │   │
+                                │  (inline)   │  Accessibility)  │    │   │
+                                │             └──────────────────┘    │   │
+                                │       ▲                             │   │
+                                │       └─────────────────────────────┘   │
+                                │     (callback resolves with allow/deny) │
+                                └─────────────────────────────────────────┘</div>
+
+  <h3>2.1 Các module chính</h3>
+  <div class="grid">
+    <div class="card">
+      <h4>Bot Router</h4>
+      <p><code>grammY</code> + long-polling. Whitelist 1 user ID. Parse commands (<code>/session</code>, <code>/cd</code>, <code>/new</code>...) và plain text prompts.</p>
+    </div>
+    <div class="card">
+      <h4>Session Store</h4>
+      <p>SQLite (<code>better-sqlite3</code>, WAL mode). Tables: <code>projects</code>, <code>sessions</code> (id, label, agent, project_id, chat_id, sdk_session_id, status, created_at), <code>tool_log</code>, <code>approvals</code>. Mỗi chat có active <code>session_id</code>.</p>
+    </div>
+    <div class="card">
+      <h4>SessionManager</h4>
+      <p>Quản vòng đời session: tạo, switch active, list, close, persist resume id. Mỗi session có 1 mutex để serialize prompts trong cùng session. Nhiều session khác nhau chạy song song độc lập.</p>
+    </div>
+    <div class="card">
+      <h4>Agent Router</h4>
+      <p>Dispatch prompt tới adapter đúng theo <code>session.agent</code>. Interface <code>AgentAdapter</code>: <code>start(opts)</code>, <code>send(prompt)</code>, <code>interrupt()</code>, <code>onEvent()</code>. Extensible: Cursor / Codex adapter sau này chỉ cần implement interface.</p>
+    </div>
+    <div class="card">
+      <h4>Claude Adapter</h4>
+      <p><code>@anthropic-ai/claude-agent-sdk</code> với <code>query()</code> streaming. Pass <code>options.canUseTool</code>, <code>options.hooks</code>, <code>options.resume = sessionId</code>, <code>options.settingSources: ['user','project','local']</code> — đồng nhất với local CLI behavior.</p>
+    </div>
+    <div class="card">
+      <h4>Kiro Adapter</h4>
+      <p>Spawn <code>kiro chat --mode agent --reuse-window &lt;prompt&gt;</code> qua <code>execa</code>. Phase 1: fire prompt → notify Telegram "đã gửi vào Kiro IDE, check window". Phase 2 (optional): tail Kiro log file hoặc viết Kiro extension để stream output back.</p>
+    </div>
+    <div class="card">
+      <h4>ApprovalBroker</h4>
+      <p>In-process map &lt;requestId → Promise resolver&gt;. <code>canUseTool</code> callback push pending vào đây, gửi Telegram inline button, await user tap, resolve <code>{behavior: 'allow'|'deny'}</code>. Có timeout fallback.</p>
+    </div>
+    <div class="card">
+      <h4>Notifier</h4>
+      <p>Format event thành Telegram message (markdown). Edit message tại chỗ cho streaming output. Split khi > 3500 ký tự. Debounce + rate-limit để tránh Telegram 429.</p>
+    </div>
+    <div class="card">
+      <h4>Policy Engine</h4>
+      <p>Trong <code>canUseTool</code>: match tool call vs allow/deny pattern config. Allow → auto-resolve. Deny → reject ngay. Otherwise → forward ApprovalBroker. Tất cả in-process, không touch project files.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>3. Permission &amp; Notification flow</h2>
+  <p>Mode: <strong>interactive approve qua <code>canUseTool</code> + inline policy engine</strong>. Đây là pattern modern, idiomatic theo Claude Agent SDK (verified qua Context7).</p>
+  <ol>
+    <li>Mỗi <code>query()</code> được spawn với <code>options.canUseTool = ApprovalBroker.handle</code>.</li>
+    <li>Khi Claude muốn dùng tool, SDK gọi callback async với <code>(toolName, input)</code>.</li>
+    <li>PolicyEngine match:
+      <ul>
+        <li><strong>Allow pattern</strong> (vd <code>Read</code>, <code>Grep</code>, <code>Edit({{cwd}}/**)</code>) → resolve <code>{behavior: 'allow', updatedInput: input}</code> ngay, kèm notify Telegram “🔧 Edit foo.ts” (fire-and-forget).</li>
+        <li><strong>Deny pattern</strong> (vd <code>Bash(rm -rf*)</code>, <code>Bash(git push --force*)</code>) → resolve <code>{behavior: 'deny', message: '...'}</code> ngay.</li>
+        <li><strong>Otherwise</strong> → ApprovalBroker tạo pending request, gửi Telegram inline button [Allow once] [Allow always] [Deny] → await tap → resolve.</li>
+      </ul>
+    </li>
+    <li>Hooks (PreToolUse/Notification/Stop) đăng ký inline qua <code>options.hooks</code> chỉ để <strong>logging/notify</strong>, không quyết định permission (vì canUseTool đã đảm nhiệm).</li>
+    <li>Hook <code>Stop</code> → notify “✅ Done” + tóm tắt 3 dòng cuối + cost/duration.</li>
+  </ol>
+  <div class="card callout">
+    <strong>Tại sao không dùng <code>.claude/settings.json</code>?</strong> SDK chấp nhận <code>options.hooks</code> + <code>options.canUseTool</code> truyền vào trực tiếp ở runtime — gọn, không ghi file rác vào project repo của user, không xung đột với config sẵn có của user trong project. Toàn bộ policy + approval state sống in-process trong daemon.
+  </div>
+  <div class="card">
+    <strong>Timeout fallback:</strong> Nếu user không tap button trong N giây (default 5 phút), ApprovalBroker tự resolve <code>deny</code> để tránh Claude session treo. Configurable per-tool (vd Bash có thể chờ lâu hơn Read).
+  </div>
+</section>
+
+<section>
+  <h2>4. Multi-session model</h2>
+  <p>Một <strong>session</strong> = một thread hội thoại độc lập, gồm:</p>
+  <ul>
+    <li><code>label</code>: tên user-friendly, vd <code>claude-refactor</code>, <code>kiro-bugfix</code>, <code>claude-2</code>.</li>
+    <li><code>agent</code>: <code>claude</code> | <code>kiro</code> | (tương lai) <code>cursor</code>, <code>codex</code>...</li>
+    <li><code>project</code>: path workspace mà agent chạy bên dưới.</li>
+    <li><code>sdk_session_id</code>: id để resume context (chỉ Claude có; Kiro coi mỗi prompt là 1 session IDE).</li>
+    <li><code>status</code>: <code>idle</code> | <code>running</code> | <code>waiting_approval</code>.</li>
+  </ul>
+  <p>Mỗi chat Telegram có <strong>1 active session</strong> tại 1 thời điểm — plain text message gửi vào session đó. Có thể switch giữa các session bằng <code>/session switch</code>. Sessions của các project / agent khác nhau chạy <strong>song song độc lập</strong> trong daemon (mỗi session 1 mutex; không block lẫn nhau).</p>
+
+  <div class="card callout">
+    <strong>Ví dụ flow:</strong>
+    <pre style="margin: 8px 0 0;"><code>/session new claude refactor ~/work/api      → tạo session "refactor" agent=claude, project=api
+hãy refactor module auth                      → gửi prompt vào "refactor"
+/session new kiro bugfix ~/work/mobile        → tạo session "bugfix" agent=kiro, project=mobile
+/session switch refactor                       → quay lại session "refactor"
+status thế nào rồi?                            → tiếp tục chat trong "refactor", có resume context
+/session list                                  → liệt kê cả 2 session + status</code></pre>
+  </div>
+</section>
+
+<section>
+  <h2>5. UX — Telegram commands</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Mô tả</th></tr></thead>
+    <tbody>
+      <tr><td><code>/start</code></td><td>Welcome + show active session + list sessions hiện có.</td></tr>
+      <tr><td colspan="2" style="background: var(--surface-2); font-weight: 600;">Session</td></tr>
+      <tr><td><code>/session new &lt;agent&gt; &lt;label&gt; [path]</code></td><td>Tạo session mới. Vd <code>/session new claude refactor ~/work/api</code>. Path mặc định = project active hiện tại.</td></tr>
+      <tr><td><code>/session list</code></td><td>List tất cả sessions kèm agent, project, status, last activity.</td></tr>
+      <tr><td><code>/session switch &lt;label&gt;</code></td><td>Set active session cho chat. Có thể dùng inline keyboard quick-pick.</td></tr>
+      <tr><td><code>/session rename &lt;new-label&gt;</code></td><td>Đổi label session active.</td></tr>
+      <tr><td><code>/session close [label]</code></td><td>Đóng session (giải phóng resume id). Mặc định = session active.</td></tr>
+      <tr><td><code>/session reset</code></td><td>Giữ session label nhưng wipe resume id → bắt đầu context mới.</td></tr>
+      <tr><td colspan="2" style="background: var(--surface-2); font-weight: 600;">Project</td></tr>
+      <tr><td><code>/projects</code></td><td>Liệt kê project đã register + path.</td></tr>
+      <tr><td><code>/add &lt;path&gt; [name]</code></td><td>Register path làm project (auto-detect name = basename).</td></tr>
+      <tr><td><code>/cd &lt;name|path&gt;</code></td><td>Đổi project cho session active.</td></tr>
+      <tr><td colspan="2" style="background: var(--surface-2); font-weight: 600;">Control</td></tr>
+      <tr><td><code>/stop</code></td><td>Interrupt task đang chạy trong session active (gọi <code>AbortController</code>).</td></tr>
+      <tr><td><code>/status</code></td><td>Show: active session, agent, project, sdk_session_id, status, last 5 tool calls.</td></tr>
+      <tr><td><code>/status logs [n]</code></td><td>Tail n dòng cuối của hook log của session active (mặc định 20). Hữu ích khi task chạy lâu.</td></tr>
+      <tr><td><code>/allow &lt;pattern&gt;</code></td><td>Append pattern vào <code>~/.telecode/policy.yaml</code> (allow list) live.</td></tr>
+      <tr><td><code>/deny &lt;pattern&gt;</code></td><td>Append vào deny list.</td></tr>
+      <tr><td><code>/screenshot</code></td><td>Chụp màn hình gửi về (debug Kiro IDE state).</td></tr>
+      <tr><td><code>&lt;plain text&gt;</code></td><td>Gửi làm prompt tới agent của session active.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>6. Tech stack &amp; dependencies</h2>
+  <table>
+    <thead><tr><th>Layer</th><th>Lib</th><th>Lý do</th></tr></thead>
+    <tbody>
+      <tr><td>Runtime</td><td>Node 22 LTS + TypeScript 5.x (ESM)</td><td>Match Claude Agent SDK, execa v9+ ESM-only.</td></tr>
+      <tr><td>Claude integration</td><td><code>@anthropic-ai/claude-agent-sdk</code> (pin exact version)</td><td>Official, streaming, hooks, canUseTool, resume, settingSources.</td></tr>
+      <tr><td>Kiro integration</td><td><code>kiro chat</code> CLI subcommand</td><td>Spawn qua <code>execa</code>; modes <code>ask|edit|agent</code>; <code>--reuse-window</code>.</td></tr>
+      <tr><td>Telegram</td><td><code>grammy</code> + <code>@grammyjs/runner</code></td><td>Active maintain, TS-first, modern plugin ecosystem (conversations, ratelimiter). Thay <code>telegraf</code> đang stale.</td></tr>
+      <tr><td>HTTP (optional)</td><td><code>hono</code> + <code>@hono/node-server</code></td><td>Chỉ load nếu bật health endpoint / future web UI. Core không cần.</td></tr>
+      <tr><td>Storage</td><td><code>better-sqlite3</code> v12.x (WAL mode)</td><td>Synchronous, zero-config, embedded.</td></tr>
+      <tr><td>Process mgmt</td><td><code>execa</code> v9+</td><td>Spawn Kiro CLI, claude CLI fallback.</td></tr>
+      <tr><td>Logging</td><td><code>pino</code> + <code>pino-roll</code></td><td>Structured, fast, daily rotation + retention 7 ngày.</td></tr>
+      <tr><td>Config</td><td>YAML + <code>zod</code> schema</td><td>Type-safe config validation.</td></tr>
+      <tr><td>Service mgmt</td><td>macOS launchd plist</td><td>Auto-start on login, KeepAlive on crash.</td></tr>
+    </tbody>
+  </table>
+  <p class="footnote">Tất cả version sẽ verify qua Context7 ở M0 trước khi <code>npm i</code>, pin exact, weekly CI canary check.</p>
+</section>
+
+<section>
+  <h2>7. Project layout dự kiến</h2>
+<pre><code>telecode/
+├── docs/
+│   ├── plans/telegram-bridge.html        ← file này
+│   └── design/                            ← SDD sinh trong implementation
+├── src/
+│   ├── index.ts                           ← entry, boot daemon
+│   ├── config.ts                          ← zod schema, load config.yaml + policy.yaml
+│   ├── bot/
+│   │   ├── router.ts                      ← grammY setup, command dispatch
+│   │   ├── commands/                      ← /session, /cd, /allow, /status...
+│   │   ├── keyboards.ts                   ← inline keyboards (approve, session pick)
+│   │   └── notifier.ts                    ← format + send events, debounce
+│   ├── agents/
+│   │   ├── types.ts                       ← AgentAdapter interface
+│   │   ├── claude.ts                      ← Claude Agent SDK adapter
+│   │   ├── kiro.ts                        ← Kiro CLI (`kiro chat`) adapter
+│   │   └── registry.ts                    ← agent factory by name
+│   ├── approval/
+│   │   ├── broker.ts                      ← ApprovalBroker (pending map + resolver)
+│   │   ├── policy.ts                      ← allow/deny pattern matching + policy.yaml r/w
+│   │   └── hooks.ts                       ← inline hook callbacks (logging/notify)
+│   ├── session/
+│   │   ├── manager.ts                     ← create/switch/list/close + per-session mutex
+│   │   ├── store.ts                       ← SQLite layer
+│   │   └── schema.sql
+│   └── util/
+├── scripts/
+│   ├── install-launchd.sh                 ← cài service + TCC guide
+│   └── uninstall-launchd.sh
+├── config.example.yaml
+├── policy.example.yaml
+├── package.json
+├── tsconfig.json
+└── README.md
+</code></pre>
+</section>
+
+<section>
+  <h2>8. Cấu trúc config</h2>
+  <p>Tách 2 file: <code>config.yaml</code> (read-only sau khi user setup, daemon không bao giờ ghi) và <code>policy.yaml</code> (live, daemon có thể append qua <code>/allow</code>/<code>/deny</code>; user cũng edit tay được).</p>
+
+<pre><code># ~/.telecode/config.yaml  (user edits, daemon read-only)
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}         # env var, không commit
+  allowed_user_ids: [675265747]            # koi (@u2526)
+daemon:
+  log_dir: ~/.telecode/logs
+  approval_timeout_sec: 300                # canUseTool timeout fallback → deny
+  workspace_scan:                          # auto-register project khi boot
+    roots: [~/Documents/workspaces]
+    max_depth: 1                           # chỉ subfolder cấp 1
+    exclude: [node_modules, .git, dist, build]
+agents:
+  claude:
+    binary: claude                         # PATH lookup
+    setting_sources: [user, project, local]  # đồng nhất local CLI behavior
+  kiro:
+    binary: kiro
+    default_mode: agent                    # ask | edit | agent
+defaults:
+  agent: claude
+session_switch_preview_lines: 3            # show 3 last lines khi /session switch
+# projects: auto-populated từ workspace_scan; có thể override/add tay ở đây
+</code></pre>
+
+<pre><code># ~/.telecode/policy.yaml  (live; daemon + user co-edit, atomic write)
+allow:                                     # auto-resolve in canUseTool
+  - Read
+  - Grep
+  - Glob
+  - "Edit({{project_dir}}/**)"
+  - "Write({{project_dir}}/**)"
+  - "Bash(npm test*)"
+  - "Bash(npm run *)"
+  - "Bash(git status*)"
+  - "Bash(git diff*)"
+  - "Bash(git log*)"
+deny:                                      # auto-deny in canUseTool
+  - "Bash(rm -rf*)"
+  - "Bash(git push --force*)"
+  - "Bash(curl * | sh*)"
+  - "Edit(~/.ssh/**)"
+  - "Edit(~/.aws/**)"
+# everything else → Telegram inline button
+</code></pre>
+  <p class="footnote">Race condition giữa user-edit và daemon-write giải quyết bằng: daemon dùng <code>fs.watchFile</code> reload khi user save; mọi write từ daemon dùng atomic rename (tmp file + rename); SQLite vẫn là source of truth cho "always allow" trong session hiện tại, policy.yaml chỉ là persistence layer.</p>
+</section>
+
+<section>
+  <h2>9. Milestones &amp; deliverables</h2>
+
+  <h3>M0 — Foundation (1 buổi)</h3>
+  <ul class="checklist">
+    <li>Bootstrap Node 22 + TS ESM project, ESLint/Prettier, zod schemas cho config + policy.</li>
+    <li>Verify + pin exact version các lib qua Context7 (claude-agent-sdk, grammy, better-sqlite3, execa, pino, zod). Ghi vào SDD.</li>
+    <li>SQLite schema + migration: <code>projects</code>, <code>sessions</code>, <code>tool_log</code>, <code>approvals</code>. WAL mode.</li>
+    <li>launchd plist + install/uninstall script (start/stop/log tail, check Node version).</li>
+    <li><strong>BotFather wizard</strong> trong install script: hướng dẫn user mở Telegram → <code>@BotFather</code> → <code>/newbot</code> → paste token vào <code>~/.telecode/.env</code> (chmod 600).</li>
+    <li>Workspace scanner: scan <code>~/Documents/workspaces/*</code> depth 1, auto-register làm project.</li>
+  </ul>
+
+  <h3>M1 — Telegram round-trip + SessionManager (1-2 buổi)</h3>
+  <ul class="checklist">
+    <li>grammY bot connect, whitelist user_id <code>675265747</code>, <code>/start</code> + <code>/status</code>.</li>
+    <li>Project commands: <code>/projects</code> (auto-populated từ scan), <code>/add</code>, <code>/cd</code>.</li>
+    <li><strong>Session commands</strong>: <code>/session new|list|switch|rename|close|reset</code> với inline keyboard cho quick switch.</li>
+    <li><strong>Switch preview</strong>: <code>/session switch &lt;label&gt;</code> reply "📍 [label]" + 3 dòng cuối của transcript session đó để gợi nhớ context.</li>
+    <li>Echo bot — plain text → "[session-label] echo: ..." (chưa qua agent, validate routing đúng).</li>
+    <li>Per-session mutex framework sẵn sàng (chưa wire agent).</li>
+  </ul>
+
+  <h3>M2 — Claude adapter + streaming (2 buổi)</h3>
+  <ul class="checklist">
+    <li>Spawn Claude session via SDK <code>query()</code> với <code>cwd</code>, <code>settingSources: ['user','project','local']</code>, <code>resume</code>.</li>
+    <li>Stream assistant messages → edit Telegram message (debounce 700ms, token-bucket rate-limit).</li>
+    <li>Lưu &amp; reuse <code>session_id</code> để resume cross-restart.</li>
+    <li><code>/session reset</code>, <code>/stop</code> (AbortController) hoạt động.</li>
+    <li>Multi-session smoke test: 2 sessions Claude khác project chạy song song không block.</li>
+  </ul>
+
+  <h3>M3 — canUseTool + Policy + interactive approve (1-2 buổi)</h3>
+  <ul class="checklist">
+    <li><code>ApprovalBroker</code>: Map&lt;requestId, {resolve, reject, timer, sessionId}&gt;, gửi Telegram message với inline buttons [Allow once] [Allow always] [Deny] + label session để biết approval thuộc session nào.</li>
+    <li><code>PolicyEngine</code>: glob pattern matching; load + watch <code>policy.yaml</code>; <code>/allow</code>/<code>/deny</code> atomic-append.</li>
+    <li>Wire <code>canUseTool</code> vào Claude adapter: policy → broker → resolve back.</li>
+    <li>Register <code>options.hooks</code> inline (PreToolUse/Stop) cho logging vào <code>tool_log</code> + notify (không quyết định permission).</li>
+    <li>Timeout fallback: hết <code>approval_timeout_sec</code> → auto-deny + Telegram báo.</li>
+    <li><code>/status logs [n]</code> tail từ <code>tool_log</code> table cho session active.</li>
+  </ul>
+
+  <h3>M4 — Kiro adapter via CLI (1 buổi)</h3>
+  <ul class="checklist">
+    <li>Spawn <code>kiro chat --mode agent --reuse-window &lt;prompt&gt;</code> qua execa, <code>cwd</code> = project path.</li>
+    <li>Notify Telegram: "✉️ Đã gửi prompt vào Kiro IDE window. Mở Kiro để xem agent run." (phase 1 fire-and-forget).</li>
+    <li><code>/screenshot</code> helper (dùng <code>screencapture</code> CLI macOS, không cần Accessibility) để check Kiro UI state từ xa.</li>
+    <li><strong>Stretch goal phase 2</strong>: tail Kiro log dir hoặc viết Kiro extension để stream output. KHÔNG block M4.</li>
+    <li>E2E: <code>/session new kiro x ~/some-project</code> + plain text → Kiro window mở với prompt loaded.</li>
+  </ul>
+
+  <h3>M5 — Hardening (1 buổi)</h3>
+  <ul class="checklist">
+    <li>Crash recovery: launchd KeepAlive + on-boot scan <code>sessions WHERE status='running'</code> → mark 'interrupted' + notify per-session.</li>
+    <li>Secret scrubbing: pino redact (<code>bot_token</code>, <code>Authorization</code>, <code>ANTHROPIC_API_KEY</code>) + notifier regex scrub (<code>\d+:[A-Za-z0-9_-]{35}</code>, <code>sk-ant-*</code>).</li>
+    <li>Log rotation: <code>pino-roll</code> daily, retention 7 ngày.</li>
+    <li>Per-session mutex enforce: prompt mới khi session đang busy → "⏳ busy, /stop hoặc enqueue?".</li>
+    <li>Streaming message rotation (post mới mỗi 50 edits / 3500 chars / 5 phút).</li>
+    <li>Atomic policy.yaml write (tmp + rename); reload trên <code>fs.watchFile</code>.</li>
+    <li>E2E test script: gửi prompt từ Telegram → verify code thay đổi đúng project, đúng session.</li>
+    <li>README + install guide (BotFather setup, multi-session usage, troubleshooting).</li>
+  </ul>
+</section>
+
+<section>
+  <h2>10. Risk register</h2>
+  <table>
+    <thead><tr><th>Risk</th><th>Sev</th><th>Mitigation</th></tr></thead>
+    <tbody>
+      <tr><td><code>kiro chat</code> CLI subcommand không stream output ra stdout — chỉ load prompt vào IDE window. Bot không "đọc" được agent reply.</td><td><span class="badge p1">P1</span></td><td>Phase 1: fire-and-notify, user mở Kiro IDE để xem. Phase 2 stretch: tail Kiro log file (<code>~/Library/Application Support/Kiro/logs/</code>) hoặc viết extension publish events. Document hạn chế rõ trong README.</td></tr>
+      <tr><td>Kiro CLI có thể đổi flags / subcommand giữa các version (forked VS Code, evolve nhanh)</td><td><span class="badge p2">P2</span></td><td>Wrap <code>kiro chat</code> invocation trong adapter; capability detect ở startup (<code>kiro chat --help</code>); pin tested version trong README.</td></tr>
+      <tr><td>Telegram bot token leak → ai cũng spawn được Claude trên máy</td><td><span class="badge p0">P0</span></td><td>Token chỉ trong env var (<code>~/.telecode/.env</code>, chmod 600); whitelist user ID cứng; log scrub; nếu detect lạ → daemon panic-exit.</td></tr>
+      <tr><td>Policy allow pattern quá rộng → Claude tự chạy lệnh phá máy</td><td><span class="badge p0">P0</span></td><td>PolicyEngine default-deny mọi <code>Bash(rm*)</code>, <code>git push --force</code>, <code>curl|sh</code>; allow tối thiểu; mọi <code>Edit/Write</code> pattern phải scope dưới <code>{{project_dir}}</code>; tool ngoài pattern → bắt buộc human approve qua Telegram; periodic audit qua hook log.</td></tr>
+      <tr><td>Telegram edit rate limit thực tế: Bot API không document số chính xác cho <code>editMessageText</code> (đồn ~1 edit/sec per chat, hard cap 30 msg/sec global). Debounce 700ms vẫn có thể trigger 429 khi stream dày.</td><td><span class="badge p2">P2</span></td><td>Token-bucket per chat (1 edit/sec, burst 3); khi 429 → đọc <code>retry_after</code> từ response, back off đúng số giây đó; gom token thành chunk có ý nghĩa; nếu queue dài → rotate sang message mới thay vì edit.</td></tr>
+      <tr><td>Claude session resume fail (session expired / SDK bump)</td><td><span class="badge p2">P2</span></td><td>Catch lỗi, fallback start fresh, báo Telegram “session reset”.</td></tr>
+      <tr><td>Daemon crash giữa task → user không biết</td><td><span class="badge p1">P1</span></td><td>launchd KeepAlive; trên boot, check tasks <code>status=running</code> trong SQLite và gửi “⚠️ Daemon restarted, task X gián đoạn” trước khi tiếp tục.</td></tr>
+      <tr><td>Macbook sleep → bot offline</td><td><span class="badge p3">P3</span></td><td>Tài liệu hóa <code>caffeinate</code>/Amphetamine; có thể plan 2: relay qua VPS sau này.</td></tr>
+      <tr><td>Concurrent prompts cùng 1 session → race trên session_id + tool approvals đan xen</td><td><span class="badge p1">P1</span></td><td>Per-session mutex/queue trong SessionManager (1 active <code>query()</code> per session). Prompt mới khi đang busy → reply "⏳ busy, /stop hoặc enqueue?". Sessions khác chạy song song không bị block. SQLite WAL mode cho concurrent read.</td></tr>
+      <tr><td>Multi-session UX confusion: user gửi text nhưng quên session active → prompt đi nhầm session</td><td><span class="badge p2">P2</span></td><td>Mỗi message reply prefix với <code>[session-label]</code> để user thấy rõ context. <code>/status</code> hiển thị active session ngay top. Approval message luôn ghi label session trong button.</td></tr>
+      <tr><td>Approval message với nhiều session đồng thời pending → user không biết cái nào của session nào → tap nhầm</td><td><span class="badge p2">P2</span></td><td>Approval message bắt buộc include <code>[session-label]</code> + tool name + 1 dòng input preview. Inline button callback_data encode <code>requestId</code> unique (không phải tool name).</td></tr>
+      <tr><td>Long-running task (&gt;1h) → Telegram message bị edit quá nhiều lần / chain reset / SDK abort timeout</td><td><span class="badge p2">P2</span></td><td>Rotate streaming message mỗi N phút hoặc M chars (post message mới, stop edit cũ). <code>AbortController</code> không có timeout mặc định — chỉ abort khi user <code>/stop</code> hoặc canUseTool timeout.</td></tr>
+      <tr><td>Network loss giữa task → telegraf long-poll fail / Claude SDK request fail</td><td><span class="badge p2">P2</span></td><td>telegraf tự retry long-poll; bot wrap send trong retry-with-backoff; nếu Claude query throw mid-stream → catch, persist partial state, notify "🌐 network blip, retry với /resume".</td></tr>
+      <tr><td>Claude Agent SDK bump major version → API drift (canUseTool / hooks signature)</td><td><span class="badge p1">P1</span></td><td>Pin exact version trong <code>package.json</code> (không caret). Adapter interface đã abstract — chỉ <code>claude.ts</code> cần update khi bump. CI test thử latest weekly để phát hiện sớm.</td></tr>
+      <tr><td>macOS Gatekeeper / launchd ký số — daemon chạy node thuần không cần notarize. <code>screencapture</code> cho <code>/screenshot</code> cần "Screen Recording" permission.</td><td><span class="badge p3">P3</span></td><td>Đã drop AppleScript (Kiro dùng CLI), giảm scope TCC đáng kể. Chỉ cần Screen Recording grant nếu user muốn dùng <code>/screenshot</code>. Install script document bước này (optional).</td></tr>
+      <tr><td>Telegram bot privacy mode mặc định ON → bot không nhận được message non-command trong group (nếu lỡ thêm vào group)</td><td><span class="badge p3">P3</span></td><td>Single-user nên dùng private chat — non-issue. Document: không add bot vào group. Whitelist chat_id (không chỉ user_id) nếu paranoid.</td></tr>
+      <tr><td>Secret leak qua log/notify (token, env, file content nhạy cảm)</td><td><span class="badge p1">P1</span></td><td>pino redact list: <code>bot_token</code>, <code>Authorization</code>, <code>ANTHROPIC_API_KEY</code>. Notifier scrub regex cho token Telegram (<code>\d+:[A-Za-z0-9_-]{35}</code>) và API keys (<code>sk-ant-*</code>) trước khi gửi.</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>11. Acceptance criteria (cho consolidate phase)</h2>
+  <ol>
+    <li>Daemon cài bằng <code>./scripts/install-launchd.sh</code>, tự start sau reboot.</li>
+    <li>Từ Telegram, <code>/session new claude smoke ~/Documents/workspaces/telecode</code> → gửi "list files in src" → nhận danh sách thật từ project.</li>
+    <li>Gửi prompt sửa code → file trên máy đổi đúng, session resume ở prompt kế (cross-restart cũng OK).</li>
+    <li><strong>Multi-session</strong>: tạo 2 session Claude khác project + 1 session Kiro, switch qua lại bằng <code>/session switch</code>, mỗi session giữ context riêng, không lẫn.</li>
+    <li>Khi Claude định chạy lệnh ngoài allow/deny pattern (vd <code>git push</code>) → Telegram nhận message với header <code>[session-label]</code> + inline buttons [Allow once] [Allow always] [Deny] trong &lt; 2s; tap → đẩy ngược vào <code>canUseTool</code> đúng session, Claude tiếp tục.</li>
+    <li>Hook log lưu mọi tool call trong 7 ngày, <code>/status logs 30</code> show 30 dòng cuối của session active.</li>
+    <li>Approval timeout: không tap trong 5 phút → auto-deny + Telegram báo "⏱ timeout, denied" kèm session label.</li>
+    <li><code>/session new kiro x ~/some-project</code> + plain text → Kiro IDE window mở với prompt loaded ở chat panel mode agent.</li>
+    <li><code>/allow Bash(npm run lint)</code> append vào <code>policy.yaml</code>; user edit <code>policy.yaml</code> ngoài daemon → daemon tự reload qua <code>fs.watchFile</code>.</li>
+    <li>Không có dependency nào ở trạng thái deprecated tại thời điểm ship (verify Context7).</li>
+    <li>Senior review pass — không còn <code>[P0]</code>/<code>[P1]</code> finding.</li>
+  </ol>
+</section>
+
+<section>
+  <h2>12. Decisions (đã chốt)</h2>
+  <table>
+    <thead><tr><th>Câu hỏi</th><th>Quyết định</th></tr></thead>
+    <tbody>
+      <tr><td>Bot token</td><td>Chưa có → install script bao gồm BotFather wizard (M0).</td></tr>
+      <tr><td>Whitelist user_id</td><td><code>675265747</code> (koi, @u2526) — hardcode vào <code>config.example.yaml</code>.</td></tr>
+      <tr><td>Project seed</td><td>Auto-scan <code>~/Documents/workspaces/*</code> depth 1, exclude <code>node_modules/.git/dist/build</code>. User có thể <code>/add</code> path khác sau.</td></tr>
+      <tr><td>Switch preview</td><td>Bot reply "📍 [label]" + 3 dòng transcript cuối của session đó.</td></tr>
+      <tr><td>Kiro stream-back</td><td>STRETCH — sau M5. M4 chỉ fire-and-notify.</td></tr>
+      <tr><td>canUseTool interactive approve</td><td>Phase 1 (M3).</td></tr>
+      <tr><td>settingSources</td><td><code>['user','project','local']</code>.</td></tr>
+      <tr><td>Policy persistence</td><td><code>~/.telecode/policy.yaml</code> riêng, atomic write + fs.watchFile reload.</td></tr>
+      <tr><td>Bot framework</td><td>grammY.</td></tr>
+      <tr><td><code>/status logs</code></td><td>Giữ.</td></tr>
+    </tbody>
+  </table>
+  <p class="footnote">Plan v0.4 = ready-to-implement. Sau senior review pass → kick off sub-agent DAG.</p>
+</section>
+
+<hr />
+<p class="footnote">Plan này tuân theo workflow rule global: chưa được approve thì chưa code. Sau khi user OK, implementation sẽ chạy qua sub-agent DAG với SDD song song tại <code>docs/design/telegram-bridge.html</code>, kết thúc bằng senior review (Opus 4.7) + scope completeness + Context7 tech freshness check.</p>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,21 @@
+# ~/.telecode/config.yaml — user edits, daemon is read-only.
+telegram:
+  bot_token: ${TELEGRAM_BOT_TOKEN}     # loaded from ~/.telecode/.env
+  allowed_user_ids: [675265747]        # koi (@u2526)
+daemon:
+  log_dir: ~/.telecode/logs
+  approval_timeout_sec: 300
+  workspace_scan:
+    roots: [~/Documents/workspaces]
+    max_depth: 1
+    exclude: [node_modules, .git, dist, build]
+agents:
+  claude:
+    binary: claude
+    setting_sources: [user, project, local]
+  kiro:
+    binary: kiro
+    default_mode: agent
+defaults:
+  agent: claude
+session_switch_preview_lines: 3
