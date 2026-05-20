@@ -73,10 +73,16 @@ function renderInputForMatch(toolName: string, input: unknown): string {
   if (typeof input === 'string') return input;
   if (input && typeof input === 'object') {
     const o = input as Record<string, unknown>;
-    // common shapes
+    // Claude tools
     if (toolName === 'Bash' && typeof o.command === 'string') return o.command;
     if ((toolName === 'Edit' || toolName === 'Write' || toolName === 'Read') && typeof o.file_path === 'string') {
       return o.file_path;
+    }
+    // Kiro-CLI tools (preToolUse hook payload uses lowercase names)
+    if (toolName === 'shell' && typeof o.command === 'string') return o.command;
+    if ((toolName === 'fs_read' || toolName === 'fs_write' || toolName === 'read' || toolName === 'write') &&
+        typeof o.path === 'string') {
+      return o.path;
     }
     if (typeof o.path === 'string') return o.path;
     try {

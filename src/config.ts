@@ -13,6 +13,8 @@ const ConfigSchema = z.object({
   daemon: z.object({
     log_dir: z.string(),
     approval_timeout_sec: z.number().int().positive().default(300),
+    /** Loopback port for the Kiro preToolUse hook server. 0 = ephemeral (recommended). */
+    kiro_hook_port: z.number().int().min(0).max(65535).default(0),
     workspace_scan: z
       .object({
         roots: z.array(z.string()).default([]),
@@ -32,12 +34,11 @@ const ConfigSchema = z.object({
       // kiro-cli binary (separate from the `kiro` IDE launcher). Supports
       // headless `chat --no-interactive` with stdout streaming + resume-id.
       binary: z.string().default('kiro-cli'),
-      // Tool names the kiro-cli process is allowed to invoke without prompting.
-      // Empty = trust nothing (model can answer but cannot read/write files).
-      // Safe defaults focus on read-only inspection; widen via /allow as needed.
-      trust_tools: z.array(z.string()).default(['fs_read']),
-      // Optional kiro-cli agent profile (--agent) and model (--model).
+      // Optional kiro-cli agent override. Default = `telecode` (the agent the
+      // daemon writes to ~/.kiro/agents/telecode.json on startup). Override
+      // only if you want to point at a different custom agent.
       agent: z.string().optional(),
+      // Optional model override (--model).
       model: z.string().optional(),
     }),
   }),

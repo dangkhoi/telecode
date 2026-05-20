@@ -73,6 +73,10 @@ export class SessionStore {
   listProjects(): ProjectRow[] {
     return this.db.prepare(`SELECT * FROM projects ORDER BY name`).all() as ProjectRow[];
   }
+  getProject(id: number | null): ProjectRow | undefined {
+    if (id == null) return undefined;
+    return this.db.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined;
+  }
   findProject(nameOrPath: string): ProjectRow | undefined {
     return this.db
       .prepare(`SELECT * FROM projects WHERE name = ? OR path = ? LIMIT 1`)

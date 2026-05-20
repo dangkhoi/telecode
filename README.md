@@ -332,6 +332,34 @@ Patterns dùng glob đơn giản:
 
 **Best practice**: deny rộng (vd `Bash(rm*)`), allow hẹp (vd `Bash(npm test*)` không phải `Bash(npm*)`).
 
+### Cùng policy cho cả Claude và Kiro
+
+Policy engine xử lý chung cả 2 agent. Khác biệt là tool name format:
+
+| Agent | Tool name | Input shape |
+| --- | --- | --- |
+| Claude | `Bash`, `Edit`, `Write`, `Read`, `Grep`, `Glob` | `{ command }`, `{ file_path }` |
+| Kiro | `shell`, `write`, `read`, `fs_read`, `fs_write` | `{ command }`, `{ path }` |
+
+Mỗi pattern phải dùng đúng tool name của agent:
+
+```yaml
+allow:
+  # Claude
+  - Read
+  - "Bash(npm test*)"
+  - "Edit({{project_dir}}/**)"
+  # Kiro
+  - read
+  - "shell(npm test*)"
+  - "write({{project_dir}}/**)"
+deny:
+  - "Bash(rm -rf*)"
+  - "shell(rm -rf*)"
+```
+
+Cơ chế bridge: daemon sinh `~/.kiro/agents/telecode.json` có `preToolUse` hook trỏ về loopback HTTP server của daemon. Mỗi tool call kiro-cli → daemon decide → exit code 0 (allow) hoặc 2 (deny + lý do về model). Cùng `ApprovalBroker` → cùng inline button UX như Claude.
+
 ---
 
 ## Logs & debugging
@@ -486,12 +514,10 @@ Tóm tắt stack:
 
 - **macOS only** (launchd). Linux/Windows hỗ trợ sau (cần systemd / service manager).
 - **Single user per daemon** — multi-tenant không support. Mỗi người 1 daemon + 1 bot riêng.
-- **Kiro permission gating per-session** — kiro-cli không hỗ trợ interactive approve mid-session như Claude `canUseTool`. Trust list phải set trước (config `agents.kiro.trust_tools` hoặc `/allow` rồi restart session). Mở rộng trust list sau session restart sẽ apply lần kế.
 - **Mac sleep → bot offline** — chưa có VPS relay mode.
 - **Không có web UI** — quản qua Telegram + edit YAML là chính.
 
 Roadmap ngắn:
-- Kiro interactive permission via wrapper PTY (mid-session approve).
 - Linux/systemd support.
 - VPS relay mode cho 24/7.
 - Cursor / Codex adapter qua interface chung.

@@ -15,8 +15,7 @@ agents:
     setting_sources: [user, project, local]
   kiro:
     binary: kiro-cli                   # NOT the `kiro` IDE launcher — needs the headless `kiro-cli` (v2.3+)
-    trust_tools: [fs_read]             # tools kiro-cli may run without prompt; widen via /allow
-    # agent: my-agent                  # optional: kiro-cli --agent
+    # agent: telecode                  # default = `telecode` (auto-generated at ~/.kiro/agents/telecode.json with preToolUse hook → daemon)
     # model: claude-sonnet-4.6         # optional: kiro-cli --model
 defaults:
   agent: claude

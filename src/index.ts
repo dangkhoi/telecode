@@ -1,3 +1,6 @@
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { loadConfig } from './config.js';
 import { SessionStore } from './session/store.js';
 import { SessionManager } from './session/manager.js';
@@ -8,6 +11,17 @@ import { scanWorkspaces } from './util/workspace-scanner.js';
 import { startBot } from './bot/router.js';
 import { logger } from './util/logger.js';
 import { POLICY_PATH } from './util/paths.js';
+import { KiroHookServer } from './util/kiro-hook-server.js';
+import { writeKiroTelecodeAgent } from './agents/kiro-agent-config.js';
+
+function resolveGateScript(): string {
+  // Find the compiled cli/kiro-gate.js next to this file (dist/) or fall back
+  // to the source path when running via tsx.
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [resolve(here, 'cli/kiro-gate.js'), resolve(here, '../src/cli/kiro-gate.ts')];
+  for (const c of candidates) if (existsSync(c)) return c;
+  return candidates[0]!;
+}
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -19,6 +33,17 @@ async function main(): Promise<void> {
 
   const broker = new ApprovalBroker({ timeoutMs: config.daemon.approval_timeout_sec * 1000 });
 
+  // Kiro hook bridge: HTTP loopback receiver + write the custom agent so
+  // kiro-cli's preToolUse routes here for policy + Telegram approval.
+  const kiroHookServer = new KiroHookServer({ port: config.daemon.kiro_hook_port, store, policy, broker });
+  const kiroHookPort = await kiroHookServer.start();
+  const gateScriptPath = resolveGateScript();
+  writeKiroTelecodeAgent({
+    gateScriptPath,
+    approvalTimeoutMs: config.daemon.approval_timeout_sec * 1000,
+    model: config.agents.kiro.model,
+  });
+
   const registry = new AgentRegistry({
     claude: {
       broker,
@@ -28,9 +53,9 @@ async function main(): Promise<void> {
     },
     kiro: {
       binary: config.agents.kiro.binary,
-      trustTools: config.agents.kiro.trust_tools,
-      agent: config.agents.kiro.agent,
+      agent: config.agents.kiro.agent ?? 'telecode',
       model: config.agents.kiro.model,
+      gateUrl: kiroHookServer.url(),
     },
   });
 
@@ -78,6 +103,7 @@ async function main(): Promise<void> {
     logger.info({ sig }, 'shutdown');
     clearInterval(pruneTimer);
     policy.stop();
+    await kiroHookServer.stop();
     await started.stop();
     store.close();
     process.exit(0);

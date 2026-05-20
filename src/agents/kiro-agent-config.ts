@@ -1,0 +1,57 @@
+import { mkdirSync, writeFileSync, readFileSync, existsSync, renameSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { KIRO_AGENTS_DIR, KIRO_TELECODE_AGENT } from '../util/paths.js';
+import { logger } from '../util/logger.js';
+
+export interface KiroAgentConfigOpts {
+  /** Absolute path to the compiled kiro-gate.js shipped with this daemon. */
+  gateScriptPath: string;
+  /** Timeout in ms for kiro-cli to wait on the preToolUse hook. */
+  approvalTimeoutMs: number;
+  /** Optional model override. */
+  model?: string;
+}
+
+/**
+ * Generate (or refresh) `~/.kiro/agents/telecode.json`. The agent grants
+ * unrestricted tool surface (so the model isn't pre-censored) but funnels every
+ * tool call through our `preToolUse` hook, which calls back to the running
+ * daemon for policy + Telegram approval. This is the bridge that gives Kiro
+ * Claude-like interactive permissions.
+ */
+export function writeKiroTelecodeAgent(opts: KiroAgentConfigOpts): void {
+  mkdirSync(KIRO_AGENTS_DIR, { recursive: true });
+
+  const config: Record<string, unknown> = {
+    name: 'telecode',
+    description: 'Telecode-managed agent. preToolUse calls back to the Telecode daemon for policy + Telegram approval.',
+    // No `prompt` override — fall through to kiro-cli default behaviour.
+    tools: ['*'],
+    allowedTools: ['*'],
+    hooks: {
+      preToolUse: [
+        {
+          command: opts.gateScriptPath,
+          timeout_ms: opts.approvalTimeoutMs,
+        },
+      ],
+    },
+  };
+  if (opts.model) config.model = opts.model;
+
+  const next = JSON.stringify(config, null, 2) + '\n';
+  if (existsSync(KIRO_TELECODE_AGENT)) {
+    try {
+      const prev = readFileSync(KIRO_TELECODE_AGENT, 'utf8');
+      if (prev === next) return;
+    } catch {
+      /* fall through to write */
+    }
+  }
+  // Atomic write to survive concurrent kiro-cli reads.
+  const tmp = `${KIRO_TELECODE_AGENT}.tmp.${process.pid}`;
+  mkdirSync(dirname(tmp), { recursive: true });
+  writeFileSync(tmp, next, { mode: 0o600 });
+  renameSync(tmp, KIRO_TELECODE_AGENT);
+  logger.info({ path: KIRO_TELECODE_AGENT }, 'kiro telecode agent config written');
+}
