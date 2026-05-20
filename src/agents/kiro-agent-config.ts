@@ -18,6 +18,19 @@ export interface KiroAgentConfigOpts {
  * tool call through our `preToolUse` hook, which calls back to the running
  * daemon for policy + Telegram approval. This is the bridge that gives Kiro
  * Claude-like interactive permissions.
+ *
+ * MCP inheritance: `includeMcpJson: true` makes the agent pick up the global
+ * `~/.kiro/settings/mcp.json` server list (e.g. ai-dlc, context7, fetch) just
+ * like the user's default desktop Kiro agent does. Without this flag, custom
+ * agents start with an empty MCP server set and the user gets confused why
+ * their tools "disappeared" when prompting via Telegram. Bug discovered post
+ * v0.8 when ai-dlc tools were unreachable from Telecode-driven Kiro sessions.
+ *
+ * Tool wildcards: `*` covers built-in tools (read/write/shell/grep/…) and
+ * `@*` covers ALL MCP tools (any server, any method). Without `@*`, the agent
+ * would only see built-ins even with `includeMcpJson: true` providing the
+ * server configs. Per kiro-cli's tools[] schema, MCP tools must be named via
+ * `@server` or `@server/tool` patterns.
  */
 export function writeKiroTelecodeAgent(opts: KiroAgentConfigOpts): void {
   mkdirSync(KIRO_AGENTS_DIR, { recursive: true });
@@ -26,8 +39,9 @@ export function writeKiroTelecodeAgent(opts: KiroAgentConfigOpts): void {
     name: 'telecode',
     description: 'Telecode-managed agent. preToolUse calls back to the Telecode daemon for policy + Telegram approval.',
     // No `prompt` override — fall through to kiro-cli default behaviour.
-    tools: ['*'],
-    allowedTools: ['*'],
+    tools: ['*', '@*'],
+    allowedTools: ['*', '@*'],
+    includeMcpJson: true,
     hooks: {
       preToolUse: [
         {
