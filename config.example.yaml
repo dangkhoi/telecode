@@ -1,7 +1,7 @@
 # ~/.telecode/config.yaml — user edits, daemon is read-only.
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}     # loaded from ~/.telecode/.env
-  allowed_user_ids: [675265747]        # koi (@u2526)
+  allowed_user_ids: [123456789]        # ← THAY bằng user_id của bạn (lấy qua @userinfobot)
 daemon:
   log_dir: ~/.telecode/logs
   approval_timeout_sec: 300

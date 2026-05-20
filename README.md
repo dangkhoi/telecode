@@ -94,7 +94,7 @@ Telecode chỉ accept message từ user_id trong whitelist. Cách lấy id:
 2. Bấm **Start**. Bot sẽ reply ngay 1 message kiểu:
    ```
    👤 You
-   ├ id: 675265747
+   ├ id: 123456789
    ├ is_bot: false
    ├ first_name: ...
    └ username: ...
@@ -131,7 +131,7 @@ Sửa 2 chỗ:
 
 ```yaml
 telegram:
-  allowed_user_ids: [675265747]    # ← THAY bằng user_id của BẠN (lấy ở bước 3)
+  allowed_user_ids: [123456789]    # ← THAY bằng user_id của BẠN (lấy ở bước 3)
 
 daemon:
   workspace_scan:

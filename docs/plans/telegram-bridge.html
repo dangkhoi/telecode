@@ -501,7 +501,7 @@ status thế nào rồi?                            → tiếp tục chat trong 
 <pre><code># ~/.telecode/config.yaml  (user edits, daemon read-only)
 telegram:
   bot_token: ${TELEGRAM_BOT_TOKEN}         # env var, không commit
-  allowed_user_ids: [675265747]            # koi (@u2526)
+  allowed_user_ids: [123456789]            # koi (@u2526)
 daemon:
   log_dir: ~/.telecode/logs
   approval_timeout_sec: 300                # canUseTool timeout fallback → deny
@@ -560,7 +560,7 @@ deny:                                      # auto-deny in canUseTool
 
   <h3>M1 — Telegram round-trip + SessionManager (1-2 buổi)</h3>
   <ul class="checklist">
-    <li>grammY bot connect, whitelist user_id <code>675265747</code>, <code>/start</code> + <code>/status</code>.</li>
+    <li>grammY bot connect, whitelist user_id <code>123456789</code>, <code>/start</code> + <code>/status</code>.</li>
     <li>Project commands: <code>/projects</code> (auto-populated từ scan), <code>/add</code>, <code>/cd</code>.</li>
     <li><strong>Session commands</strong>: <code>/session new|list|switch|rename|close|reset</code> với inline keyboard cho quick switch.</li>
     <li><strong>Switch preview</strong>: <code>/session switch &lt;label&gt;</code> reply "📍 [label]" + 3 dòng cuối của transcript session đó để gợi nhớ context.</li>
@@ -658,7 +658,7 @@ deny:                                      # auto-deny in canUseTool
     <thead><tr><th>Câu hỏi</th><th>Quyết định</th></tr></thead>
     <tbody>
       <tr><td>Bot token</td><td>Chưa có → install script bao gồm BotFather wizard (M0).</td></tr>
-      <tr><td>Whitelist user_id</td><td><code>675265747</code> (koi, @u2526) — hardcode vào <code>config.example.yaml</code>.</td></tr>
+      <tr><td>Whitelist user_id</td><td><code>123456789</code> (koi, @u2526) — hardcode vào <code>config.example.yaml</code>.</td></tr>
       <tr><td>Project seed</td><td>Auto-scan <code>~/Documents/workspaces/*</code> depth 1, exclude <code>node_modules/.git/dist/build</code>. User có thể <code>/add</code> path khác sau.</td></tr>
       <tr><td>Switch preview</td><td>Bot reply "📍 [label]" + 3 dòng transcript cuối của session đó.</td></tr>
       <tr><td>Kiro stream-back</td><td>STRETCH — sau M5. M4 chỉ fire-and-notify.</td></tr>
