@@ -1,6 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
+// IMPORTANT: install the stdout/stderr scrubber BEFORE any other import that
+// might write to console (notably grammY / node-fetch error logging which
+// includes the full bot-token-bearing URL on network failures).
+import { installConsoleScrub } from './util/console-scrub.js';
+installConsoleScrub();
 import { loadConfig } from './config.js';
 import { SessionStore } from './session/store.js';
 import { SessionManager } from './session/manager.js';
