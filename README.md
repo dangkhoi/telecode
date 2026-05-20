@@ -4,12 +4,19 @@
 
 Telecode là 1 local daemon chạy nền trên Mac, bắc cầu giữa Telegram và các coding agent (**Claude Code**, **Kiro**) đã cài sẵn trên máy. Bạn gửi prompt từ điện thoại → agent thực thi trên Mac → kết quả stream về Telegram. Khi agent muốn chạy lệnh nguy hiểm, bạn nhận inline button approve/deny ngay trong chat.
 
-- **Multi-session song song**: vd "Claude #1 refactor module A" + "Claude #2 viết test cho module B" + "Kiro fix bug ở project khác", tất cả chạy parallel, không block lẫn nhau.
-- **Approval an toàn**: policy engine + `canUseTool` callback. Tool an toàn auto-allow + notify; tool nguy hiểm hỏi qua Telegram inline button.
-- **Single-user**: chỉ Telegram user_id của bạn mới interact được.
-- **Resume session**: mỗi project có session id riêng, context không mất khi bot restart.
+**Tính năng**:
+- 🧵 **Multi-session song song**: vd "Claude #1 refactor module A" + "Claude #2 viết test cho module B" + "Kiro fix bug ở project khác", tất cả chạy parallel, không block lẫn nhau.
+- 🛡 **Approval an toàn**: policy engine + `canUseTool` (Claude) / `preToolUse` hook (Kiro). Tool an toàn auto-allow + notify; tool nguy hiểm hỏi qua Telegram inline button **[Allow once] [Allow always] [Deny]**.
+- 👤 **Single-user**: chỉ Telegram user_id của bạn mới interact được.
+- 🔄 **Resume session**: mỗi session có UUID riêng, context không mất khi bot restart.
+- 🤖 **Cùng UX cho 2 agent**: gõ prompt là chạy, không cần biết nó đang Claude hay Kiro — chỉ khác mỗi tên tool trong policy (`Bash` vs `shell`).
+- 🔐 **Secret-safe**: tự scrub Telegram token, Anthropic key, GitHub PAT, Bearer headers khỏi mọi log + outbound message — kể cả khi grammY/node-fetch lỡ log lỗi network có URL kèm token.
 
-**Status**: v0.4 (M0–M5 ship-ready, macOS only — launchd).
+**Status**: v0.6 (verified working trên Mac, macOS only — launchd). Multi-version log:
+- v0.4 — M0–M5 ship: core daemon + Claude adapter + multi-session + canUseTool.
+- v0.5 — Kiro chuyển sang `kiro-cli` headless (stream stdout, resume by UUID).
+- v0.6 — Kiro mid-session approval qua `preToolUse` hook bridge → cùng inline-button UX với Claude.
+- v0.6.1 — P0 fix: scrub bot token khỏi raw stderr (grammY runner error path).
 
 ---
 
@@ -163,7 +170,7 @@ tail -f ~/.telecode/logs/telecode.log
 
 Bạn nên thấy log kiểu:
 ```
-{"level":"info","msg":"telecode starting","version":"0.4.0"}
+{"level":"info","msg":"telecode starting","version":"0.6.0"}
 {"level":"info","msg":"workspace scan complete","projects":12}
 {"level":"info","msg":"telegram bot connected","username":"khoa_telecode_bot"}
 ```
@@ -454,7 +461,7 @@ Thường do:
 Bot dùng long-poll qua Telegram API, máy sleep thì daemon pause. Options:
 - `caffeinate -i` chạy trong terminal khi cần online dài hạn.
 - Cài [Amphetamine](https://apps.apple.com/app/amphetamine/id937984704) — keep awake on demand.
-- Tương lai: deploy daemon lên VPS (chưa support v0.4).
+- Tương lai: deploy daemon lên VPS (chưa support v0.6).
 
 ---
 
@@ -506,10 +513,11 @@ rm -rf ~/.telecode/
 
 ## Kiến trúc & tài liệu
 
-- [docs/plans/telegram-bridge.html](docs/plans/telegram-bridge.html) — Plan v0.4 (mục tiêu, kiến trúc, milestones, risk register).
+- [docs/plans/telegram-bridge.html](docs/plans/telegram-bridge.html) — Plan gốc M0–M5 (mục tiêu, kiến trúc, milestones, risk register).
 - [docs/design/telegram-bridge.html](docs/design/telegram-bridge.html) — SDD (design decisions, tech freshness, scope completeness, verification).
+- [docs/SMOKE_TEST_v0.6.md](docs/SMOKE_TEST_v0.6.md) — Runbook smoke-test cho v0.6 (Kiro approval hook bridge).
 
-Mở bằng browser: `open docs/plans/telegram-bridge.html`.
+Mở plan bằng browser: `open docs/plans/telegram-bridge.html`.
 
 Tóm tắt stack:
 - Node 22 ESM + TypeScript strict
