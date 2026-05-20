@@ -12,11 +12,13 @@ Telecode là 1 local daemon chạy nền trên Mac, bắc cầu giữa Telegram 
 - 🤖 **Cùng UX cho 2 agent**: gõ prompt là chạy, không cần biết nó đang Claude hay Kiro — chỉ khác mỗi tên tool trong policy (`Bash` vs `shell`).
 - 🔐 **Secret-safe**: tự scrub Telegram token, Anthropic key, GitHub PAT, Bearer headers khỏi mọi log + outbound message — kể cả khi grammY/node-fetch lỡ log lỗi network có URL kèm token.
 
-**Status**: v0.6 (verified working trên Mac, macOS only — launchd). Multi-version log:
+**Status**: v0.8 (Multi-session UX — per-session view, auto-switch on approval, catch-up flush, session strip, silent stream; macOS only — launchd). Multi-version log:
 - v0.4 — M0–M5 ship: core daemon + Claude adapter + multi-session + canUseTool.
 - v0.5 — Kiro chuyển sang `kiro-cli` headless (stream stdout, resume by UUID).
 - v0.6 — Kiro mid-session approval qua `preToolUse` hook bridge → cùng inline-button UX với Claude.
 - v0.6.1 — P0 fix: scrub bot token khỏi raw stderr (grammY runner error path).
+- v0.7 — Telegram UX widgets: slash-command menu (`/` show 8 lệnh), persistent reply keyboard (6 nút), Menu button, `/new` wizard (agent → project → label), inline project picker với pagination, `/sessions` enhanced (active marker `●` + agent badge 🤖/⚡ + last-activity "2m ago"). Legacy `/session ...` subcommands giữ nguyên backward-compat.
+- v0.8 — Multi-session view discipline: chỉ session active stream live, background → RAM buffer; auto-switch khi background cần approval; catch-up flush khi user switch (`📥 catch-up (N events from background)`); session strip inline button kèm mỗi approval; silent stream (text/tool_use không kêu, chỉ approval/done/error notify).
 
 ---
 
@@ -31,6 +33,7 @@ Telecode là 1 local daemon chạy nền trên Mac, bắc cầu giữa Telegram 
   - [5. Kiểm tra daemon chạy](#5-kiểm-tra-daemon-chạy)
 - [Smoke test đầu tiên](#smoke-test-đầu-tiên)
 - [Daily workflow](#daily-workflow)
+- [Multi-session UX (v0.8)](#multi-session-ux-v08)
 - [Bảng lệnh đầy đủ](#bảng-lệnh-đầy-đủ)
 - [Policy & Approval](#policy--approval)
 - [Logs & debugging](#logs--debugging)
@@ -170,7 +173,7 @@ tail -f ~/.telecode/logs/telecode.log
 
 Bạn nên thấy log kiểu:
 ```
-{"level":"info","msg":"telecode starting","version":"0.6.0"}
+{"level":"info","msg":"telecode starting","version":"0.8.0"}
 {"level":"info","msg":"workspace scan complete","projects":12}
 {"level":"info","msg":"telegram bot connected","username":"khoa_telecode_bot"}
 ```
@@ -182,13 +185,14 @@ Nếu không thấy → xem [Troubleshooting](#troubleshooting).
 ## Smoke test đầu tiên
 
 1. Trong Telegram, search bot của bạn theo username (vd `@khoa_telecode_bot`), bấm **Start**.
-2. Gửi `/start`. Bot reply welcome + list session.
-3. Gửi `/projects`. Bot list tất cả project nó scan được từ `~/Documents/workspaces/`.
-4. Tạo session:
-   ```
-   /session new claude smoke ~/Documents/workspaces/telecode
-   ```
-   Bot reply: `📍 Created session [smoke] — agent=claude, project=telecode`.
+2. Gửi `/start`. Bot reply welcome + show **persistent reply keyboard** (6 nút phía dưới ô gõ: 📋 Sessions, 📁 Projects, 📊 Status, 🛑 Stop, 📸 Screen, ❓ Help). Cạnh paperclip có thêm nút **Menu** — bấm vào hiện đủ 8 slash command. Gõ `/` cũng ra cùng menu.
+3. Gửi `/projects` (hoặc tap nút 📁 Projects). Bot list tất cả project nó scan được từ `~/Documents/workspaces/`, mỗi project có 2 nút inline `[📍 Switch] [➕ New]`. Pagination tự bật khi >8 project.
+4. Tạo session bằng **wizard** — gõ `/new`. Bot dẫn 3 bước inline:
+   1. Chọn agent → `[🤖 Claude] [⚡ Kiro] [✖ Cancel]`
+   2. Chọn project → inline list (paginate 8/page nếu nhiều)
+   3. Gõ label → validate `/^[a-zA-Z0-9_-]{1,40}$/`
+
+   Bot reply: `📍 [smoke] — agent=claude`. Legacy syntax vẫn chạy: `/session new claude smoke ~/Documents/workspaces/telecode`.
 5. Gửi prompt thường:
    ```
    list 3 files in src
@@ -208,6 +212,16 @@ Nếu đến đây mượt → setup OK ✓.
 
 ### Tạo session mới
 
+Cách nhanh — gõ `/new` (hoặc tap `[➕ New session]` cuối list `/sessions`). Bot guide 3 bước inline:
+
+1. Pick agent: `[🤖 Claude] [⚡ Kiro] [✖ Cancel]`
+2. Pick project: inline list (pagination khi >8); cũng có `[← Back] [✖ Cancel]`
+3. Gõ label: `/^[a-zA-Z0-9_-]{1,40}$/` — bot reject + xin lại nếu sai format.
+
+Khi đã active 1 project (qua `/projects` → Switch hoặc `/cd`), step 2 có thể skip bằng cách vào wizard từ `[➕ New]` cạnh project — wizard sẽ pre-fill project đó và nhảy thẳng tới step 3.
+
+Legacy syntax vẫn được hỗ trợ — nhanh hơn nếu nhớ rõ path:
+
 ```
 /session new claude refactor-auth ~/work/api
 /session new claude debug ~/work/api          # cùng project, session khác
@@ -217,10 +231,21 @@ Nếu đến đây mượt → setup OK ✓.
 ### Liệt kê + switch nhanh
 
 ```
-/session list
+/sessions
 ```
 
-Bot reply kèm inline keyboard với từng session — tap để switch (không cần gõ tên).
+Bot reply theo format mới — active session prefix `●`, agent badge 🤖 (Claude) / ⚡ (Kiro), last activity:
+
+```
+📋 Sessions (3):
+● refactor-auth · 🤖 · 2m ago
+  debug-api     · 🤖 · 1h ago
+  mobile-ui     · ⚡ · 3h ago
+```
+
+Inline keyboard 1 nút / session — tap để switch (không cần gõ tên). Dòng cuối luôn có `[➕ New session]` mở wizard.
+
+Legacy `/session list` (kèm `sessionPickKeyboard` cũ) vẫn hoạt động. Switch bằng label:
 
 ```
 /session switch refactor-auth
@@ -284,29 +309,115 @@ Show 30 tool call gần nhất của session active. Hữu ích khi prompt dài 
 
 ---
 
+## Multi-session UX (v0.8)
+
+Khi chạy nhiều session song song, Telecode giữ Telegram chat luôn focus vào **đúng 1 session active** thay vì spam interleaved output. Cơ chế:
+
+### Per-session view
+- Session **active** → stream output (text + tool_use) gửi trực tiếp về Telegram, prefix `[label]`.
+- Session **background** → output đi vào RAM buffer (per-session, cap mặc định 50 KB, drop-oldest khi đầy).
+- Không có chuyện 2 session cùng spam — bạn chỉ thấy session đang theo dõi.
+
+### Auto-switch on approval
+Khi 1 background session cần approval:
+1. Bot **tự switch active sang session đó** (first-come-first-active, không thrashing — đang approve session khác thì queue).
+2. Gửi approval prompt `🛡 Approval needed` như bình thường.
+3. **Flush catch-up buffer** của session vừa switch ngay sau prompt (xem dưới).
+
+Vd: đang xem `refactor-auth`, session `mobile-ui` cần `Bash(pod install)` → bot ping `🔔 switched → [mobile-ui]` + approval card + catch-up dump của `mobile-ui`.
+
+### Catch-up on switch
+Mỗi lần switch (manual qua `/sessions` tap, hoặc auto qua approval), bot gửi 1 message **silent** (`disable_notification:true`):
+
+```
+📥 catch-up (12 events from background)
+[mobile-ui] 🔧 Read Podfile
+[mobile-ui] ... pod install --repo-update ...
+```
+
+Auto-split khi >3400 ký tự / message (Telegram limit 4096, trừ overhead). Sau khi flush, buffer của session đó được clear.
+
+### Session strip
+Mọi approval / critical message kèm 1 hàng inline button cuối:
+
+```
+[refactor-auth] [● mobile-ui] [debug-api] [+ New]
+```
+
+Marker `●` = active. Tap session khác = switch + trigger catch-up (như mục trên). `[+ New]` mở wizard `/new`.
+
+### Silent stream
+- Text + tool_use chunk gửi với `disable_notification:true` — không kêu, không vibrate. Cuộn lên xem khi cần.
+- **Approval**, **done**, **error** vẫn notify đầy đủ (sound + badge).
+- Catch-up flush cũng silent.
+
+### Tuning
+Edit `~/.telecode/config.yaml`, thêm section `notifier:` (nếu thiếu sẽ dùng default):
+
+```yaml
+notifier:
+  debounce_ms: 3000        # stream chunk được gom trong N ms trước khi flush về Telegram
+  buffer_cap_bytes: 50000  # cap RAM buffer / background session (drop-oldest khi full)
+```
+
+Tăng `debounce_ms` nếu thấy bot gửi quá dồn dập; tăng `buffer_cap_bytes` nếu background task dài + bạn muốn catch-up đầy đủ.
+
+---
+
 ## Bảng lệnh đầy đủ
+
+Gõ `/` trong Telegram chat sẽ hiện danh sách 8 top-level command (cùng list với nút **Menu** cạnh paperclip). Ngoài ra, mỗi approval/critical message v0.8 đính kèm **session strip** inline button `[session1] [● active] [session2] [+ New]` để tap-switch nhanh không cần command.
 
 | Command | Mô tả |
 | --- | --- |
-| **Session** | |
+| **Top-level (slash menu)** | |
+| `/start` | Welcome + active session info + re-issue persistent reply keyboard. |
+| `/new` | Wizard tạo session (agent → project → label). |
+| `/sessions` | Enhanced list — active marker `●`, agent 🤖/⚡, last activity. Tap = switch. |
+| `/projects` | Inline picker `[📍 Switch] [➕ New]` per project, pagination >8. |
+| `/status` | Active session, agent, project, last 5 tool calls. |
+| `/stop` | Interrupt task đang chạy. |
+| `/screenshot` | Chụp desktop gửi về (cần Screen Recording perm). |
+| `/help` | Hướng dẫn nhanh — list 6 nút keyboard + slash commands. |
+| **Session (legacy `/session ...` — vẫn hoạt động)** | |
 | `/session new <agent> <label> [path]` | `claude` hoặc `kiro`. Path mặc định = project active. |
-| `/session list` | List sessions + inline keyboard switch. |
+| `/session list` | List sessions + inline keyboard switch (cũ, format ngắn gọn). |
 | `/session switch <label>` | Đổi active session + show 3 dòng context cuối. |
 | `/session rename <new-label>` | Đổi tên session active. |
 | `/session close [label]` | Đóng session (mặc định = active). |
 | `/session reset` | Giữ label, wipe resume id. |
 | **Project** | |
-| `/projects` | List project đã register. |
 | `/add <path> [name]` | Register path làm project. |
 | `/cd <name\|path>` | Đổi project cho session active. |
-| **Control** | |
-| `/stop` | Interrupt task đang chạy. |
-| `/status` | Active session, agent, project, last 5 tool calls. |
+| **Policy & misc** | |
 | `/status logs [n]` | Tail n tool calls (default 20). |
 | `/allow <pattern>` | Append pattern vào policy allow. |
 | `/deny <pattern>` | Append pattern vào policy deny. |
-| `/screenshot` | Chụp desktop gửi về (cần Screen Recording perm). |
 | `<plain text>` | Dispatch vào active session. |
+
+### Reply keyboard (6 nút persistent)
+
+Sau khi `/start`, Telegram hiện 6 nút cố định phía dưới ô gõ (Telegram Desktop ≥ 4.6 giữ keyboard persistent; client cũ degrade về non-persistent nhưng vẫn dùng được):
+
+```
+[📋 Sessions] [📁 Projects]
+[📊 Status]   [🛑 Stop]
+[📸 Screen]   [❓ Help]
+```
+
+Mỗi nút = tap để gửi command tương ứng (`/sessions`, `/projects`, `/status`, `/stop`, `/screenshot`, `/help`). Khi đang trong wizard, keyboard tự ẩn để tránh tap nhầm; hoàn tất wizard sẽ restore lại.
+
+### Wizard `/new`
+
+Multi-step inline, mỗi step có nút Cancel / Back, callback data namespaced `wizard:new-*`:
+
+| Step | UI | Validate |
+| --- | --- | --- |
+| 1. Agent | `[🤖 Claude] [⚡ Kiro]` + `[✖ Cancel]` | — |
+| 2. Project | 1 nút / project, `[← Prev] [page x/y] [Next →]` khi >8, `[← Back] [✖ Cancel]` | Project phải tồn tại + còn registered. |
+| 3. Label | Plain text reply | `/^[a-zA-Z0-9_-]{1,40}$/`. Reject + xin lại nếu sai. |
+
+Vào wizard từ project picker (`[➕ New]` cạnh project) sẽ pre-fill step 2 và nhảy thẳng step 3. Conversation state persist trong SQLite (`conversations` table) — restart daemon giữa wizard không mất step.
 
 ---
 
@@ -491,6 +602,10 @@ agents:
 
 **Tại sao absolute path?** kiro-cli thường cài ở `~/.local/bin/` mà launchd's default PATH không có. Tìm path đúng: `which kiro-cli`. Daemon sẽ log warning nếu binary không tồn tại / dùng relative path.
 
+### Migration v0.7 → v0.8
+
+Không cần migration: nếu `~/.telecode/config.yaml` không có section `notifier:`, defaults sẽ tự apply (`debounce_ms: 3000`, `buffer_cap_bytes: 50000`). Muốn tune thì thêm section như mô tả ở [Multi-session UX (v0.8)](#multi-session-ux-v08).
+
 ---
 
 ## Uninstall
@@ -515,6 +630,8 @@ rm -rf ~/.telecode/
 
 - [docs/plans/telegram-bridge.html](docs/plans/telegram-bridge.html) — Plan gốc M0–M5 (mục tiêu, kiến trúc, milestones, risk register).
 - [docs/design/telegram-bridge.html](docs/design/telegram-bridge.html) — SDD (design decisions, tech freshness, scope completeness, verification).
+- [docs/plans/ux-telegram-widgets.html](docs/plans/ux-telegram-widgets.html) — Plan v0.7 UX widgets (slash menu, persistent keyboard, `/new` wizard, project picker, enhanced `/sessions`).
+- [docs/design/ux-telegram-widgets.html](docs/design/ux-telegram-widgets.html) — SDD v0.7 (CallbackRouter, conversations storage, reply-builders).
 - [docs/SMOKE_TEST_v0.6.md](docs/SMOKE_TEST_v0.6.md) — Runbook smoke-test cho v0.6 (Kiro approval hook bridge).
 
 Mở plan bằng browser: `open docs/plans/telegram-bridge.html`.

@@ -46,6 +46,12 @@ const ConfigSchema = z.object({
     .object({ agent: z.enum(['claude', 'kiro']).default('claude') })
     .default({ agent: 'claude' }),
   session_switch_preview_lines: z.number().int().min(0).max(20).default(3),
+  notifier: z
+    .object({
+      debounce_ms: z.number().int().positive().default(3000),
+      buffer_cap_bytes: z.number().int().positive().default(50_000),
+    })
+    .default({ debounce_ms: 3000, buffer_cap_bytes: 50_000 }),
 });
 
 export type TelecodeConfig = z.infer<typeof ConfigSchema>;

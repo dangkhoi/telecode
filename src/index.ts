@@ -90,7 +90,9 @@ async function main(): Promise<void> {
     },
   });
 
-  const manager = new SessionManager(store, registry);
+  const manager = new SessionManager(store, registry, {
+    bufferCapBytes: config.notifier.buffer_cap_bytes,
+  });
 
   // Workspace scan → auto-register projects
   const scanned = scanWorkspaces({

@@ -23,3 +23,11 @@ agents:
 defaults:
   agent: claude
 session_switch_preview_lines: 3
+notifier:
+  # How long (ms) to gather streaming text chunks before flushing to Telegram.
+  # Increase to reduce notification spam; decrease for more "live" feel.
+  debounce_ms: 3000
+  # Per-session output buffer cap (bytes). When the background session's output
+  # exceeds this, middle chunks are dropped and replaced with a `… [N chunks
+  # omitted] …` marker. Increase if you want longer catch-up logs.
+  buffer_cap_bytes: 50000

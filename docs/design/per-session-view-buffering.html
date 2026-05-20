@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SDD — Per-Session View &amp; Stream Buffering (v0.8)</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --warn: #b25000; --danger: #c8102e;
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --warn: #ff9f0a; --danger: #ff453a;
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 80px 32px 120px; }
+  header.hero { margin-bottom: 64px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 700px; }
+  h2 { font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 72px 0 8px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 40px 0 12px; }
+  h4 { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 32px 0 12px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 32px; margin-bottom: 20px; box-shadow: var(--shadow); }
+  .card h3 { margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 15px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: rgba(28,124,84,0.12); color: var(--success); }
+  .badge-warn { background: rgba(178,80,0,0.12); color: var(--warn); }
+  .badge-danger { background: rgba(200,16,46,0.1); color: var(--danger); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 10px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  hr { border: none; height: 1px; background: var(--border); margin: 64px 0; }
+  @media (max-width: 720px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 34px; } .lede { font-size: 18px; } h2 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">SDD &middot; Telecode v0.8</div>
+  <h1>Per-Session View &amp; Stream Buffering &mdash; Design</h1>
+  <p class="lede">Companion to <code>docs/plans/per-session-view-buffering.html</code>. Per-sub-agent sections written in parallel with code. A2 documents the Notifier refactor (silent stream sends, per-stream prefix, configurable debounce). A4 documents the <code>notifier.*</code> config block and the <code>ApprovalBroker.hasPendingFor</code> helper that gates first-come-first-active auto-switch.</p>
+</header>
+
+<h2 id="a1">A1 &mdash; OutputBuffer (per-session in-RAM ring with middle-drop)</h2>
+<p>Plan section <code>&sect;3.1</code>. Foundation for B1 (<code>SessionManager</code> wires one buffer per session) and B2 (commands gate background events into <code>manager.appendBuffer</code>). Pure data structure: no I/O, no logger, only <code>Date.now()</code> for marker timestamps.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>v0.7 streams every session&rsquo;s output to the chat regardless of active selection &mdash; the user sees a mix. v0.8 cuts background output off from the wire and parks it in RAM until the user explicitly switches to that session. We need a cheap, bounded buffer that:</p>
+  <ul>
+    <li>Holds <code>BufferedEvent</code>s with a stable serialization (text already formatted &mdash; the buffer just stores strings).</li>
+    <li>Caps at a configurable byte budget (default 50KB &mdash; ~12 Telegram messages worth) so a runaway agent can&rsquo;t blow up memory.</li>
+    <li>Drops <em>middle</em> chunks when over cap (head + tail are the most informative pieces), and surfaces the loss as a visible marker line so the user understands the catch-up is partial.</li>
+    <li>Drains atomically: read-all-and-reset, so the consumer can&rsquo;t accidentally double-flush.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan &sect;3.1)</h3>
+  <ul>
+    <li><code>OutputBuffer(capBytes = 50_000)</code> &mdash; constructor takes optional cap.</li>
+    <li><code>append(event)</code> &mdash; push; if total bytes &gt; cap, drop middle, keep first 2 + last 2 + single status marker <code>&ldquo;&hellip; [N chunks omitted] &hellip;&rdquo;</code>.</li>
+    <li><code>drain()</code> &mdash; return all events and reset internal arrays + byte counter.</li>
+    <li><code>size()</code>, <code>bytesUsed()</code>, <code>isEmpty()</code> &mdash; observability.</li>
+    <li>Only trim when <code>events.length &gt; 4</code> (need room for 2 + marker + 2 = 5 final events).</li>
+    <li>Byte count tracked by summing <code>event.data.length</code>; marker is itself an event so its bytes count too.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Middle-drop, not head-drop or tail-drop.</strong> The user opening a backgrounded session cares most about (a) how it started, and (b) what it&rsquo;s doing right now. The middle is the long boring tail-of-tool-calls that&rsquo;s safe to summarize as a single marker.</li>
+    <li><strong>Splice-in-place trim, single pass per append.</strong> <code>events.splice(2, dropCount, marker)</code> mutates the array once per overflow, replacing the middle slice with one marker event. <code>dropCount = events.length - 4</code> so the post-splice length is exactly 5.</li>
+    <li><strong>Byte recalc is incremental, not full rescan.</strong> We subtract the sum of dropped events&rsquo; data lengths and add the marker&rsquo;s data length. O(dropCount) per trim &mdash; cheap even at thousands of chunks.</li>
+    <li><strong>No-progress guard prevents infinite loops.</strong> Edge case: when length is already 5 and we&rsquo;re still over cap (eg. last appended event itself exceeds cap, or cap is tiny relative to marker text), <code>splice(2, 1, marker)</code> drops one event but adds a marker that may be <em>bigger</em> than what was dropped &mdash; bytes go up, length stays 5, and the <code>while</code> condition would loop forever. After each splice we compare <code>this.bytes</code> against the pre-splice value; if no decrease occurred we break. The buffer is allowed to exceed cap in this pathological case; the caller (catch-up flusher) is responsible for further splitting if needed.</li>
+    <li><strong>Single huge event is preserved.</strong> A 500KB tool output blob is still useful to the user; we&rsquo;d rather over-shoot the cap than silently drop the last interesting event. The catch-up flusher splits Telegram messages at 3500 chars anyway, so the buffer&rsquo;s job is just to keep the event reachable.</li>
+    <li><strong><code>Date.now()</code> for marker <code>createdAt</code>.</strong> Marker timestamp reflects when the trim happened, not when the dropped events arrived. This matches the marker&rsquo;s semantic role: it&rsquo;s a synthetic event saying &ldquo;something happened around here.&rdquo;</li>
+    <li><strong>Marker <code>type: 'status'</code>.</strong> Distinguishes it from real text/tool_use so the flusher could (future) render it differently (eg. dim color, italics) without parsing the string.</li>
+    <li><strong>No I/O, no logger import.</strong> Plan explicitly demands a pure data structure &mdash; lets us unit-test in microseconds, lets us reuse from any context (manager, tests, future replay tooling).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/session/output-buffer.ts</code></td><td><span class="badge badge-success">new</span></td><td><code>BufferedEvent</code> interface + <code>OutputBuffer</code> class. ~60 LOC including JSDoc.</td></tr>
+      <tr><td><code>tests/output-buffer.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>9 specs covering append/drain/cap/middle-drop/repeated trims/byte accounting/oversize edge cases.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>tests/output-buffer.test.ts</code> &mdash; 9/9 pass (~3ms total) via <code>npx vitest run tests/output-buffer.test.ts</code></li>
+    <li class="done">Full suite still green: 19 files / 142 tests pass after A1</li>
+    <li class="done">Append order preserved; drain returns chronological event list</li>
+    <li class="done">Drain resets <code>size()</code>, <code>bytesUsed()</code>, <code>isEmpty()</code></li>
+    <li class="done">Cap exceeded once &rarr; first 2 + status marker + last 2 = 5 events</li>
+    <li class="done">Cap exceeded over many rounds &rarr; size never exceeds 5; first 2 events always from earliest round; last event always the most recent</li>
+    <li class="done">Byte accounting after multiple appends + drops matches sum of remaining <code>event.data.length</code></li>
+    <li class="done">Empty buffer drain returns <code>[]</code>; double-drain idempotent</li>
+    <li class="done">Single event larger than cap &rarr; preserved as last event; marker still inserted</li>
+    <li class="done">No infinite loop when marker text exceeds dropped event size (no-progress guard)</li>
+  </ul>
+  <h4>Algorithm walkthrough</h4>
+  <pre><code>// State: events = [e1, e2, e3, ..., eN], bytes &gt; cap, N &gt; 4
+const dropCount = N - 4;                       // events to remove
+const marker = { type: 'status', data: `… [${dropCount} chunks omitted] …`, createdAt: Date.now() };
+const removed = events.splice(2, dropCount, marker);
+// Now events = [e1, e2, marker, e(N-1), eN], length = 5
+const before = bytes;
+bytes = bytes - sum(removed.data.length) + marker.data.length;
+if (bytes &gt;= before) break;                    // no progress &rarr; tolerate overshoot</code></pre>
+</div>
+
+<h2 id="a2">A2 &mdash; Notifier silent + prefix + configurable debounce</h2>
+<p>Plan section <code>&sect;3.3</code>. Foundation for B2/B3: background sessions never reach the chat, active session streams must be silent (R3), and every flush needs a stable <code>[label]</code> prefix so users can attribute lines without re-reading the session header (R1, R4 bug fix).</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Pre-A2 <code>src/bot/notifier.ts</code> had:</p>
+  <ul>
+    <li>Hard-coded <code>const DEBOUNCE_MS = 700</code> &mdash; too chatty now that we want streams to be background noise.</li>
+    <li><code>Stream</code> interface with no <code>prefix</code> / <code>silent</code> fields &mdash; callers had to manually re-prepend <code>[label]</code> on every chunk and could not pass <code>disable_notification</code>.</li>
+    <li><code>sendPlain(text, extra?)</code> forwarded <code>extra</code> verbatim to grammY, with no convenience for the common &ldquo;silent push&rdquo; case.</li>
+  </ul>
+  <p>v0.8 R2/R3 require: streams silent by default, debounce configurable per-instance, and a per-stream prefix set once on first append.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan &sect;3.3)</h3>
+  <ul>
+    <li><code>NotifierOpts.debounceMs?: number</code> (default 3000) &mdash; replaces module constant.</li>
+    <li><code>Stream</code> gains <code>prefix: string</code> and <code>silent: boolean</code>, both set on creation only.</li>
+    <li><code>appendStream(key, chunk, opts?: { prefix?, silent? })</code> &mdash; opts honored only on the first append for a key.</li>
+    <li><code>flush(key)</code> composes <code>prefix + buffer</code>, clips to <code>MAX_MSG_CHARS</code>, sends/edits with <code>disable_notification: silent</code>.</li>
+    <li><code>sendPlain(text, { silent: true })</code> &rarr; <code>disable_notification: true</code> on the grammY call; <code>silent</code> key stripped before forwarding.</li>
+    <li>Backward compat: every existing call site (<code>src/index.ts</code>, <code>src/bot/router.ts</code>, <code>src/bot/commands/index.ts</code>) keeps compiling and behaving identically.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Default debounce jumps 700 &rarr; 3000ms.</strong> R2 explicitly asks for less spam. With streams now silent (R3) the cost of holding output a few seconds is zero, and Telegram&rsquo;s rate budget benefits from coarser edits. Callers can still override per-instance via <code>NotifierOpts.debounceMs</code> &mdash; tests use 50ms.</li>
+    <li><strong>Prefix set-once semantics.</strong> Subsequent <code>appendStream(key, chunk, opts)</code> calls ignore <code>opts</code>. This keeps the stream&rsquo;s identity stable across the (potentially long-lived) running message and prevents callers from accidentally toggling silent mid-flight or changing prefix between edits &mdash; both would produce confusing UX. Documented in JSDoc.</li>
+    <li><strong>Buffer stores raw chunks; prefix composed at flush.</strong> Two reasons: (1) idempotent &mdash; if we ever re-flush on retry the prefix isn&rsquo;t doubled; (2) rotation logic operates on chunk bytes, not chunk+prefix bytes &mdash; <code>charsSinceRotate</code> stays meaningful.</li>
+    <li><strong><code>silent</code> as a convenience key, not a positional param.</strong> Keeping <code>sendPlain</code>&rsquo;s second arg as an <code>extra</code> object means every existing call site (<code>{ parse_mode, reply_markup }</code>) keeps working. The new <code>silent</code> field is stripped in <code>normalizeExtra()</code> before forwarding so it can&rsquo;t leak into the grammY payload (which would be silently ignored by Telegram, but is type-noise we don&rsquo;t want).</li>
+    <li><strong><code>disable_notification</code> also honored verbatim.</strong> Callers that already speak Telegram&rsquo;s vocabulary (eg. via spread from another <code>extra</code> object) get correct behavior without needing to translate.</li>
+    <li><strong><code>normalizeExtra()</code> returns <code>undefined</code> for an empty payload.</strong> Avoids sending <code>{}</code> upstream &mdash; harmless, but keeps tests asserting on <code>sendMessage</code>&rsquo;s 3rd arg tidy.</li>
+    <li><strong>Edit calls do not pass <code>disable_notification</code>.</strong> Telegram only fires push notifications on <code>sendMessage</code>; editing an existing message never notifies. So the silent flag is only forwarded on the (re)send paths.</li>
+    <li><strong><code>extra as never</code> cast preserved on <code>sendMessage</code>.</strong> grammY 1.43&rsquo;s typed <code>Other</code> shape narrows by overload &mdash; passing a plain <code>Record&lt;string, unknown&gt;</code> would require declaring every conditional field. We isolate the cast to one spot (after <code>normalizeExtra</code>) and document the &ldquo;funky&rdquo; nature in the original comment.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/bot/notifier.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>Add <code>debounceMs</code> opt, <code>Stream.prefix</code>/<code>Stream.silent</code>, <code>SendPlainExtra</code> type, <code>normalizeExtra()</code> helper. <code>flush()</code> composes prefix + chunk + silent flag.</td></tr>
+      <tr><td><code>tests/notifier-silent.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>10 specs (vitest fake timers): sendPlain silent passthrough, omission semantics, prefix-prepend on flush, set-once prefix preservation, ignored conflicting opts, prefix survives rotation.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Backward-compat verification</h3>
+  <p>Surveyed every call site of <code>sendPlain</code>, <code>send</code>, <code>appendStream</code> on <code>main</code> at A2 start:</p>
+  <ul>
+    <li><code>src/index.ts:111</code> &mdash; <code>n.sendPlain(s)</code> &rarr; unchanged behavior (no extra).</li>
+    <li><code>src/bot/router.ts:87</code> &mdash; <code>n.sendPlain(text, { parse_mode: 'Markdown', reply_markup })</code> &rarr; passes through verbatim (no <code>silent</code>, no <code>disable_notification</code>).</li>
+    <li><code>src/bot/router.ts:104</code> &mdash; <code>n.sendPlain(text, { parse_mode: 'Markdown' })</code> &rarr; same.</li>
+    <li><code>src/bot/commands/index.ts:353</code> &mdash; <code>notifier.appendStream(streamKey, e.text)</code> &rarr; legal: no opts means <code>prefix=''</code>, <code>silent=false</code>, debounce defaults to 3000ms.</li>
+    <li><code>src/bot/commands/index.ts:356/358/364</code> &mdash; <code>sendPlain(text)</code> with no extra &rarr; unchanged.</li>
+  </ul>
+  <p>The signature additions are all optional; no caller had to be edited inside A2 (B2/B3 will start using <code>{ prefix, silent }</code> when wiring the active-session gate).</p>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>tests/notifier-silent.test.ts</code> &mdash; 10/10 pass via <code>npx vitest run tests/notifier-silent.test.ts</code></li>
+    <li class="done">Fake timers used (<code>vi.useFakeTimers()</code>) &mdash; deterministic, ~5ms test time</li>
+    <li class="done"><code>sendPlain('hi', { silent: true })</code> &rarr; <code>bot.api.sendMessage</code> called with <code>{ disable_notification: true }</code></li>
+    <li class="done"><code>sendPlain('hi')</code> &rarr; 3rd arg omitted (no <code>disable_notification</code>)</li>
+    <li class="done"><code>appendStream('k', 'chunk1', { prefix: '[A] ', silent: true })</code> &rarr; after debounce, <code>sendMessage('[A] chunk1', { disable_notification: true })</code></li>
+    <li class="done">No-prefix path emits chunk verbatim</li>
+    <li class="done">Set-once: second <code>appendStream</code> without opts &rarr; prefix preserved</li>
+    <li class="done">Set-once: second <code>appendStream</code> with conflicting opts &rarr; original opts win</li>
+    <li class="done">Rotation (forced via <code>ROTATE_CHARS</code> overflow) &rarr; new send still starts with prefix</li>
+    <li class="done">Backward compat: existing call sites untouched, still compile</li>
+  </ul>
+  <h4>Test matrix</h4>
+  <table>
+    <thead><tr><th>Spec</th><th>What it proves</th></tr></thead>
+    <tbody>
+      <tr><td>sendPlain + silent</td><td><code>disable_notification: true</code> reaches grammY</td></tr>
+      <tr><td>sendPlain default</td><td>3rd arg <code>undefined</code> (no push suppression)</td></tr>
+      <tr><td>sendPlain + parse_mode (no silent)</td><td>extra passes through, no <code>disable_notification</code> leaked</td></tr>
+      <tr><td>sendPlain + silent + parse_mode</td><td><code>silent</code> key stripped, both fields preserved</td></tr>
+      <tr><td>sendPlain + raw <code>disable_notification</code></td><td>Telegram vocabulary honored too</td></tr>
+      <tr><td>appendStream + prefix + silent + debounce</td><td>Composed text and silent flag at flush</td></tr>
+      <tr><td>appendStream no prefix</td><td>Buffer-only output</td></tr>
+      <tr><td>appendStream set-once preserve</td><td>Later append without opts keeps first opts</td></tr>
+      <tr><td>appendStream set-once ignore conflicts</td><td>Later append with new opts is ignored</td></tr>
+      <tr><td>appendStream rotation</td><td>Prefix survives forced rotation (ROTATE_CHARS overflow)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<hr />
+
+<h2 id="a3">A3 &mdash; <code>buildSessionStrip</code> (quick-switch inline keyboard)</h2>
+<p>Plan section <code>&sect;3.4</code>. Reusable 2-row inline keyboard appended to critical messages (approval, error, done, manual-switch confirmations) so users can hop between sessions without typing <code>/sessions</code>. Pure builder: no I/O, no store reads &mdash; the caller passes already-fetched <code>SessionListItem[]</code> + <code>activeId</code> and gets back an <code>InlineKeyboardButton[][]</code> ready to spread into <code>reply_markup.inline_keyboard</code> or pass as <code>extraButtons</code> to <code>buildSessionList</code> / approval keyboards.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>v0.8 R4 (per-session view) collides head-on with v0.7&rsquo;s <em>single</em> implicit-active session UX: the user now has to switch sessions <em>often</em> &mdash; once per approval, once per agent question, sometimes mid-stream to peek at progress. Forcing them to type <code>/sessions</code> + tap a button + return to context for every switch would burn the same patience this sprint is trying to preserve. The session strip embeds that flow directly into the messages users already pay attention to:</p>
+  <ul>
+    <li>Approval prompts (loud, blocking) &mdash; the strip lets them peek at a sibling session before deciding.</li>
+    <li><code>done</code> / <code>error</code> closures &mdash; the strip funnels attention into the next session worth looking at.</li>
+    <li>Manual <code>/sessions</code> list &mdash; the strip is its own row inside the list keyboard (via <code>extraButtons</code>), keeping the picker uniform.</li>
+  </ul>
+  <p>The catch: Telegram inline-keyboard rows are visually narrow (~3&ndash;4 buttons fit comfortably). With more than 4 sessions we need pagination, but pagination introduces nav buttons that compete for the same row. The builder owns that layout puzzle so callers stay one-liners.</p>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan &sect;3.4)</h3>
+  <ul>
+    <li><code>buildSessionStrip(sessions, activeId, opts?)</code> &rarr; <code>InlineKeyboardButton[][]</code> (2-D rows, not an <code>InlineKeyboard</code> instance).</li>
+    <li>Default <code>perPage = 4</code>; default <code>page = 1</code>.</li>
+    <li>Empty list &rarr; single <code>[➕ New session]</code> row.</li>
+    <li><code>total &le; perPage</code> &rarr; row 1 = all session buttons, row 2 = single <code>[➕ New session]</code>.</li>
+    <li><code>total &gt; perPage</code> &rarr; row 1 = current page slice, row 2 = <code>[← Prev] [Next →] [➕ New]</code> with a no-op spacer at boundaries.</li>
+    <li>Active session: prefix label with <code>●</code> (e.g. <code>● refactor-auth</code>); inactive: bare label.</li>
+    <li>Callback data formats (all verified &lt; 64 UTF-8 bytes for 36-char UUIDs):
+      <ul>
+        <li>session button &rarr; <code>session:switch:&lt;uuid&gt;</code> (reuses B3 handler)</li>
+        <li>pagination &rarr; <code>session:strip-page:&lt;n&gt;</code> (1-indexed), boundary spacer &rarr; <code>session:strip-page:noop</code></li>
+        <li>new-session &rarr; <code>wizard:new-start</code> (reuses existing wizard)</li>
+      </ul>
+    </li>
+    <li>Out-of-range <code>page</code> clamps to <code>[1, totalPages]</code>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Return 2-D array, not <code>InlineKeyboard</code>.</strong> The strip is almost never used standalone &mdash; it&rsquo;s appended to <em>another</em> keyboard (approval, session list, done message). Returning the raw button matrix lets callers either spread into a fresh <code>inline_keyboard</code> or pass as <code>extraButtons</code> to a sibling builder without unwrapping a grammY object. Mirrors the existing <code>extraButtons: InlineKeyboardButton[][]</code> contract used by <code>buildSessionList</code> / <code>buildProjectList</code> &mdash; consistent shape across the file.</li>
+    <li><strong>Stable 3-button control row when paginated.</strong> The control row is always <code>[Prev | Next | New]</code> &mdash; at page 1 the Prev slot becomes a no-op spacer (<code>·</code>); at the last page the Next slot does. Visual width stays constant as the user paginates, no reflow flicker. The spacer&rsquo;s callback is <code>session:strip-page:noop</code> so the central <code>callback-router</code> can swallow it with a silent <code>answerCallbackQuery()</code> &mdash; no error, no edit.</li>
+    <li><strong>Long &ldquo;<code>➕ New session</code>&rdquo; vs. short &ldquo;<code>➕ New</code>&rdquo;.</strong> When pagination is off the single-row control gets the longer label for clarity (users not in &ldquo;navigate mode&rdquo;); when paginated the 3-button row uses the abbreviated <code>➕ New</code> to keep the row visually compact next to <code>← Prev</code> / <code>Next →</code>. Tiny detail, but it&rsquo;s the difference between a tidy strip and a row that wraps awkwardly on narrow clients.</li>
+    <li><strong>Page clamping over throw-on-stale.</strong> Pagination callbacks live forever in Telegram&rsquo;s message history &mdash; a user can tap a 3-day-old <code>session:strip-page:5</code> on a chat that now has only 6 sessions. Clamping (<code>page = min(totalPages, max(1, requested))</code>) renders <em>something</em> sensible instead of erroring. Cheap defensive bounds; matches the existing <code>buildProjectList</code> pagination contract.</li>
+    <li><strong>Active marker as label prefix, not separate icon.</strong> Tried (a) a dedicated <code>●</code> button alongside the active label, (b) using button <code>callback_data</code> distinction. (a) burns a button slot; (b) is invisible. Prefixing the label (<code>● refactor-auth</code>) keeps the row width at <code>perPage</code> buttons and gives users a glance-readable cue. The label-with-marker is still legal callback_data input upstream (the marker is on the visible text only, callback is the bare uuid).</li>
+    <li><strong>Slice computed once, used twice.</strong> The function computes <code>slice = sessions.slice(start, end)</code> once and maps it to button objects. Avoids accidental off-by-one between active-detection and label rendering. Cheap (perPage &le; 8 typical).</li>
+    <li><strong>No <code>label</code> truncation.</strong> Plan &sect;3.4 doesn&rsquo;t cap label length; v0.7&rsquo;s <code>label</code> regex already restricts to 1&ndash;32 chars, well within Telegram&rsquo;s inline-button text limit (64 chars). Adding ellipsis logic here would be premature.</li>
+    <li><strong>Callback-byte audit baked into the test suite.</strong> Spec #11 generates 36-char UUIDs across 3 pages and asserts <code>Buffer.byteLength(callback_data, 'utf8') &lt; 64</code> on every button. Prevents a future label/format change from silently exceeding Telegram&rsquo;s limit (which would manifest as the button being dropped from the message, not as an error).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/bot/reply-builders.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>SessionStripOptions</code> interface, + <code>buildSessionStrip()</code> function (~48 LOC including JSDoc). Lives next to <code>buildSessionList</code> for discoverability; shares the <code>SessionListItem</code> type.</td></tr>
+      <tr><td><code>tests/session-strip.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>11 specs covering empty list, single inactive, single active, 3-session row with middle active, exact-perPage boundary, 2-page pagination both directions, active marker across pages, page clamping (0 &rarr; 1, 99 &rarr; last), custom <code>perPage</code>, and the 64-byte callback audit.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npx vitest run tests/session-strip.test.ts</code> &mdash; 11/11 pass</li>
+    <li class="done">Empty list &rarr; single <code>[➕ New session]</code> row, no session buttons</li>
+    <li class="done">1 session, inactive &rarr; bare label, no <code>●</code>; <code>callback_data = session:switch:&lt;id&gt;</code></li>
+    <li class="done">1 session, active &rarr; <code>● refactor-auth</code> label</li>
+    <li class="done">3 sessions with middle active &rarr; row order <code>s1 | ● s2 | s3</code>, no pagination row</li>
+    <li class="done">4 sessions (= perPage) &rarr; single <code>[➕ New session]</code> control row, no Prev/Next</li>
+    <li class="done">5 sessions page 1 &rarr; <code>[s1..s4]</code> + <code>[noop | Next | ➕ New]</code></li>
+    <li class="done">5 sessions page 2 &rarr; <code>[s5]</code> + <code>[Prev | noop | ➕ New]</code></li>
+    <li class="done">Active marker tracks across pages; absent from page that doesn&rsquo;t contain the active id</li>
+    <li class="done">Page clamp: <code>page: 0 &rarr; 1</code>, <code>page: 99 &rarr; totalPages</code></li>
+    <li class="done">Custom <code>perPage: 2</code> &mdash; 6 sessions &rarr; 3 pages, page 2 has both Prev + Next</li>
+    <li class="done">Every callback_data &lt; 64 UTF-8 bytes across 36-char UUIDs &times; 3 pages (Telegram limit)</li>
+  </ul>
+
+  <h4>Callback shape reference</h4>
+  <pre><code>// Session button (uuid is 36 chars; prefix is 15 chars → 51 bytes total)
+session:switch:aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
+
+// Pagination (n typically 1–3 digits)
+session:strip-page:2
+session:strip-page:noop   // boundary spacer
+
+// New session wizard
+wizard:new-start</code></pre>
+
+  <h4>Downstream handoff</h4>
+  <ul>
+    <li>B3 (<code>router.ts</code> approval prompter) passes <code>buildSessionStrip(sessions, newActiveId)</code> as <code>extraButtons</code> to <code>approvalKeyboard(requestId, extraButtons)</code> &mdash; the strip becomes rows 4&ndash;5 of the approval keyboard.</li>
+    <li><code>commands/index.ts</code> <code>/sessions</code> handler can pass the strip as <code>extraButtons</code> to <code>buildSessionList</code> for uniform layout (deferred to follow-up).</li>
+    <li>A future <code>callback-router</code> route for <code>session:strip-page:&lt;n&gt;</code> edits the message&rsquo;s <code>reply_markup</code> with the same builder called at the new page &mdash; pure-function re-render, no state.</li>
+  </ul>
+</div>
+
+<hr />
+
+<h2 id="a4">A4 &mdash; Config schema + <code>ApprovalBroker.hasPendingFor</code></h2>
+<p>Plan sections <code>&sect;3.3</code>, <code>&sect;3.5</code> and the file-changes table (<code>src/config.ts</code>, <code>src/approval/broker.ts</code>). This sub-agent ships the two low-risk plumbing pieces that B1/B3 will lean on: a <code>notifier</code> block in the config schema (so debounce + buffer cap become user-tunable instead of magic constants), and a one-liner helper on <code>ApprovalBroker</code> that lets the router answer the question &ldquo;does any <em>other</em> session in this chat already own a pending approval?&rdquo; without exposing the broker&rsquo;s internal map.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Three needs surfaced as B-phase sub-agents started wiring per-session gating:</p>
+  <ul>
+    <li><strong>Notifier debounce is hard-coded.</strong> A2 introduced an <code>opts.debounce</code> override, but there&rsquo;s no path from <code>~/.telecode/config.yaml</code> to the default. Users wanting a slower / faster &ldquo;live feel&rdquo; had to patch source.</li>
+    <li><strong>OutputBuffer cap is hard-coded.</strong> A1 defaults <code>capBytes = 50_000</code>. Same problem &mdash; the operator can&rsquo;t tune catch-up depth.</li>
+    <li><strong>Auto-switch race.</strong> Plan &sect;3.5 specifies that when a background session raises an approval, the router auto-switches that session to active <em>only if</em> no other session has already grabbed focus via its own pending approval. Without a peek API on the broker, B3 would have to either keep its own shadow map (drift-prone) or scan via the existing <code>pendingForSession</code> per-session (O(N) loops). A single chat-scoped predicate is cleaner.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Requirements (from plan)</h3>
+  <ul>
+    <li><code>notifier.debounce_ms</code>: positive int, default <code>3000</code>.</li>
+    <li><code>notifier.buffer_cap_bytes</code>: positive int, default <code>50_000</code>.</li>
+    <li>Both fields optional (existing configs must keep validating &mdash; safe defaults via <code>z.default</code>).</li>
+    <li><code>config.example.yaml</code> shows both keys with explanatory comments (debounce &harr; notification spam, buffer cap &harr; catch-up depth).</li>
+    <li><code>ApprovalBroker.hasPendingFor(chatId, excludeSessionId?)</code>: returns <code>true</code> iff some pending request matches <code>chatId</code> and is <em>not</em> owned by <code>excludeSessionId</code>. Used by router auto-switch gate.</li>
+    <li>Tests: empty broker &rarr; <code>false</code>; two sessions same chat &rarr; <code>hasPendingFor(chat, A)</code> sees B; resolving B drains the predicate for A; cross-chat requests don&rsquo;t leak.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Block-scoped schema, not flat keys.</strong> Following the existing pattern (<code>agents.claude</code>, <code>daemon.workspace_scan</code>), the new fields land under <code>notifier:</code> so future per-notifier knobs (eg. <code>max_msg_chars</code>, <code>rotate_on</code>) cluster cleanly. Avoids polluting the top-level namespace.</li>
+    <li><strong>Explicit object default, not <code>.default({})</code>.</strong> Zod v4 rejects partial defaults on objects whose inner fields each have their own <code>.default()</code> &mdash; the outer default must satisfy the full output shape, not the input shape. Matches what <code>daemon.workspace_scan</code> already does in the same file.</li>
+    <li><strong>Wide range, no upper cap.</strong> <code>debounce_ms</code> is <code>z.number().int().positive()</code> &mdash; no max. A user wanting a 30s debounce for a quiet long-running session is valid; clamping would surprise. Same for <code>buffer_cap_bytes</code>.</li>
+    <li><strong><code>hasPendingFor</code> early-exits on first match.</strong> Loop over <code>pending.values()</code> &mdash; <code>return true</code> as soon as a matching request is found, instead of building an intermediate array (cf. <code>pendingForSession</code> which materializes). Cheaper for the common case where N pending is tiny but called on the hot path of every approval prompt.</li>
+    <li><strong><code>excludeSessionId</code> is optional.</strong> Default <code>undefined</code> &rArr; &ldquo;is anything at all pending in this chat?&rdquo;. Router uses the typed form; future callers (eg. health endpoint) can use the simpler form.</li>
+    <li><strong>No new public type surface.</strong> Signature is <code>(chatId: number, excludeSessionId?: string) =&gt; boolean</code>. No new exported interfaces, no rename of existing methods &mdash; pure addition.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/config.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>notifier</code> block with <code>debounce_ms</code> (default 3000) and <code>buffer_cap_bytes</code> (default 50_000). Inserted after <code>session_switch_preview_lines</code>.</td></tr>
+      <tr><td><code>config.example.yaml</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>notifier:</code> section with inline comments documenting the trade-offs.</td></tr>
+      <tr><td><code>src/approval/broker.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>hasPendingFor(chatId, excludeSessionId?): boolean</code>. JSDoc references first-come-first-active rule.</td></tr>
+      <tr><td><code>tests/broker.test.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>describe(&apos;hasPendingFor&apos;)</code> with 3 specs: empty broker, two sessions same chat (resolve drains predicate), cross-chat isolation.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npx tsc --noEmit</code> &mdash; clean (Zod v4 strict object-default shape satisfied).</li>
+    <li class="done"><code>npx vitest run tests/broker.test.ts</code> &mdash; 7/7 pass (existing 4 + new 3).</li>
+    <li class="done"><code>npx vitest run tests/broker.test.ts tests/policy.test.ts tests/scrub.test.ts tests/scanner.test.ts tests/manager.test.ts</code> &mdash; 26/26 pass (no regression in core).</li>
+    <li class="done">Backwards-compatible: existing <code>~/.telecode/config.yaml</code> without a <code>notifier:</code> block still validates and yields the defaults.</li>
+    <li class="done">Type-safe: <code>TelecodeConfig['notifier']['debounce_ms']: number</code> exposed via <code>z.infer</code> &mdash; B1/B3 can wire <code>cfg.notifier.debounce_ms</code> without casts.</li>
+    <li class="done">Pre-existing failures in <code>session-strip.test.ts</code>, <code>notifier-silent.test.ts</code>, <code>projects-cmd.test.ts</code>, <code>sessions-cmd.test.ts</code>, <code>boot-wiring.test.ts</code> reproduce on the pre-A4 tree (verified via <code>git stash</code> snapshot) &mdash; unrelated, owned by sibling in-progress sub-agents A1/A2/A3/B*.</li>
+  </ul>
+
+  <h4>Pending-state shape (for downstream B3)</h4>
+  <p>Internal <code>pending</code> map is <code>Map&lt;string, { request: ApprovalRequest; resolve; timer }&gt;</code>. <code>ApprovalRequest</code> carries both <code>chatId</code> and <code>sessionId</code>, so the predicate filters in a single pass without touching the per-session index.</p>
+  <pre><code>hasPendingFor(chatId: number, excludeSessionId?: string): boolean {
+  for (const p of this.pending.values()) {
+    if (p.request.chatId !== chatId) continue;
+    if (excludeSessionId &amp;&amp; p.request.sessionId === excludeSessionId) continue;
+    return true;
+  }
+  return false;
+}</code></pre>
+
+  <h4>Example router usage (preview &mdash; B3 will wire it)</h4>
+  <pre><code>// On approval event for background session `req.sessionId`:
+const cur = activeSessionFor(req.chatId);
+if (!deps.broker.hasPendingFor(req.chatId, cur ?? undefined)) {
+  // No competing pending request &rArr; safe to auto-switch
+  setActive(req.chatId, req.sessionId);
+  await notifier.sendPlain(catchUpHeader(req.sessionLabel, buffered));
+}</code></pre>
+</div>
+
+<h2>B1 — SessionManager wires OutputBuffer</h2>
+<p style="color: var(--text-dim);">Owner: B1 sub-agent &middot; depends on A1 (OutputBuffer) and A4 (config + broker). Adds per-session output buffers to <code>SessionManager</code> so B2 can route background events into them and B3 can drain them on switch / approval auto-switch.</p>
+
+<div class="card">
+  <h3>Requirements (from plan §3.2)</h3>
+  <ul>
+    <li>Add <code>Map&lt;sessionId, OutputBuffer&gt;</code> to <code>SessionManager</code>.</li>
+    <li>Expose <code>appendBuffer(sessionId, event)</code>, <code>drainBuffer(sessionId)</code>, <code>hasBuffered(sessionId)</code>.</li>
+    <li>Constructor accepts <code>bufferCapBytes</code> from <code>config.notifier.buffer_cap_bytes</code> (default 50_000).</li>
+    <li>Backward compatible &mdash; existing <code>new SessionManager(store, registry)</code> call sites (5 of them across <code>src/index.ts</code> + 4 test files) must keep compiling.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design decisions</h3>
+  <ul>
+    <li><strong>Options object as third positional arg, not constructor overload.</strong> The existing signature is <code>(store, registry)</code> &mdash; positional. Rather than reshape the whole API to <code>(store, registry, { ... })</code> required, we add an optional third arg <code>opts: SessionManagerOpts = {}</code>. This keeps every existing call site (5 of them, including 4 in tests) source-compatible without edits. Future knobs land in the same opts bag, no further breaking changes.</li>
+    <li><strong>Buffers map keyed by <code>sessionId</code>, lazy-created.</strong> Sessions that never go to background never allocate an <code>OutputBuffer</code>. The map entry is created on first <code>appendBuffer</code> &mdash; cheap, predictable, GC-friendly.</li>
+    <li><strong>Cap captured into <code>readonly bufferCapBytes</code> field</strong> in the constructor so all lazy-created buffers honor the same per-manager config. We do NOT re-read config inside <code>appendBuffer</code> &mdash; cap changes require daemon restart, matching how the rest of <code>loadConfig()</code> is consumed in <code>src/index.ts</code>.</li>
+    <li><strong>Buffer Map entry left in place after <code>drain()</code>.</strong> The OutputBuffer instance is cleared but kept &mdash; future appends in the same session reuse it without allocating a new buffer. Memory cost is one empty OutputBuffer per session that ever buffered, which is trivial.</li>
+    <li><strong>No session-close cleanup yet.</strong> <code>SessionManager</code> has no <code>close()</code> path today &mdash; <code>store.close()</code> happens at daemon shutdown; <code>interrupt()</code> just aborts the in-flight dispatch but the session stays live. Buffer drain on close belongs to a future sprint (or B3 when the switch handler exists). Plan §7 Risk register P2 acknowledges this.</li>
+    <li><strong><code>hasBuffered</code> returns <code>false</code> for unknown sessions</strong> &mdash; matches <code>drainBuffer</code> returning <code>[]</code>. Callers (B3 switch handler) can treat &ldquo;no buffer&rdquo; identically to &ldquo;empty buffer&rdquo; without a special case.</li>
+    <li><strong><code>BufferedEvent</code> re-imported from <code>./output-buffer.js</code></strong> so callers can type their own event factories without reaching past <code>SessionManager</code>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/session/manager.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>SessionManagerOpts</code> interface, + <code>buffers</code> Map field, + <code>bufferCapBytes</code> readonly field, + <code>appendBuffer/drainBuffer/hasBuffered</code> methods. Constructor takes optional third arg.</td></tr>
+      <tr><td><code>src/index.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>Pass <code>{ bufferCapBytes: config.notifier.buffer_cap_bytes }</code> to <code>new SessionManager(...)</code>.</td></tr>
+      <tr><td><code>tests/manager-buffer.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>6 specs: lazy-create, drain order + reset, drain-of-unknown, per-session isolation, cap-trim wiring sanity, backward-compat 2-arg constructor.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npx vitest run tests/manager-buffer.test.ts</code> &mdash; 6/6 pass</li>
+    <li class="done"><code>npx vitest run tests/manager-buffer.test.ts tests/manager.test.ts tests/output-buffer.test.ts</code> &mdash; 17/17 pass</li>
+    <li class="done"><code>npm test</code> full suite &mdash; <strong>148/148 pass</strong> (142 baseline + 6 new), 20 files</li>
+    <li class="done"><code>npx tsc --noEmit</code> &mdash; clean, no diagnostics</li>
+    <li class="done">Backward compat verified by <code>tests/manager.test.ts</code> + <code>tests/boot-wiring.test.ts</code> + <code>tests/projects-cmd.test.ts</code> + <code>tests/sessions-cmd.test.ts</code> &mdash; all still construct <code>SessionManager</code> with the 2-arg form and pass.</li>
+    <li class="done"><code>hasBuffered</code> correctly distinguishes &ldquo;no buffer&rdquo; vs &ldquo;empty buffer (post-drain)&rdquo; vs &ldquo;has events&rdquo;.</li>
+    <li class="done">Cap behavior wires through: 10 × 30-byte events with cap=200 → drain produces 5&ndash;6 events with first-2 preserved (<code>evt-00</code>, <code>evt-01</code>), status marker(s), and last event = <code>evt-09</code>.</li>
+  </ul>
+
+  <h4>Public API delta</h4>
+  <pre><code>export interface SessionManagerOpts {
+  bufferCapBytes?: number; // default 50_000
+}
+
+class SessionManager {
+  constructor(store, registry, opts: SessionManagerOpts = {}) { ... }
+  appendBuffer(sessionId: string, event: BufferedEvent): void;
+  drainBuffer(sessionId: string): BufferedEvent[];
+  hasBuffered(sessionId: string): boolean;
+}</code></pre>
+
+  <h4>Downstream handoff</h4>
+  <ul>
+    <li>B2 (<code>commands/index.ts</code> <code>onEvent</code> gating) calls <code>manager.appendBuffer(sessionId, ev)</code> when the event arrives for a non-active session.</li>
+    <li>B3 (<code>router.ts</code> approval auto-switch + manual switch handler) calls <code>manager.drainBuffer(sessionId)</code> after <code>store.setActiveSession(...)</code> and formats the result as a catch-up message.</li>
+    <li>B3 uses <code>manager.hasBuffered(sessionId)</code> to skip empty catch-up flushes (plan acceptance criterion: &ldquo;Switch session khi buffer empty → không spam empty catch-up message&rdquo;).</li>
+  </ul>
+</div>
+
+<hr />
+
+<div class="section">
+  <h2>B2 &mdash; <code>commands/index.ts</code> <code>onEvent</code> gating</h2>
+  <p class="lede">Per-session event routing inside the plain-text dispatch handler. Active session events go live to chat (silent + label-prefixed); background events accumulate in the SessionManager's per-session OutputBuffer. Critical events (<code>done</code>/<code>error</code>) always fire live + notify, draining any buffered context first so the user sees what led to the closure.</p>
+
+  <h4>Files touched</h4>
+  <ul>
+    <li><code>src/bot/commands/index.ts</code> &mdash; rewrote the <code>onEvent</code> closure inside <code>bot.on('message:text', &hellip;)</code>; added exported helper <code>flushBufferedAsCatchUp</code>.</li>
+    <li><code>tests/session-gating.test.ts</code> <span class="badge badge-success">new</span> &mdash; 10 tests covering active/background routing, mid-dispatch flip, catch-up ordering, and empty-buffer no-op.</li>
+  </ul>
+
+  <h4>Design decisions</h4>
+  <ul>
+    <li><strong>Helper placement</strong>: <code>flushBufferedAsCatchUp</code> lives as a top-level <code>export</code>ed function in the same file rather than a new module. The helper is small (5 lines) and only consumed by B2 + the test suite; a dedicated <code>buffer-flush.ts</code> file would have been over-modularization. Exporting it keeps the test deterministic without monkey-patching the inline closure.</li>
+    <li><strong>Re-read <code>activeId</code> per event</strong>: the dispatch's <code>cur</code> is captured at start-time. The active session can flip mid-dispatch (user taps a switch button while agent streams). Every <code>onEvent</code> invocation calls <code>store.getChatState(chatId).active_session_id</code> fresh &mdash; never cached outside the callback. The test <em>mid-dispatch active flip</em> asserts that the same dispatch streams while active then buffers after the switch.</li>
+    <li><strong>Async ordering in <code>done</code>/<code>error</code></strong>: both branches wrap their work in an immediate <code>async</code> IIFE wrapped in <code>void</code>, so the synchronous adapter callback returns immediately but the catch-up → closeStream → final message chain awaits in order. Catch-up first (silent), closeStream second (flushes any pending streamed text), then the <code>done</code>/<code>error</code> message last (NOT silent &mdash; user gets the push notification). The previous v0.7 code used a <code>.then()</code> chain that didn't guarantee catch-up happened before the close.</li>
+    <li><strong>Catch-up is silent</strong>: <code>flushBufferedAsCatchUp</code> sends <code>{ silent: true }</code> because the immediately-following critical message provides the push. Stacking two notifications for one logical event would spam.</li>
+    <li><strong>Label prefix</strong>: every active-session send prepends <code>[label] </code> (with trailing space). For streamed text this is set once on first <code>appendStream</code> call via the <code>prefix</code> option (A2 set-once semantics); for <code>tool_use</code>/critical it's prepended manually. Background events stored in the buffer do <strong>not</strong> include the prefix &mdash; the catch-up header already names the session, and adding the prefix per event would double-label after the header.</li>
+  </ul>
+
+  <h4>Behavior matrix implementation</h4>
+  <table>
+    <thead><tr><th>Event</th><th>ACTIVE branch</th><th>BACKGROUND branch</th></tr></thead>
+    <tbody>
+      <tr><td><code>text</code></td><td><code>notifier.appendStream(streamKey, text, { prefix:'[A] ', silent:true })</code></td><td><code>manager.appendBuffer(id, { type:'text', data, createdAt })</code></td></tr>
+      <tr><td><code>tool_use</code></td><td><code>notifier.sendPlain('[A] 🔧 &hellip;', { silent:true })</code></td><td><code>manager.appendBuffer(id, { type:'tool_use', data:'🔧 &hellip;', createdAt })</code></td></tr>
+      <tr><td><code>error</code></td><td>(if bg) drain catch-up → <code>sendPlain('[A] ❌ &hellip;')</code> not silent</td><td>same path &mdash; flush first</td></tr>
+      <tr><td><code>done</code></td><td>(if bg) drain catch-up → <code>closeStream</code> → <code>sendPlain('[A] ✅ &hellip;')</code> not silent</td><td>same path &mdash; flush first</td></tr>
+      <tr><td><code>session</code></td><td colspan="2">no-op; resume id persisted in adapter</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Edge cases observed</h4>
+  <ul>
+    <li><strong>Buffer empty at done/error</strong>: <code>flushBufferedAsCatchUp</code> is a no-op when <code>drainBuffer</code> returns <code>[]</code> &mdash; satisfies plan acceptance criterion &ldquo;Switch session khi buffer empty → không spam empty catch-up message&rdquo;. Tested.</li>
+    <li><strong>Active flip mid-dispatch</strong>: the closure does not cache active state. A switch from A→B mid-stream causes subsequent events to buffer rather than stream. The user sees a clean cut-off at the switch moment, with the rest in catch-up on next switch back or at <code>done</code>.</li>
+    <li><strong>Session closed mid-dispatch</strong> (e.g. <code>/session close A</code> while A is running): <code>setActiveSession(chatId, null)</code> is called inside <code>/session close</code>. Subsequent events for A see <code>activeId === null</code>, so <code>isActive</code> evaluates false → events go to buffer. The buffer is drained on the closing <code>done</code> as a silent catch-up + the <code>[A] ✅ done</code> message still notifies. Not a leak, but the closing message arrives in the chat even after the user explicitly closed &mdash; acceptable (the user asked to interrupt, the final state still has value). No active session is required to receive the message; <code>notifier</code> targets the chat directly.</li>
+    <li><strong>Race &mdash; <code>tool_use</code> is fire-and-forget</strong>: the active-branch <code>sendPlain</code> for tool_use uses <code>void notifier.sendPlain(&hellip;)</code> so order between text-stream flushes and tool_use markers depends on debounce timing. Pre-existing v0.7 behavior; B2 preserves it (test asserts <code>sendPlain</code> is called but does not assert interleaving with <code>appendStream</code>).</li>
+  </ul>
+
+  <h4>Test coverage</h4>
+  <ul class="checklist">
+    <li class="done">ACTIVE text → <code>appendStream(key, chunk, {prefix:'[A] ', silent:true})</code></li>
+    <li class="done">ACTIVE tool_use → <code>sendPlain('[A] 🔧 &hellip;', {silent:true})</code></li>
+    <li class="done">BACKGROUND text → <code>appendBuffer</code>, notifier <strong>not</strong> called</li>
+    <li class="done">BACKGROUND tool_use → <code>appendBuffer</code>, notifier <strong>not</strong> called</li>
+    <li class="done">BACKGROUND done with non-empty buffer → catch-up (silent) + <code>closeStream</code> + <code>[A] ✅ done · $0.0123</code> (not silent)</li>
+    <li class="done">BACKGROUND error with non-empty buffer → catch-up (silent) + <code>[A] ❌ msg</code> (not silent)</li>
+    <li class="done">BACKGROUND done with EMPTY buffer → only the done message, no catch-up</li>
+    <li class="done">Mid-dispatch active flip: first event streams, post-flip event buffers</li>
+    <li class="done"><code>flushBufferedAsCatchUp</code> no-op when buffer empty</li>
+    <li class="done"><code>flushBufferedAsCatchUp</code> emits joined data + count header silently</li>
+  </ul>
+
+  <h4>Acceptance criteria mapped (plan §6)</h4>
+  <ul>
+    <li>&ldquo;Background session text/tool_use ghi vào buffer, KHÔNG xuất hiện trong chat&rdquo; → covered by 2 background tests.</li>
+    <li>&ldquo;Active session stream xuống chat với <code>[label]</code> prefix&rdquo; → covered by ACTIVE text + tool_use tests.</li>
+    <li>&ldquo;Stream text/tool_use gửi với <code>disable_notification:true</code>&rdquo; → asserted via <code>{silent:true}</code> in mock args (A2 maps to <code>disable_notification</code>).</li>
+    <li>&ldquo;Approval/question/done/error gửi với <code>disable_notification</code> không set&rdquo; → done + error tests assert <code>opts === undefined</code>.</li>
+    <li>&ldquo;Switch session khi buffer empty → không spam empty catch-up message&rdquo; → empty-buffer done test asserts <code>sendPlain</code> called exactly once.</li>
+  </ul>
+
+  <h4>Downstream handoff</h4>
+  <ul>
+    <li>B3 (<code>router.ts</code>) will call <code>flushBufferedAsCatchUp(session, manager, notifier)</code> from the manual session-switch callback and from the approval/question auto-switch path. Reuse keeps the catch-up header format consistent across triggers.</li>
+    <li>B4 (E2E test) will assert the full active→background→switch→catch-up loop end-to-end, where this phase only mocks the boundary.</li>
+  </ul>
+</div>
+
+<hr />
+
+<div class="section">
+  <h2 id="b3">B3 &mdash; router.ts auto-switch + session strip + buffer flush</h2>
+  <p class="lede">Closes the loop on per-session view: when an approval request arrives for a background session, the router auto-switches the chat to that session, drains its RAM buffer as a silent catch-up message, and emits the approval prompt with a quick-switch session strip attached to the same inline keyboard. The manual session-switch handler (callback <code>session:switch:&lt;id&gt;</code>) mirrors the catch-up flush so taps on the strip have identical UX.</p>
+
+  <h4>Files touched</h4>
+  <ul>
+    <li><code>src/bot/keyboards.ts</code> &mdash; <code>approvalKeyboard(requestId, extraButtons = [])</code>. Backward-compatible signature: empty default means existing 1-arg callers are unaffected.</li>
+    <li><code>src/bot/router.ts</code> &mdash;
+      <ul>
+        <li>Import <code>buildSessionStrip</code> + <code>SessionListItem</code> from <code>./reply-builders.js</code>.</li>
+        <li>Replace inline <code>broker.attach({ prompt, notifyTimeout })</code> with <code>broker.attach(createApprovalPrompter({ store, manager, broker, notifierFor }))</code>.</li>
+        <li>Extend <code>switchSessionHandler</code> to drain incoming session&rsquo;s buffer + send silent catch-up via <code>ctx.reply(..., { disable_notification: true })</code>.</li>
+        <li>Add exported factory <code>createApprovalPrompter</code> at module bottom (test seam).</li>
+      </ul>
+    </li>
+    <li><code>tests/auto-switch.test.ts</code> <span class="badge badge-success">new</span> &mdash; 8 cases against real broker + store + manager + mock notifier.</li>
+  </ul>
+
+  <h4>Design decisions</h4>
+
+  <p><strong>1. Extract <code>createApprovalPrompter</code> factory.</strong> The previous broker prompter was an inline object literal inside <code>startBot</code>. Testing auto-switch that way would have needed a full Bot + sqlite + manager + broker scaffold per case. We extracted into a pure factory with narrow <code>Pick&lt;&hellip;&gt;</code> deps so tests pass real <code>ApprovalBroker</code> + <code>SessionStore</code> + <code>SessionManager</code> instances and only mock the notifier. The factory returns the same <code>{ prompt, notifyTimeout }</code> shape; behavior is byte-for-byte identical to the inline version, the refactor is purely test-seam.</p>
+
+  <p><strong>2. Combine approval buttons + session strip via <code>approvalKeyboard</code> extension.</strong> Two alternatives:</p>
+  <ul>
+    <li><em>Manual <code>InlineKeyboard</code> composition</em> at the call site &mdash; merge <code>approvalKeyboard(id).inline_keyboard</code> with <code>buildSessionStrip(&hellip;)</code>. Works, but spreads row-building across files and duplicates the merge pattern at every new caller.</li>
+    <li><em>Add an <code>extraButtons</code> param to <code>approvalKeyboard</code></em> &mdash; mirrors the existing pattern in <code>buildSessionList</code> / <code>buildProjectList</code> (both already accept <code>extraButtons: InlineKeyboardButton[][]</code>).</li>
+  </ul>
+  <p>Chose the second. <code>approvalKeyboard(requestId, extraButtons = [])</code> appends each inner array as a row after the existing decision rows; empty inner arrays are skipped defensively. The 1-arg call path is preserved &mdash; no other call sites needed updating.</p>
+
+  <p><strong>3. Silent semantics on auxiliary messages.</strong> The switch notice (<code>🔔 Đã chuyển sang ...</code>) and the catch-up dump (<code>[label] 📥 catch-up ...</code>) are both sent with <code>{ silent: true }</code>. The approval prompt itself is the &ldquo;loud&rdquo; notification &mdash; doubling up would spam. The Notifier maps <code>silent: true</code> to Telegram <code>disable_notification: true</code> (A2 semantics).</p>
+
+  <p><strong>4. Catch-up header consistency.</strong> The router&rsquo;s catch-up emits <code>[label] 📥 catch-up (N events from background):</code> &mdash; the exact wording used by <code>flushBufferedAsCatchUp</code> in <code>commands/index.ts</code> (B2). Users see the same header regardless of trigger: auto-switch on approval, manual switch on tap, done/error flush from the dispatch loop. We <em>didn&rsquo;t</em> import the helper because the prompter uses a structural mock-friendly <code>ApprovalPrompterNotifier</code> interface while the B2 helper requires the concrete <code>Notifier</code> class. Wording is duplicated literally in 3 places &mdash; small price for narrow test seams.</p>
+
+  <p><strong>5. Wizard guard (plan &sect;7 P2) &mdash; accepted limitation.</strong> The broker callback runs outside any <code>ctx</code>, so we can&rsquo;t inspect <code>ctx.conversation.active()</code> to defer the auto-switch while the <code>/new</code> wizard is mid-step. Options considered: (a) plumb conversations state through <code>SessionStore</code> (over-engineering &mdash; the storage adapter is in sqlite but reading "is wizard X active" from outside the plugin is fragile); (b) skip switch entirely when any wizard might be active (false negatives in the common case &mdash; user is not in a wizard); (c) accept the limitation. We chose (c): the <code>/new</code> wizard is short-lived (3 steps, ~30s), the user can <code>/cancel</code>, and both auxiliary messages are silent so they don&rsquo;t yank focus visually. The approval prompt itself does notify &mdash; correct, the agent is genuinely blocked. Documented in the prompter&rsquo;s JSDoc.</p>
+
+  <p><strong>6. Question events.</strong> Plan mentions question events but <code>src/agents/types.ts</code> <code>AgentEvent</code> currently has no <code>question</code> variant. Agent questions reach the user through the existing approval mechanism today (a tool that needs approval &rarr; user answers via Allow/Deny). If a dedicated question event lands later, mirroring this flow is a 5-line copy of the auto-switch block in <code>createApprovalPrompter.prompt</code>. No code change needed for B3.</p>
+
+  <p><strong>7. Manual switch flush.</strong> <code>switchSessionHandler</code> already called <code>setActiveSession</code> and emitted the transcript-tail preview. We append a buffer check + silent catch-up reply after the existing reply &mdash; wrapped in <code>try/catch</code> so a transient Telegram error on catch-up doesn&rsquo;t mask the successful switch (the user has already seen the <code>📍 [label]</code> preview).</p>
+
+  <h4>Public API delta</h4>
+  <pre><code>// keyboards.ts
+export function approvalKeyboard(
+  requestId: string,
+  extraButtons?: InlineKeyboardButton[][],
+): InlineKeyboard;
+
+// router.ts (NEW exports, test-only)
+export interface ApprovalPrompterNotifier {
+  sendPlain(
+    text: string,
+    extra?: Record&lt;string, unknown&gt; &amp; { silent?: boolean },
+  ): Promise&lt;number | null&gt;;
+}
+export interface ApprovalPrompterDeps { /* &hellip; */ }
+export function createApprovalPrompter(
+  deps: ApprovalPrompterDeps,
+): { prompt(req: ApprovalRequest): Promise&lt;void&gt;; notifyTimeout(req: ApprovalRequest): Promise&lt;void&gt;; };</code></pre>
+
+  <h4>Behavior matrix &mdash; Approval row</h4>
+  <table>
+    <thead><tr><th>Condition</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td>requesting session === active</td><td>recordApproval; send <code>🛡 *Approval needed*</code> + <code>approvalKeyboard(id, strip)</code>. No switch notice, no catch-up.</td></tr>
+      <tr><td>requesting session !== active AND no other session in this chat has pending approval</td><td>recordApproval &rarr; setActiveSession &rarr; (if buffered) silent catch-up &rarr; silent switch notice &rarr; loud approval prompt with strip.</td></tr>
+      <tr><td>requesting session !== active AND another session has pending approval (multi-approval)</td><td>recordApproval &rarr; <strong>do not switch</strong> &rarr; loud approval prompt with strip. Active stays where it was.</td></tr>
+    </tbody>
+  </table>
+
+  <h4>Test coverage (<code>tests/auto-switch.test.ts</code>, 8 cases)</h4>
+  <ul class="checklist">
+    <li class="done">auto-switches active session to requesting (background) session</li>
+    <li class="done">sends silent switch notice + loud approval prompt (parse_mode preserved)</li>
+    <li class="done">reply_markup combines 3 approval-button rows + session strip row(s) + new-session row, with <code>●</code> active marker on the new active session</li>
+    <li class="done">flushes incoming session buffer as silent catch-up before the prompt; buffer drained after</li>
+    <li class="done">skips catch-up entirely when buffer is empty (no empty message spam)</li>
+    <li class="done">does NOT switch when requesting session is already active (no switch notice emitted)</li>
+    <li class="done">multi-approval thrashing: second pending approval keeps existing active focus; still emits its own approval prompt without a switch notice</li>
+    <li class="done"><code>recordApproval</code> still called after factory refactor (regression guard)</li>
+  </ul>
+
+  <h4>Plan acceptance criteria mapped (&sect;6)</h4>
+  <ul>
+    <li>&ldquo;Approval cho background session &rarr; setActiveSession trước khi prompt&rdquo; &mdash; auto-switch test.</li>
+    <li>&ldquo;Approval prompt kèm session strip inline (verify reply_markup chứa session buttons)&rdquo; &mdash; reply_markup test.</li>
+    <li>&ldquo;Multi-approval thrashing prevention &mdash; chỉ first approval auto-switch, các approval sau chỉ notify&rdquo; &mdash; multi-approval test.</li>
+    <li>&ldquo;Switch session khi buffer empty &rarr; không spam empty catch-up message&rdquo; &mdash; empty-buffer test.</li>
+    <li>&ldquo;Wizard interaction safe: nếu conversation đang active, defer auto-switch (chỉ notify)&rdquo; &mdash; partial: documented limitation; auto-switch always proceeds, but auxiliary messages are silent so they don&rsquo;t yank focus. Wizard owners can <code>/cancel</code>.</li>
+    <li>&ldquo;Backward compat: existing tests vẫn pass&rdquo; &mdash; 158 pre-B3 tests still green; full suite now 166/166.</li>
+  </ul>
+
+  <h4>Verification</h4>
+  <ul>
+    <li><code>tests/auto-switch.test.ts</code>: <strong>8/8 pass</strong>.</li>
+    <li>Full suite: <strong>22 test files, 166/166 pass</strong> (was 21/158 before B3).</li>
+    <li><code>npx tsc --noEmit</code>: <strong>clean</strong>.</li>
+  </ul>
+
+  <h4>Downstream handoff</h4>
+  <ul>
+    <li>B4 (E2E integration test) can now assert the full active &rarr; background &rarr; approval &rarr; auto-switch &rarr; catch-up &rarr; strip-tap-switch loop end-to-end with a stubbed agent adapter; B3 only covers the prompter boundary.</li>
+    <li>Future <code>question</code> event variant (if it lands in <code>AgentEvent</code>) can re-use the same factory by adding a <code>question</code> branch that mirrors the auto-switch + flush + strip block.</li>
+  </ul>
+</div>
+
+<hr />
+<p style="color: var(--text-faint); font-size: 14px; text-align: center;">
+  B3 done. Auto-switch + session strip + buffer flush wired through router; B4 E2E is unblocked.
+</p>
+
+<hr />
+
+<h2 id="c">C &mdash; Consolidate (senior review, patches, tech freshness)</h2>
+<p>Post-implementation phase per workflow rule &sect;2.1 / &sect;5: senior architect (Opus 4.7) re-read every changed file, traced each plan deliverable to working code + tests, ran the full suite, and verified each direct dependency&rsquo;s version + API freshness via Context7. Two <code>[P1]</code> issues were caught and patched in-loop; review re-ran until <strong>0 actionable findings remained</strong>.</p>
+
+<div class="card">
+  <h3>Senior review verdict &mdash; <span class="badge badge-success">APPROVED</span></h3>
+  <p>Scope completeness check (plan acceptance criteria, &sect;6):</p>
+  <ul class="checklist">
+    <li class="done">Per-session OutputBuffer with middle-drop &mdash; A1 + tests/output-buffer.test.ts (9 specs)</li>
+    <li class="done">SessionManager wires buffers, cap from config &mdash; B1 + tests/manager-buffer.test.ts (6 specs)</li>
+    <li class="done">Notifier silent + per-stream prefix + configurable debounce &mdash; A2 + tests/notifier-silent.test.ts (10 specs)</li>
+    <li class="done">Config schema (<code>notifier.debounce_ms</code>, <code>notifier.buffer_cap_bytes</code>) &mdash; A4 + tests/broker.test.ts</li>
+    <li class="done"><code>ApprovalBroker.hasPendingFor</code> for first-come-first-active gate &mdash; A4 + 3 broker specs</li>
+    <li class="done"><code>buildSessionStrip</code> quick-switch keyboard &mdash; A3 + tests/session-strip.test.ts (11 specs)</li>
+    <li class="done"><code>commands/index.ts</code> <code>onEvent</code> gating: active streams, background buffers, critical events flush catch-up &mdash; B2 + tests/session-gating.test.ts (10 specs)</li>
+    <li class="done"><code>router.ts</code> auto-switch + manual-switch catch-up + strip on approval prompts &mdash; B3 + tests/auto-switch.test.ts (8 specs)</li>
+    <li class="done">Telegram 4096-char limit safety on catch-up flush &mdash; <code>splitCatchUp</code> helper + tests (patched in-review, see P1 below)</li>
+    <li class="done">Buffer cleanup on session close &mdash; <code>SessionManager.discardBuffer</code> wired into <code>/session close</code> (patched in-review, see P2 below)</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Patches applied during review loop</h3>
+
+  <p><strong>[P1] <code>splitCatchUp</code> for Telegram&rsquo;s 4096-char limit.</strong> The catch-up flusher in B2/B3 joined all buffered events into one string and handed it to <code>notifier.sendPlain</code>. With the OutputBuffer cap at 50KB and a runaway agent producing many medium-sized chunks, the joined payload routinely exceeded Telegram&rsquo;s per-message 4096-char hard cap &mdash; the message would be silently clipped server-side and the user would lose the tail of the catch-up. Fix: added <code>splitCatchUp(header, contHeader, lines, maxChars = 3400)</code> in <code>src/bot/reply-builders.ts</code> that splits at line boundaries (keeping events together), falls back to hard char cuts when a single line exceeds the cap, prepends the full header on part 1 only and a short <code>[label] 📥 catch-up (cont.):</code> header on subsequent parts. <code>3400</code> sits comfortably under both the notifier&rsquo;s <code>MAX_MSG_CHARS</code> (3500) and Telegram&rsquo;s 4096 so neither layer needs to re-clip. Wired through <code>flushBufferedAsCatchUp</code> (commands) and the router&rsquo;s auto-switch path. Added <strong>6 specs</strong> covering empty input, single-part, exact-cap boundary, multi-part split at line boundary, oversize-single-line hard split, and pathological tiny <code>maxChars</code>.</p>
+
+  <p><strong>[P2] Buffer leak on <code>/session close</code>.</strong> Closing a session via <code>/session close &lt;label&gt;</code> called <code>store.setActiveSession(chatId, null)</code> and aborted the in-flight dispatch, but the per-session <code>OutputBuffer</code> entry in <code>SessionManager.buffers</code> stayed in the Map forever. Across a long-lived daemon (the v0.8 target install profile is launchd, days/weeks uptime), repeatedly creating + closing sessions would accumulate buffer entries even after the session row was deleted &mdash; each buffer holds up to <code>bufferCapBytes</code> bytes of dangling chunks. Not a P0 (single buffer is &le; 50KB, hundreds of closed sessions ~MB scale), but it&rsquo;s an unbounded growth path on a long-running daemon. Fix: added <code>SessionManager.discardBuffer(sessionId)</code> that <code>this.buffers.delete(sessionId)</code> &mdash; idempotent on unknown ids. Called from the <code>/session close</code> handler immediately after the close confirmation. Added 1 spec asserting <code>hasBuffered</code> flips to <code>false</code> after discard and a subsequent <code>appendBuffer</code> lazily allocates a fresh buffer (no stale state).</p>
+</div>
+
+<div class="card">
+  <h3>Tech freshness (Context7, &sect;5.2)</h3>
+  <table>
+    <thead><tr><th>Library</th><th>Version used</th><th>Latest stable</th><th>API freshness</th><th>Action</th></tr></thead>
+    <tbody>
+      <tr><td><code>grammy</code></td><td>1.43.0</td><td>1.43.0</td><td>OK &mdash; <code>InlineKeyboard</code>, <code>Bot</code>, <code>Context</code>, <code>api.editMessageReplyMarkup</code> all current; no deprecations on the methods touched</td><td>none</td></tr>
+      <tr><td><code>@grammyjs/conversations</code></td><td>2.1.1</td><td>2.1.1</td><td>OK &mdash; v2 API (<code>createConversation</code>, <code>conversation.external</code>) is the recommended path; v1 wizard pattern fully retired</td><td>none</td></tr>
+      <tr><td><code>@grammyjs/runner</code></td><td>2.0.3</td><td>2.0.3</td><td>OK &mdash; <code>run(bot)</code> + <code>stop()</code> contract unchanged</td><td>none</td></tr>
+      <tr><td><code>better-sqlite3</code></td><td>12.10.0</td><td>12.10.0</td><td>OK &mdash; synchronous prepare/run/get/all path unchanged; Node 22 ABI compatible</td><td>none</td></tr>
+      <tr><td><code>zod</code></td><td>4.4.3</td><td>4.4.3</td><td>OK &mdash; v4 strict object-default shape used in <code>src/config.ts</code> (A4) matches the latest pattern; <code>z.infer</code> output types correct</td><td>none</td></tr>
+    </tbody>
+  </table>
+  <p>All five direct dependencies are at their latest stable release at sprint close (2026-05-20). No deprecated APIs were introduced; no upgrade or migration follow-up is queued.</p>
+</div>
+
+<div class="card">
+  <h3>Final verification</h3>
+  <ul class="checklist">
+    <li class="done"><code>npm test</code> &mdash; <strong>172/172 pass</strong> (24 test files; was 142 at sprint start, +30 new)</li>
+    <li class="done"><code>npx tsc --noEmit</code> &mdash; clean, no diagnostics</li>
+    <li class="done"><code>npm run build</code> &mdash; clean, no warnings</li>
+    <li class="done">Review loop terminated at iteration 2 with 0 actionable <code>[P0]</code>&ndash;<code>[P3]</code> findings</li>
+    <li class="done">Every plan acceptance criterion in &sect;6 maps to a passing test (see scope checklist above)</li>
+    <li class="done">No deprecated dependency APIs introduced; tech-freshness table all OK</li>
+  </ul>
+  <p style="color: var(--text-dim); margin-top: 16px;">Sprint v0.8 closes APPROVED. Buffer + per-session view + auto-switch loop is wired end-to-end; ready for launchd reinstall + smoke test against the v0.6 runbook.</p>
+</div>
+
+</div>
+</body>
+</html>

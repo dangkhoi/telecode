@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan — Per-Session View &amp; Stream Buffering (v0.8)</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --warn: #b25000; --danger: #c8102e;
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --warn: #ff9f0a; --danger: #ff453a;
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 80px 32px 120px; }
+  header.hero { margin-bottom: 64px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 700px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 12px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 72px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 32px; font-size: 17px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 40px 0 12px; }
+  h4 { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 32px 0 12px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 15px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: rgba(28,124,84,0.12); color: var(--success); }
+  .badge-warn { background: rgba(178,80,0,0.12); color: var(--warn); }
+  .badge-danger { background: rgba(200,16,46,0.1); color: var(--danger); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 24px 28px; margin: 32px 0 48px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 10px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  hr { border: none; height: 1px; background: var(--border); margin: 64px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 20px; font-family: "SF Mono", Menlo, monospace; font-size: 13.5px; margin: 12px 0; white-space: pre-wrap; line-height: 1.5; }
+  @media (max-width: 720px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 34px; } .lede { font-size: 18px; } h2 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Plan · Telecode v0.8</div>
+  <h1>Per-Session View &amp; Stream Buffering</h1>
+  <p class="lede">Cô lập output theo session: chỉ active session stream xuống chat; background session buffer trong RAM. Approval/question auto-switch session lên active + notify. Stream silent (no push notif) đến khi critical event xảy ra. Inline session-strip cho phép quick-switch.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Author:</strong> koi</span>
+    <span class="pill"><strong>Date:</strong> 2026-05-20</span>
+    <span class="pill"><strong>Target:</strong> v0.8</span>
+    <span class="pill"><strong>Effort:</strong> ~2 ngày</span>
+    <span class="pill"><strong>Status:</strong> <span class="badge badge-warn">Approved by user — executing</span></span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p>Multi-session v0.7 hiện gửi mọi stream về cùng 1 chat → user thấy log mix. Sprint này thêm <strong>per-session output gating</strong>: background session output ghi RAM buffer thay vì gửi chat; user switch sang session đó mới flush. Stream gửi xuống chat dùng Telegram <code>disable_notification:true</code> (im lặng, không tone). Khi background session cần approval/question → <strong>auto-switch</strong> session đó lên active + push notify. Mọi message critical (approval, done, error) kèm <strong>session strip</strong> inline button để quick-switch.</p>
+</div>
+
+<h2>1. Requirements (R1–R5)</h2>
+
+<table>
+  <thead><tr><th>#</th><th>Yêu cầu user</th><th>Implementation</th></tr></thead>
+  <tbody>
+    <tr><td>R1</td><td>Chọn session nào chỉ thấy stream session đó, không mix</td><td>Background session → buffer RAM; switch → flush buffer + stream live</td></tr>
+    <tr><td>R2</td><td>Gom stream chậm lại, đỡ spam</td><td>Debounce 700ms → 3000ms (configurable)</td></tr>
+    <tr><td>R3</td><td>Stream im lặng; chỉ notify khi cần</td><td><code>disable_notification:true</code> cho stream/tool; <code>false</code> cho approval/question/done/error</td></tr>
+    <tr><td>R4</td><td>Inline button quick-switch giữa session</td><td><code>buildSessionStrip</code> đính mỗi message critical: <code>[● A] [B] [C] [+ New]</code></td></tr>
+    <tr><td>R5</td><td>Question/approval auto-switch session + notify</td><td>Approval/question handler: <code>setActiveSession(chatId, X)</code> trước khi prompt</td></tr>
+  </tbody>
+</table>
+
+<h2>2. Behavior matrix</h2>
+
+<table>
+  <thead><tr><th>Event</th><th>Session ACTIVE</th><th>Session BACKGROUND</th></tr></thead>
+  <tbody>
+    <tr><td>Stream text</td><td>Send <strong>silent</strong> (disable_notification)</td><td><strong>BUFFER</strong> (không gửi)</td></tr>
+    <tr><td>Tool use 🔧</td><td>Send silent</td><td>BUFFER</td></tr>
+    <tr><td>Approval 🛡</td><td>Send + NOTIFY + strip</td><td><strong>AUTO-SWITCH</strong> + Send + NOTIFY + strip</td></tr>
+    <tr><td>Question ❓</td><td>Send + NOTIFY + strip</td><td><strong>AUTO-SWITCH</strong> + Send + NOTIFY + strip</td></tr>
+    <tr><td>Error ❌</td><td>Send + NOTIFY + strip</td><td>Flush buffer + Send + NOTIFY + strip (không auto-switch)</td></tr>
+    <tr><td>Done ✅</td><td>Flush buffer + Send + NOTIFY + strip</td><td>Flush buffer + Send + NOTIFY + strip (không auto-switch)</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Rationale</strong>: auto-switch chỉ cho approval/question vì block agent — cần user trả lời ngay. Error/Done không block, chỉ notify để user biết.</p>
+
+<h2>3. Architecture &amp; shared infra</h2>
+
+<h3>3.1 OutputBuffer (src/session/output-buffer.ts) — NEW</h3>
+<p>Per-session ring buffer trong RAM, cap mặc định 50KB. Khi vượt cap, drop chunks giữa, giữ phần đầu + cuối, chèn marker <code>… [N chunks omitted] …</code>.</p>
+<pre><code>export interface BufferedEvent {
+  type: 'text' | 'tool_use' | 'status';
+  data: string;       // formatted line ready to flush
+  createdAt: number;
+}
+
+export class OutputBuffer {
+  private events: BufferedEvent[] = [];
+  private bytes = 0;
+  constructor(private readonly capBytes: number = 50_000) {}
+
+  append(event: BufferedEvent): void {
+    this.events.push(event);
+    this.bytes += event.data.length;
+    while (this.bytes > this.capBytes && this.events.length > 4) {
+      // drop from middle, keep first 2 + last 2 + marker
+      const dropped = this.events.splice(2, this.events.length - 4, {
+        type: 'status',
+        data: `… [${this.events.length - 4} chunks omitted] …`,
+        createdAt: Date.now(),
+      });
+      this.bytes -= dropped.reduce((s, e) =&gt; s + e.data.length, 0);
+    }
+  }
+  drain(): BufferedEvent[] { const out = this.events; this.events = []; this.bytes = 0; return out; }
+  size(): number { return this.events.length; }
+  isEmpty(): boolean { return this.events.length === 0; }
+}</code></pre>
+
+<h3>3.2 SessionManager integration</h3>
+<p>Thêm <code>Map&lt;sessionId, OutputBuffer&gt;</code>. Expose:</p>
+<ul>
+  <li><code>appendBuffer(sessionId, event)</code> — gọi từ onEvent khi session đang background</li>
+  <li><code>drainBuffer(sessionId): BufferedEvent[]</code> — gọi khi switch để flush</li>
+  <li><code>hasBuffered(sessionId): boolean</code> — kiểm tra trước khi flush</li>
+</ul>
+
+<h3>3.3 Notifier silent + prefix</h3>
+<p>Mở rộng <code>Notifier</code>:</p>
+<ul>
+  <li><code>sendPlain(text, { silent?: boolean, ...extra })</code> — pass <code>disable_notification</code> qua <code>bot.api.sendMessage</code></li>
+  <li><code>appendStream(key, chunk, opts?: { prefix?: string, silent?: boolean })</code> — Stream object lưu prefix + silent. Flush prepend prefix; send với disable_notification.</li>
+  <li><code>DEBOUNCE_MS</code> đọc từ config <code>notifier.debounce_ms</code> (default 3000).</li>
+</ul>
+
+<h3>3.4 ReplyBuilders.buildSessionStrip (R4)</h3>
+<pre><code>export function buildSessionStrip(
+  sessions: SessionListItem[],
+  activeId: string | null,
+  page: number = 1,
+): InlineKeyboardButton[][] {
+  // Row 1: up to 4 session buttons. Active = ●prefix.
+  // Row 2: [+ New session] + pagination nav if >4
+  // Returns rows to be appended via extraButtons
+}</code></pre>
+<p>Pagination 4/page; row pagination = <code>[← Prev] [Next →]</code> + <code>[+ New]</code>.</p>
+
+<h3>3.5 Approval/question auto-switch (R5)</h3>
+<p>Trong <code>router.ts</code>:</p>
+<pre><code>deps.broker.attach({
+  async prompt(req: ApprovalRequest) {
+    // R5: auto-switch if backgrounded
+    const cur = deps.store.getChatState(req.chatId).active_session_id;
+    if (cur !== req.sessionId) {
+      // First-come-first-active: only auto-switch if no other pending approval
+      if (!deps.broker.hasPendingFor(req.chatId, cur)) {
+        deps.store.setActiveSession(req.chatId, req.sessionId);
+        // Flush incoming session's buffer so user sees recent context
+        const buffered = deps.manager.drainBuffer(req.sessionId);
+        if (buffered.length) {
+          await notifier.sendPlain(catchUpHeader(req.sessionLabel, buffered));
+        }
+      }
+    }
+    // Send approval prompt + session strip + NOTIFY (default sound)
+    await notifier.sendPlain(approvalText(req), {
+      reply_markup: approvalKeyboard(req.id).inline_keyboard
+        .concat(buildSessionStrip(sessions, activeId)),
+    });
+  }
+});</code></pre>
+
+<h2>4. Files to change</h2>
+<table>
+  <thead><tr><th>File</th><th>Status</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/session/output-buffer.ts</code></td><td><span class="badge badge-success">new</span></td><td>OutputBuffer class (§3.1)</td></tr>
+    <tr><td><code>src/session/manager.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+buffer Map + appendBuffer/drainBuffer/hasBuffered (§3.2)</td></tr>
+    <tr><td><code>src/bot/notifier.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>silent flag, prefix per stream, debounce config (§3.3)</td></tr>
+    <tr><td><code>src/bot/reply-builders.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+buildSessionStrip (§3.4)</td></tr>
+    <tr><td><code>src/bot/commands/index.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>onEvent gating: active → live silent + prefix; background → manager.appendBuffer. Critical → live + notify + strip.</td></tr>
+    <tr><td><code>src/bot/router.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>approval/question handler: auto-switch + flush + strip (§3.5). switch handler: flush buffer.</td></tr>
+    <tr><td><code>src/approval/broker.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>hasPendingFor(chatId, sessionId)</code> để gate auto-switch first-come</td></tr>
+    <tr><td><code>src/config.ts</code></td><td><span class="badge badge-accent">edit</span></td><td>+ <code>notifier: { debounce_ms, buffer_cap_bytes }</code> (zod schema, defaults 3000 + 50_000)</td></tr>
+    <tr><td><code>config.example.yaml</code></td><td><span class="badge badge-accent">edit</span></td><td>Document 2 setting mới</td></tr>
+    <tr><td><code>tests/output-buffer.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>append/drain/cap/middle-drop logic</td></tr>
+    <tr><td><code>tests/notifier-silent.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>silent flag → disable_notification, prefix preserved on flush+rotation</td></tr>
+    <tr><td><code>tests/session-gating.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>active dispatches live silent; background goes to buffer; switch flushes</td></tr>
+    <tr><td><code>tests/auto-switch.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>approval on background → setActive called + buffer flushed + strip in reply_markup; first-come gate</td></tr>
+    <tr><td><code>tests/session-strip.test.ts</code></td><td><span class="badge badge-success">new</span></td><td>buildSessionStrip layout, pagination 4/page, active marker</td></tr>
+    <tr><td><code>docs/design/per-session-view-buffering.html</code></td><td><span class="badge badge-success">new</span></td><td>SDD viết song song</td></tr>
+    <tr><td><code>README.md</code></td><td><span class="badge badge-accent">edit</span></td><td>Update workflow + add notifier config section</td></tr>
+  </tbody>
+</table>
+
+<h2>5. DAG execution plan</h2>
+
+<h4>Phase A — Foundation (parallel, no deps)</h4>
+<ol>
+  <li><strong>A1</strong>: <code>output-buffer.ts</code> + test</li>
+  <li><strong>A2</strong>: <code>notifier.ts</code> silent/prefix/debounce refactor + test</li>
+  <li><strong>A3</strong>: <code>reply-builders.ts</code> +<code>buildSessionStrip</code> + test</li>
+  <li><strong>A4</strong>: config schema + example.yaml + broker.hasPendingFor</li>
+</ol>
+
+<h4>Phase B — Integration (depends A)</h4>
+<ol>
+  <li><strong>B1</strong> (deps A1, A4): <code>manager.ts</code> wire buffer (appendBuffer/drainBuffer)</li>
+  <li><strong>B2</strong> (deps A2, A3, B1): <code>commands/index.ts</code> onEvent gating — active → live silent + prefix; background → buffer</li>
+  <li><strong>B3</strong> (deps A2, A3, A4, B1): <code>router.ts</code> approval/question auto-switch + session strip + buffer flush on switch</li>
+  <li><strong>B4</strong> (deps B1, B2, B3): integration test E2E — 2 sessions, dispatch + auto-switch + strip + flush</li>
+</ol>
+
+<h4>Phase C — Consolidate</h4>
+<ol>
+  <li><strong>C1</strong>: full test suite + build + typecheck</li>
+  <li><strong>C2</strong>: scope completeness check (§6 acceptance)</li>
+  <li><strong>C3</strong>: senior review Opus 4.7 + Context7 tech freshness</li>
+  <li><strong>C4</strong>: SDD <code>docs/design/per-session-view-buffering.html</code></li>
+  <li><strong>C5</strong>: README update</li>
+</ol>
+
+<h2>6. Acceptance criteria</h2>
+<ul class="checklist">
+  <li>Background session text/tool_use ghi vào buffer, KHÔNG xuất hiện trong chat</li>
+  <li>Switch sang session có buffer → flush ra dạng catch-up message với header <code>[label] 📥 catch-up:</code></li>
+  <li>Active session stream xuống chat với <code>[label]</code> prefix</li>
+  <li>Stream text/tool_use gửi với <code>disable_notification:true</code> (verify qua test mock bot.api)</li>
+  <li>Approval/question/done/error gửi với <code>disable_notification</code> không set (default = notify)</li>
+  <li>Approval cho background session → setActiveSession trước khi prompt</li>
+  <li>Approval prompt kèm session strip inline (verify reply_markup chứa session buttons)</li>
+  <li>Multi-approval thrashing prevention — chỉ first approval auto-switch, các approval sau chỉ notify</li>
+  <li>Buffer cap 50KB triggered → middle chunks dropped + marker</li>
+  <li>Debounce 3000ms configurable qua <code>notifier.debounce_ms</code></li>
+  <li>Buffer cap configurable qua <code>notifier.buffer_cap_bytes</code></li>
+  <li>Session strip pagination 4/page với >4 sessions</li>
+  <li>Switch session khi buffer empty → không spam empty catch-up message</li>
+  <li>Backward compat: existing 109 tests vẫn pass</li>
+  <li>Wizard interaction safe: nếu conversation đang active, defer auto-switch (chỉ notify)</li>
+  <li>Build + typecheck clean</li>
+  <li>Senior review Opus APPROVED</li>
+</ul>
+
+<h2>7. Risk register</h2>
+<table>
+  <thead><tr><th>Risk</th><th>Sev</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>Buffer leak khi session abort/error giữa chừng — không drain</td><td><span class="badge badge-warn">P2</span></td><td>Session.close()/error handlers drain buffer thành 1 final message</td></tr>
+    <tr><td>Auto-switch khi user đang giữa wizard <code>/new</code></td><td><span class="badge badge-warn">P2</span></td><td>Check <code>ctx.conversation.active()</code> — nếu yes, defer auto-switch chỉ notify</td></tr>
+    <tr><td>Race: approval arrives đúng lúc user tap switch button</td><td><span class="badge badge-warn">P2</span></td><td>setActiveSession ở store là atomic; cuối cùng store value thắng — broker check lại sau khi acquire</td></tr>
+    <tr><td>Catch-up message vượt 4096 chars (Telegram limit)</td><td><span class="badge badge-warn">P2</span></td><td>Buffer cap 50KB drained → split thành nhiều message (max 3500/message), hoặc summarize tier-2</td></tr>
+    <tr><td>Multi-approval queue starvation</td><td><span class="badge badge-danger">P3</span></td><td>Mỗi approval có 5min timeout (existing) — auto-deny nếu user không kịp. Acceptable.</td></tr>
+    <tr><td>Notification spam khi 5 session done cùng lúc</td><td><span class="badge badge-warn">P3</span></td><td>Acceptable trade-off; user muốn biết done. Tương lai có thể aggregate.</td></tr>
+  </tbody>
+</table>
+
+<h2>8. Out of scope</h2>
+<ul>
+  <li>Persistent buffer qua daemon restart — buffer RAM, mất khi restart (acceptable, dispatch cũng bị kill).</li>
+  <li>Aggregate notification (gộp 5 done thành 1) — defer.</li>
+  <li>User configurable per-event notification (vd disable error notify) — defer; mặc định fixed.</li>
+  <li>Search/filter buffer khi switch — defer.</li>
+  <li>Live dashboard message (always-on-top edit) — defer T3 next sprint.</li>
+</ul>
+
+<hr />
+<p style="color: var(--text-faint); font-size: 14px; text-align: center;">
+  Approved by user. Executing DAG.<br />
+  SDD: <code>docs/design/per-session-view-buffering.html</code> viết song song khi implement.
+</p>
+
+</div>
+</body>
+</html>

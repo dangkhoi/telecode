@@ -69,4 +69,75 @@ describe('ApprovalBroker', () => {
     });
     await expect(p).resolves.toBe('deny');
   });
+
+  describe('hasPendingFor', () => {
+    it('returns false on empty broker', () => {
+      const broker = new ApprovalBroker({ timeoutMs: 5000 });
+      expect(broker.hasPendingFor(1)).toBe(false);
+      expect(broker.hasPendingFor(1, 'sA')).toBe(false);
+    });
+
+    it('returns true when another session in the same chat has a pending request', async () => {
+      const broker = new ApprovalBroker({ timeoutMs: 5000 });
+      broker.attach({ prompt: async () => undefined });
+      const pA = broker.ask({
+        sessionId: 'sA',
+        chatId: 42,
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        inputPreview: 'ls',
+        sessionLabel: 'A',
+      });
+      const pB = broker.ask({
+        sessionId: 'sB',
+        chatId: 42,
+        toolName: 'Bash',
+        input: { command: 'pwd' },
+        inputPreview: 'pwd',
+        sessionLabel: 'B',
+      });
+
+      // From sA's perspective: sB is still pending → true
+      expect(broker.hasPendingFor(42, 'sA')).toBe(true);
+      // From sB's perspective: sA is still pending → true
+      expect(broker.hasPendingFor(42, 'sB')).toBe(true);
+      // Different chat → false
+      expect(broker.hasPendingFor(999, 'sA')).toBe(false);
+      // No exclude → true (anything pending in this chat)
+      expect(broker.hasPendingFor(42)).toBe(true);
+
+      // Resolve B; from sA's perspective there is no other pending → false
+      const bReq = broker.pendingForSession('sB')[0]!;
+      broker.resolve(bReq.id, 'allow_once');
+      expect(broker.hasPendingFor(42, 'sA')).toBe(false);
+      // From sB's perspective sA still pending → true
+      expect(broker.hasPendingFor(42, 'sB')).toBe(true);
+
+      // Resolve A; broker fully drained → false
+      const aReq = broker.pendingForSession('sA')[0]!;
+      broker.resolve(aReq.id, 'allow_once');
+      expect(broker.hasPendingFor(42)).toBe(false);
+      expect(broker.hasPendingFor(42, 'sA')).toBe(false);
+
+      await Promise.all([pA, pB]);
+    });
+
+    it('ignores requests from other chats', async () => {
+      const broker = new ApprovalBroker({ timeoutMs: 5000 });
+      broker.attach({ prompt: async () => undefined });
+      const p = broker.ask({
+        sessionId: 'sX',
+        chatId: 7,
+        toolName: 'Bash',
+        input: {},
+        inputPreview: '',
+        sessionLabel: 'X',
+      });
+      expect(broker.hasPendingFor(7, 'sY')).toBe(true);
+      expect(broker.hasPendingFor(8, 'sY')).toBe(false);
+      const req = broker.pendingForSession('sX')[0]!;
+      broker.resolve(req.id, 'deny');
+      await p;
+    });
+  });
 });

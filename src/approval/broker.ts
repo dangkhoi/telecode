@@ -86,4 +86,19 @@ export class ApprovalBroker {
       .filter((p) => p.request.sessionId === sessionId)
       .map((p) => p.request);
   }
+
+  /**
+   * True iff there exists any pending approval request for `chatId` that is
+   * NOT owned by `excludeSessionId`. Used by the router to enforce
+   * first-come-first-active auto-switch: if another session in the same chat
+   * already raised an approval and grabbed active focus, don't override.
+   */
+  hasPendingFor(chatId: number, excludeSessionId?: string): boolean {
+    for (const p of this.pending.values()) {
+      if (p.request.chatId !== chatId) continue;
+      if (excludeSessionId && p.request.sessionId === excludeSessionId) continue;
+      return true;
+    }
+    return false;
+  }
 }
