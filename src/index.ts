@@ -43,6 +43,23 @@ async function main(): Promise<void> {
 
   const broker = new ApprovalBroker({ timeoutMs: config.daemon.approval_timeout_sec * 1000 });
 
+  // Pre-flight: resolve kiro binary on disk so we don't fail at first
+  // session-creation with a confusing ENOENT. The binary often lives outside
+  // launchd's default PATH (e.g. `kiro-cli` ships at ~/.local/bin/), so the
+  // user is expected to use an absolute path in config.yaml.
+  const kiroBinary = config.agents.kiro.binary;
+  if (!kiroBinary.startsWith('/')) {
+    logger.warn(
+      { binary: kiroBinary, path: process.env.PATH },
+      'kiro binary is relative — daemon PATH may not include it (try absolute path in config.yaml)',
+    );
+  } else if (!existsSync(kiroBinary)) {
+    logger.warn(
+      { binary: kiroBinary },
+      'kiro binary does not exist at configured path — Kiro sessions will fail until fixed',
+    );
+  }
+
   // Kiro hook bridge: HTTP loopback receiver + write the custom agent so
   // kiro-cli's preToolUse routes here for policy + Telegram approval.
   const kiroHookServer = new KiroHookServer({ port: config.daemon.kiro_hook_port, store, policy, broker });

@@ -471,6 +471,19 @@ launchctl load ~/Library/LaunchAgents/dev.telecode.daemon.plist
 
 Config + policy + DB ở `~/.telecode/` giữ nguyên qua update.
 
+### Migration v0.4 → v0.6 (Kiro config schema thay đổi)
+
+Nếu bạn đã có config từ trước v0.5, cần edit `~/.telecode/config.yaml`:
+
+```yaml
+agents:
+  kiro:
+    binary: /Users/YOU/.local/bin/kiro-cli   # ← thay `kiro` (IDE) bằng absolute path kiro-cli
+    # default_mode: agent                    # ← xoá dòng này (obsolete schema)
+```
+
+**Tại sao absolute path?** kiro-cli thường cài ở `~/.local/bin/` mà launchd's default PATH không có. Tìm path đúng: `which kiro-cli`. Daemon sẽ log warning nếu binary không tồn tại / dùng relative path.
+
 ---
 
 ## Uninstall

@@ -14,7 +14,10 @@ agents:
     binary: claude
     setting_sources: [user, project, local]
   kiro:
-    binary: kiro-cli                   # NOT the `kiro` IDE launcher — needs the headless `kiro-cli` (v2.3+)
+    # NOT the `kiro` IDE launcher — needs the headless `kiro-cli` (v2.3+).
+    # USE AN ABSOLUTE PATH: kiro-cli typically installs to ~/.local/bin/ which
+    # is NOT in launchd's default PATH. Find with: `which kiro-cli`.
+    binary: /Users/YOU/.local/bin/kiro-cli
     # agent: telecode                  # default = `telecode` (auto-generated at ~/.kiro/agents/telecode.json with preToolUse hook → daemon)
     # model: claude-sonnet-4.6         # optional: kiro-cli --model
 defaults:
