@@ -12,9 +12,35 @@ export class KiroAdapter implements AgentAdapter {
   constructor(private readonly opts: KiroAdapterOpts) {}
 
   async run(start: AgentStartOpts): Promise<void> {
-    const args = ['chat', '--mode', this.opts.defaultMode, '--reuse-window', start.initialPrompt];
     try {
       start.onEvent({ type: 'status', status: 'kiro_spawning' });
+
+      // Step 1: ensure the project workspace is open in a Kiro window.
+      // `kiro -r <path>` opens or focuses an existing window on that workspace.
+      // Without this, `kiro chat --reuse-window` may target a window that has a
+      // different workspace open (or no workspace), and the prompt is dropped.
+      const openWin = await execa(this.opts.binary, ['-r', start.cwd], {
+        cwd: start.cwd,
+        timeout: 10_000,
+        reject: false,
+        cancelSignal: start.abortSignal,
+      });
+      if (openWin.failed) {
+        logger.warn(
+          { exit: openWin.exitCode, stderr: openWin.stderr?.toString().slice(0, 300) },
+          'kiro workspace open warning',
+        );
+      }
+
+      // Step 2: send the chat prompt into the (now-correct) window.
+      const args = [
+        'chat',
+        '--mode',
+        this.opts.defaultMode,
+        '--reuse-window',
+        '--maximize',
+        start.initialPrompt,
+      ];
       const child = execa(this.opts.binary, args, {
         cwd: start.cwd,
         timeout: 30_000,
@@ -29,12 +55,15 @@ export class KiroAdapter implements AgentAdapter {
         });
         return;
       }
+
       start.onEvent({
         type: 'text',
         text:
           '✉️ Sent to Kiro IDE (mode `' +
           this.opts.defaultMode +
-          '`). Open the Kiro window to watch the agent run. ' +
+          '`, workspace `' +
+          start.cwd +
+          '`). Open Kiro to watch the agent run. ' +
           '(Phase 1: no stdout stream-back — see plan §9 M4.)',
         final: true,
       });
