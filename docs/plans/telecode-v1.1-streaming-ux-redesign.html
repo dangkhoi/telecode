@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan — Telecode v1.1 · Streaming UX Redesign</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 80px 32px 120px; }
+  header.hero { margin-bottom: 56px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 72px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 32px; font-size: 17px; }
+  h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; margin: 40px 0 12px; }
+  h4 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 28px 0 10px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 15px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 24px 28px; margin: 32px 0 48px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 28px; margin: 24px 0; box-shadow: var(--shadow); }
+  .card h3 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.danger { border-color: rgba(200,16,46,0.3); background: var(--danger-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 10px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 64px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 20px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.6; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px; }
+  .compare .col h5 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after { border-left: 3px solid var(--success); }
+  .phase-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 56px; }
+  .phase-header h2 { margin: 0; }
+  .phase-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+  @media (max-width: 720px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 32px; } .lede { font-size: 18px; } h2 { font-size: 24px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Plan · Telecode v1.1</div>
+  <h1>Streaming UX redesign</h1>
+  <p class="lede">Từ "firehose mọi event" sang summary-first + mode toggle + smart rendering + agentic compression. Persona-aware streaming cho Telegram-first user.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Target version</strong> · v1.1</span>
+    <span class="pill"><strong>Owner</strong> · dangkhoi@users.noreply.github.com</span>
+    <span class="pill"><strong>Estimated effort</strong> · 10–11 ngày</span>
+    <span class="pill"><strong>Phases</strong> · 5 (A–E)</span>
+    <span class="pill"><strong>Status</strong> · Approved, executing</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p>Telecode v1.0 stream MỌI event về Telegram → firehose noise + format khó đọc. v1.1 ship: <strong>(A)</strong> fix 2 real bugs + quick wins, <strong>(B)</strong> 4 verbosity modes (default = summary), <strong>(C)</strong> smart rendering (code-fence, diff stats, collapse repeated tools), <strong>(D)</strong> agentic compression (reuse session để auto-summarize), <strong>(E)</strong> single rolling activity indicator. Backward compat 100% — user cũ upgrade không break.</p>
+  <p><strong>Killer feature (D)</strong>: thay vì rule-based truncate, telecode inject prompt "tóm tắt 2 dòng" vào session đang chạy → reply summary thay raw 200-dòng stdout. Cost ăn vào budget của session, không cần separate API key.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>1. Bối cảnh — pain points v1.0</h2>
+<p class="section-sub">Audit current streaming pipeline tìm ra noise + bugs.</p>
+
+<h3>1.1 Two real bugs phát hiện ở audit</h3>
+
+<div class="card danger">
+  <h4 style="color: var(--danger); margin-top:0;">🐛 Bug 1 — Claude tool_use emit 2 lần</h4>
+  <p><code>src/agents/claude.ts:55</code> (canUseTool policy gate) VÀ <code>:108</code> (PreToolUse hook) cùng emit <code>tool_use</code> event cho 1 tool call. User thấy mỗi tool announce duplicate trong Telegram.</p>
+  <p><strong>Fix Phase A</strong>: drop emit ở canUseTool (policy gate chỉ approve/deny, không cần announce — PreToolUse hook fire sau approval mới đúng moment).</p>
+</div>
+
+<div class="card danger">
+  <h4 style="color: var(--danger); margin-top:0;">🐛 Bug 2 — tool_result events silently dropped</h4>
+  <p>Codex (<code>codex.ts:435-451</code>) + Cursor (<code>cursor.ts:483-507</code>) emit <code>tool_result</code> events với preview ≤240 chars. Dispatch handler ở <code>commands/index.ts:855</code> chỉ branch <code>text | tool_use | error | done | session</code> — không có branch cho <code>tool_result</code>. Event silently dropped, user không bao giờ thấy kết quả tool chạy ra sao.</p>
+  <p><strong>Fix Phase A</strong>: add dispatch branch — render <code>✅ Read ok · 247 lines</code> / <code>❌ Bash exit 1 · "module not found"</code>.</p>
+</div>
+
+<h3>1.2 UX pain points</h3>
+<table>
+  <thead><tr><th>#</th><th>Pain</th><th>Evidence</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Tool-use spam: 1 message + 1 inline keyboard per call</td><td><code>commands/index.ts:874-893</code> <code>sendPlain</code> per tool, no batch</td></tr>
+    <tr><td>2</td><td>Raw JSON tool params: <code>🔧 Read — {"file_path":"/Users/koi/Documents/.../notifier.ts"}</code></td><td><code>commands/index.ts:876</code> <code>JSON.stringify(input).slice(0,200)</code></td></tr>
+    <tr><td>3</td><td>Absolute paths không collapse</td><td><code>extractFilePath</code> trả full path</td></tr>
+    <tr><td>4</td><td>Thinking blocks: Claude drop silently, Cursor leak unlabeled như text bình thường</td><td><code>claude.ts:188-191</code> filter, <code>cursor.ts:463-470</code> forward without label</td></tr>
+    <tr><td>5</td><td>Kiro raw stdout dump: mỗi <code>\n</code> chunk = 1 text event</td><td><code>kiro.ts:278-298</code></td></tr>
+    <tr><td>6</td><td>No code-fence rendering: ``` literal trong text events</td><td>Notifier dùng plain text, không MarkdownV2</td></tr>
+    <tr><td>7</td><td>Codex bash output ANSI không strip</td><td><code>codex.ts:455-463</code> base64-decode + forward raw, không stripAnsi như Kiro</td></tr>
+    <tr><td>8</td><td>No mode toggle — firehose cho mọi persona</td><td>Không có <code>/mode</code> command</td></tr>
+    <tr><td>9</td><td>Status events <code>kiro_spawning</code>, <code>codex_turn_started</code>, <code>cursor_spawning</code> dropped → no progress indicator</td><td>Dispatch ignore <code>status</code> type</td></tr>
+    <tr><td>10</td><td>Long bash output dump verbatim (no auto-summarize)</td><td>Notifier 100% rule-based, không call agent</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>2. PO/UX mindset</h2>
+
+<h3>2.1 Personas + mental model</h3>
+<table>
+  <thead><tr><th>Persona</th><th>Khi nào</th><th>Cần thấy</th><th>% use case</th></tr></thead>
+  <tbody>
+    <tr><td><strong>On-the-go</strong></td><td>Phone, đi bộ / họp / lái xe</td><td>Approval + done + errors + final summary</td><td>~50%</td></tr>
+    <tr><td><strong>Casual monitor</strong></td><td>Phone, đang làm việc khác</td><td>+ tool calls chính (Bash/Edit) + results compact</td><td>~30%</td></tr>
+    <tr><td><strong>Focused</strong></td><td>Desktop, theo dõi task</td><td>+ thinking + text response + status</td><td>~15%</td></tr>
+    <tr><td><strong>Debugging</strong></td><td>Desktop, troubleshoot</td><td>+ raw stdout + all chunks (current behavior)</td><td>~5%</td></tr>
+  </tbody>
+</table>
+<p>v1.0 serve mọi persona bằng cùng firehose → fail persona 1 (80% combined). v1.1 default cho persona 1, knob để escalate.</p>
+
+<h3>2.2 Design principles</h3>
+<ol>
+  <li><strong>Telegram-first</strong>: user đang trên phone, glance-mode. Mỗi notification phải có actionable value.</li>
+  <li><strong>Summary-by-default</strong>: hiển thị ÍT, user opt-in để thấy nhiều.</li>
+  <li><strong>Agent IS the formatter</strong>: dùng AI để tóm tắt thay rule-based truncate. Telecode đã có 4 agents — leverage them.</li>
+  <li><strong>Edit > append</strong>: cùng 1 message edit khi possible (Telegram cho 30 edit/min). Giảm noise.</li>
+  <li><strong>Friendly &gt; technical</strong>: <code>Read · notifier.ts</code> &gt; <code>Read — {"file_path":"..."}</code>.</li>
+  <li><strong>Backward compat</strong>: user v1.0 upgrade không break. Verbose mode = current behavior.</li>
+</ol>
+
+<!-- ============================================================== -->
+<h2>3. Vision — 5 phases</h2>
+
+<h3>3.1 Visual mockups (before / after)</h3>
+
+<h4>Workflow: read 3 files + grep</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>Trước (v1.0, verbose firehose)</h5>
+    <pre>[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/notifier.ts"}
+[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/agents/types.ts"}
+[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/reply-builders.ts"}
+[refactor-auth] 🔧 Grep — {"pattern":"AgentEvent","path":"/Users/koi/Documents/workspaces/telecode/src"}</pre>
+  </div>
+  <div class="col after">
+    <h5>Sau (v1.1, summary mode default)</h5>
+    <pre>[refactor-auth] 🔧 Read ×3 · notifier.ts, types.ts, reply-builders.ts ✅
+[refactor-auth] 🔍 Grep "AgentEvent" in src/ → 12 matches ✅</pre>
+  </div>
+</div>
+
+<h4>Workflow: edit file</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>Trước</h5>
+    <pre>🔧 Edit — {"file_path":"/Users/koi/.../notifier.ts","old_string":"...","new_string":"..."}</pre>
+  </div>
+  <div class="col after">
+    <h5>Sau (diff stats)</h5>
+    <pre>📝 Edit · notifier.ts (-3 +7) ✅</pre>
+  </div>
+</div>
+
+<h4>Workflow: bash command với output dài</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>Trước (200-line dump)</h5>
+    <pre>🔧 Bash — {"command":"npm test"}
+PASS tests/foo.test.ts
+PASS tests/bar.test.ts
+...200 dòng...
+✅ done · $0.023</pre>
+  </div>
+  <div class="col after">
+    <h5>Sau (AI-summarized by session)</h5>
+    <pre>[refactor-auth] ▶️ Bash · npm test ✅ (3.5s)
+    Tests: 432 passed, 2 skipped
+    [📜 Full output (200 lines)] [💬 AI summary]</pre>
+  </div>
+</div>
+
+<h4>Workflow: done event</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>Trước</h5>
+    <pre>[refactor-auth] ✅ done · $0.023</pre>
+  </div>
+  <div class="col after">
+    <h5>Sau (auto session summary on done)</h5>
+    <pre>[refactor-auth] ✅ Done · 47s · $0.023
+Tách validateToken ra file riêng, thêm 5 unit tests, tất cả pass.</pre>
+  </div>
+</div>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>4. Phase A — Bug fixes + quick wins</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+    <span class="badge badge-danger">2 bugs thật</span>
+    <span class="badge badge-success">No breaking change</span>
+  </div>
+</div>
+<p class="section-sub">Dọn 2 real bugs + low-risk friendly render trước khi đụng dispatch logic lớn ở B/C/D.</p>
+
+<h3>A.1 — Fix duplicate Claude tool_use</h3>
+<ul>
+  <li>File <code>src/agents/claude.ts:55</code> — drop <code>onEvent({type:'tool_use'})</code> trong <code>canUseTool</code> callback. Lý do: <code>canUseTool</code> chỉ chịu trách nhiệm approve/deny, KHÔNG ANNOUNCE. PreToolUse hook (line 108) fire SAU khi approve OK, là moment đúng để announce.</li>
+  <li>Verify: test mới <code>tests/claude-tool-use-dedup.test.ts</code> — stub SDK emit cả canUseTool + PreToolUse, assert chỉ 1 <code>tool_use</code> event ra notifier.</li>
+</ul>
+
+<h3>A.2 — Surface tool_result events</h3>
+<ul>
+  <li>File <code>src/bot/commands/index.ts</code> dispatch handler — add branch:
+    <pre><code>case 'tool_result': {
+  const icon = event.success ? '✅' : '❌';
+  const preview = event.preview ? `\n${event.preview.slice(0, 240)}` : '';
+  await sendPlain(`${prefix}${icon} ${event.toolName} ${event.success ? 'ok' : 'failed'}${preview}`);
+  break;
+}</code></pre>
+  </li>
+  <li>Notifier respect mode (Phase B): summary mode chỉ show error tool_result, normal mode show all, verbose show full preview.</li>
+  <li>Test: stub event → verify dispatch + format.</li>
+</ul>
+
+<h3>A.3 — Strip ANSI cho Codex bash output</h3>
+<ul>
+  <li>File <code>src/agents/codex.ts:455-463</code> — gọi <code>stripAnsi()</code> helper (extract từ kiro.ts thành <code>src/util/ansi.ts</code> shared) sau khi base64-decode <code>outputDelta</code>.</li>
+  <li>Test: snapshot với input chứa ANSI codes → output clean.</li>
+</ul>
+
+<h3>A.4 — Friendly tool render</h3>
+<ul>
+  <li>File mới: <code>src/bot/tool-render.ts</code> — pure functions:
+    <ul>
+      <li><code>renderToolUse(toolName, input): string</code> — pretty render thay raw JSON:
+        <ul>
+          <li>Read: <code>Read · notifier.ts</code> (basename only)</li>
+          <li>Edit: <code>Edit · notifier.ts</code> (basename, diff stats add ở Phase C)</li>
+          <li>Bash: <code>Bash · npm test</code> (command first 80 chars)</li>
+          <li>Grep: <code>Grep "pattern" in path</code> (pattern + relative path)</li>
+          <li>Glob: <code>Glob **/*.ts</code> (pattern only)</li>
+          <li>Write: <code>Write · notifier.ts (1.2 KB)</code></li>
+          <li>Fallback: <code>{toolName} · {first arg value truncated 60 chars}</code></li>
+        </ul>
+      </li>
+      <li><code>collapsePath(absPath): string</code> — convert <code>/Users/koi/...</code> → <code>~/...</code>, project root → <code>./...</code> nếu nằm trong active project's cwd.</li>
+    </ul>
+  </li>
+  <li>Tests: snapshot per tool name + path variants.</li>
+</ul>
+
+<h3>A.5 — Suggestion keyboard suppression khi tool_result chưa về</h3>
+<ul>
+  <li>Currently: mỗi <code>tool_use</code> ngay lập tức render suggestion keyboard (<code>commands/index.ts:880-893</code>). Premature — user chưa thấy result.</li>
+  <li>Defer suggestion keyboard đến <code>tool_result</code> event. Nếu adapter không emit tool_result (Claude — chưa fix), defer 2s rồi vẫn show suggestion (compatibility).</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>5. Phase B — Mode system</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+    <span class="badge badge-success">Default = summary</span>
+  </div>
+</div>
+<p class="section-sub">4 verbosity modes per-session + per-chat default.</p>
+
+<h3>B.1 — Mode definition</h3>
+<table>
+  <thead><tr><th>Mode</th><th>Icon</th><th>Shows</th><th>Use case</th></tr></thead>
+  <tbody>
+    <tr><td><strong>summary</strong> (default)</td><td>🎯</td><td>approval, done (with AI summary), errors, final results only</td><td>On-the-go, glance</td></tr>
+    <tr><td><strong>normal</strong></td><td>📝</td><td>+ tool_use compact + tool_result compact</td><td>Casual monitor</td></tr>
+    <tr><td><strong>thinking</strong></td><td>🧠</td><td>+ thinking blocks (Claude with <code>🧠</code> prefix) + Cursor thoughts (labeled)</td><td>Focused / learning</td></tr>
+    <tr><td><strong>verbose</strong></td><td>🔬</td><td>+ raw text chunks + status events + full preview (current v1.0 behavior)</td><td>Debugging</td></tr>
+  </tbody>
+</table>
+
+<h3>B.2 — Storage</h3>
+<ul>
+  <li>DB migration: thêm column <code>sessions.verbosity_mode TEXT DEFAULT 'summary'</code> (NULL → falls back to chat default).</li>
+  <li>DB migration: thêm column <code>chat_settings.default_mode TEXT DEFAULT 'summary'</code> hoặc record trong <code>chat_settings</code> table mới.</li>
+  <li>Idempotent <code>ALTER TABLE IF NOT EXISTS</code> pattern như v1.0 schema migration.</li>
+</ul>
+
+<h3>B.3 — Commands</h3>
+<ul>
+  <li><code>/mode</code> — show current session mode + chat default + list options inline keyboard <code>[🎯 Summary] [📝 Normal] [🧠 Thinking] [🔬 Verbose]</code></li>
+  <li><code>/mode &lt;name&gt;</code> — set per-session</li>
+  <li><code>/settings mode &lt;name&gt;</code> — set chat default (affects new sessions)</li>
+  <li>Callback handlers in <code>router.ts</code></li>
+</ul>
+
+<h3>B.4 — Dispatch filter</h3>
+<ul>
+  <li>Trong <code>commands/index.ts</code> dispatch — wrap event filtering theo mode trước khi gọi notifier.</li>
+  <li>Mode-aware filter table:
+    <pre><code>function shouldEmit(event: AgentEvent, mode: VerbosityMode): boolean {
+  switch (event.type) {
+    case 'approval': return true; // always
+    case 'error': return true;
+    case 'done': return true;
+    case 'tool_result': return mode !== 'summary' || !event.success;
+    case 'tool_use': return mode !== 'summary';
+    case 'text': return mode !== 'summary'; // summary suppresses streaming text
+    case 'thinking': return mode === 'thinking' || mode === 'verbose';
+    case 'status': return mode === 'verbose';
+    default: return true;
+  }
+}</code></pre>
+  </li>
+  <li>Edge case: summary mode mà session không emit done summary → user "im lặng". Mitigation: nếu task ran >10s không có output, send fallback <code>⏳ Working... (10s)</code> ephemeral.</li>
+</ul>
+
+<h3>B.5 — Migration</h3>
+<ul>
+  <li>v1.0 user upgrade: existing sessions chưa có <code>verbosity_mode</code> → default <code>summary</code>. <strong>Breaking change for power users</strong>. Mitigation: lần đầu boot v1.1, telecode send 1 message <code>"📢 Telecode v1.1: mode mặc định giờ là Summary. Muốn behavior cũ: /settings mode verbose"</code></li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>6. Phase C — Smart rendering</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+  </div>
+</div>
+<p class="section-sub">Code-fence detection + diff-aware Edit + collapse repeated tools.</p>
+
+<h3>C.1 — MarkdownV2 với escape helper</h3>
+<ul>
+  <li>File mới: <code>src/bot/markdown.ts</code>:
+    <ul>
+      <li><code>escapeMd(s: string): string</code> — escape <code>_*[]()~`&gt;#+-=|{}.!</code> per Telegram MarkdownV2 spec</li>
+      <li><code>codeBlock(s: string, lang?: string): string</code> — wrap in <code>```lang\n{s}\n```</code> (no escape inside code)</li>
+      <li><code>inlineCode(s: string): string</code> — wrap in <code>`s`</code> (escape backticks inside)</li>
+    </ul>
+  </li>
+  <li>Notifier param <code>parse_mode: 'MarkdownV2'</code> cho text events.</li>
+</ul>
+
+<h3>C.2 — Auto code-fence detection</h3>
+<ul>
+  <li>Heuristics:
+    <ul>
+      <li>Text chứa <code>{</code> at line start AND <code>}</code> at end + <code>"field":</code> pattern → wrap <code>```json</code></li>
+      <li>Text chứa lines bắt đầu bằng <code>+</code> hoặc <code>-</code> AND <code>@@</code> hunks → <code>```diff</code></li>
+      <li>Text chứa <code>at Function</code> / <code>at Object</code> stack pattern → <code>```</code></li>
+      <li>Text chứa <code>$</code> / <code>&gt;</code> shell prompt → <code>```bash</code></li>
+      <li>Fallback: text &gt; 200 chars + chứa newline → <code>```</code> (mono spacing readable)</li>
+    </ul>
+  </li>
+  <li>Tests: per heuristic + edge cases (text với JSON-like word "bạn nói {hello}").</li>
+</ul>
+
+<h3>C.3 — Diff stats cho Edit tool</h3>
+<ul>
+  <li>Trong <code>tool-render.ts</code>: Edit input có <code>old_string</code> + <code>new_string</code>. Compute:
+    <ul>
+      <li>Lines removed = <code>old_string.split('\n').length</code></li>
+      <li>Lines added = <code>new_string.split('\n').length</code></li>
+      <li>Render: <code>📝 Edit · notifier.ts (-3 +7)</code></li>
+    </ul>
+  </li>
+  <li>Bonus: nếu mode = thinking/verbose, attach button <code>[📜 Show diff]</code> → tap show MarkdownV2 <code>```diff</code> block.</li>
+</ul>
+
+<h3>C.4 — Collapse repeated tool calls (5s window)</h3>
+<ul>
+  <li>Per-session ring buffer của recent tool_use events (last 10).</li>
+  <li>Khi event mới đến + cùng tool name + within 5s + cùng session → edit existing message thay send new.</li>
+  <li>Format collapsed: <code>🔧 Read ×3 · notifier.ts, types.ts, reply-builders.ts ✅</code></li>
+  <li>State machine: rolling message ID lưu trong notifier scoped Map. Reset khi tool khác đến hoặc 5s timeout.</li>
+  <li>Test: 3 Read events within 2s → 1 edit, 3rd file appended. 4th Read after 6s → new message.</li>
+</ul>
+
+<h3>C.5 — Path collapsing</h3>
+<ul>
+  <li><code>~</code> for home dir</li>
+  <li><code>./</code> for paths trong active project cwd</li>
+  <li>Basename only if &gt;50 chars total → <code>...auth/validateToken.ts</code></li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>7. Phase D — Agentic compression</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 3d</span>
+    <span class="badge badge-success">Killer feature</span>
+  </div>
+</div>
+<p class="section-sub">Reuse session để AI-summarize. Per D2 decision: ăn cost của session (no separate API key).</p>
+
+<h3>D.1 — Session reinjection helper</h3>
+<ul>
+  <li>File mới: <code>src/agents/summarize.ts</code>:
+    <pre><code>async function summarizeWithSession(
+  manager: SessionManager,
+  sessionId: string,
+  content: string,
+  instruction: string,  // e.g. "Tóm tắt 2 dòng"
+): Promise&lt;string&gt; {
+  // Inject hidden prompt vào session adapter
+  // Pattern same as /handoff but with custom instruction
+  // Return: agent text response
+}</code></pre>
+  </li>
+  <li>Mechanism: tương tự <code>/handoff</code> hiện có — temporary inject prompt vào next turn, capture agent text response, KHÔNG persist trong transcript.</li>
+  <li>Timeout 30s (agent quick response only).</li>
+  <li>Fallback nếu fail: trả original content.</li>
+</ul>
+
+<h3>D.2 — Auto-summarize long tool_result preview</h3>
+<ul>
+  <li>Trong dispatch tool_result handler: nếu <code>event.preview.length &gt; 500</code> chars (configurable) AND mode != verbose:
+    <ol>
+      <li>Send compact placeholder <code>⏳ Summarizing 1.2KB output...</code> (silent edit-able message)</li>
+      <li>Async call <code>summarizeWithSession(manager, sessionId, event.preview, "Tóm tắt output trong 2 dòng tiếng Việt")</code></li>
+      <li>Edit placeholder thành <code>✅ Bash · npm test\n{summary}\n[📜 Full output] [💬 Re-summarize]</code></li>
+    </ol>
+  </li>
+  <li>Race protection: summarize call mutex per session (không spawn 2 song song trong cùng session).</li>
+  <li>Cost transparency: track cost summary trong logger + optionally show <code>(+ $0.001)</code> trong message.</li>
+</ul>
+
+<h3>D.3 — On-demand AI summary button</h3>
+<ul>
+  <li>Mọi tool_result với <code>full_preview</code> attached: render button <code>[💬 AI summary]</code> trên message.</li>
+  <li>Callback <code>summarize:tool-result:&lt;message-id&gt;</code> → fetch full content from cache → reinject → edit message với summary.</li>
+  <li>Cache: <code>Map&lt;messageId, fullContent&gt;</code> in-memory, TTL 1h, max 100 entries (LRU).</li>
+</ul>
+
+<h3>D.4 — Auto done-summary</h3>
+<ul>
+  <li>Trên <code>done</code> event (mode = summary OR normal):
+    <ol>
+      <li>Compute task duration + cost.</li>
+      <li>Inject prompt vào session: <code>"Tóm tắt công việc vừa làm 1-2 câu, ngắn gọn."</code></li>
+      <li>Render: <code>✅ Done · {duration} · {cost}\n{summary}</code></li>
+    </ol>
+  </li>
+  <li>Edge case: session không respond (timeout) → fallback <code>✅ Done · {duration} · {cost}</code> (current behavior).</li>
+  <li>Mode = verbose → skip auto-summary (verbose user thấy raw transcript đã đủ).</li>
+</ul>
+
+<h3>D.5 — Full output viewer</h3>
+<ul>
+  <li>Button <code>[📜 Full output (200 lines)]</code> trên summarized message — tap → send original full content trong code-fence (split if &gt;3500 chars).</li>
+  <li>Cache same as D.3.</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>8. Phase E — Activity indicators</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 1.5d</span>
+  </div>
+</div>
+<p class="section-sub">Single rolling progress message per session.</p>
+
+<h3>E.1 — Progress message lifecycle</h3>
+<ul>
+  <li>Session có active turn → telecode maintain 1 progress message edit-only:
+    <pre>⏳ [refactor-auth] Claude thinking...
+        ↓ (after status event)
+⏳ [refactor-auth] Reading 3 files...
+        ↓ (after tool_use)
+⏳ [refactor-auth] Running tests... (12s)</pre>
+  </li>
+  <li>Position: pinned at recent message (no separate pin — just always edited near top).</li>
+  <li>Cleanup: turn done → edit progress message thành final summary OR delete (configurable per mode).</li>
+</ul>
+
+<h3>E.2 — Status event surface</h3>
+<ul>
+  <li>Adapter status events giờ render vào progress message:
+    <ul>
+      <li><code>kiro_spawning</code> → <code>⏳ Starting Kiro...</code></li>
+      <li><code>codex_turn_started</code> → <code>⏳ Codex thinking...</code></li>
+      <li><code>cursor_spawning</code> → <code>⏳ Starting Cursor...</code></li>
+      <li><code>cursor_plan_update</code> → <code>⏳ {plan_summary}</code></li>
+    </ul>
+  </li>
+  <li>Mode-aware: summary mode = always show progress (since other events suppressed); normal/thinking = show; verbose = skip (raw events đã đủ).</li>
+</ul>
+
+<h3>E.3 — Idle ping</h3>
+<ul>
+  <li>Mode summary, task &gt;30s no output → progress message updates: <code>⏳ Working... (30s)</code></li>
+  <li>Tránh user nghĩ daemon hang.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>9. Timeline đề xuất</h2>
+<table>
+  <thead>
+    <tr><th>Day</th><th>Phase</th><th>Effort</th><th>Notes</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>D1–D2</td><td>A — Bug fixes + quick wins</td><td>2d</td><td>2 bugs + render helpers + ANSI strip. Ship-able alone.</td></tr>
+    <tr><td>D3–D4</td><td>B — Mode system</td><td>2d</td><td>DB migration + /mode command + dispatch filter</td></tr>
+    <tr><td>D5–D6</td><td>C — Smart rendering</td><td>2d</td><td>Code-fence + diff stats + collapse 5s. Parallel-able với B.</td></tr>
+    <tr><td>D7–D9</td><td>D — Agentic compression</td><td>3d</td><td>Reuse session summarize + auto-summarize + on-demand button + done-summary</td></tr>
+    <tr><td>D10</td><td>E — Activity indicators</td><td>1.5d</td><td>Rolling progress message + status events surface</td></tr>
+    <tr><td>D11</td><td>Consolidate + senior review + ship v1.1</td><td>1d</td><td>Combined review nếu có thể</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>10. Risks &amp; open questions</h2>
+
+<h3>R1 — Summary mode silence</h3>
+<p>Summary mode suppress streaming text + tool_use → user "im lặng" lâu nếu task chạy lâu. Mitigation: Phase E progress indicator + idle ping. Vẫn có thể fail nếu progress message nằm trên cao xa current input. Fallback: nếu &gt;60s không event nào notify, send ephemeral <code>⏳ Still working...</code> ping.</p>
+
+<h3>R2 — AI summarize cost transparency</h3>
+<p>D2 decision: reuse session = ăn budget session. Có thể accidentally đắt khi user không biết. Mitigation: log cost summary lines trong pino + optional <code>(+ $0.001)</code> trong message footer.</p>
+
+<h3>R3 — Session context window pollution</h3>
+<p>Inject "Tóm tắt 2 dòng" prompt vào session đang chạy task có thể confuse agent next turn. Mitigation: dùng <code>system</code> message hoặc tool result injection (per Claude SDK), không inject như user message. Verify pattern <code>/handoff</code> hiện tại làm thế nào → reuse same mechanism.</p>
+
+<h3>R4 — Code-fence detection false positives</h3>
+<p>Heuristic detect JSON / diff có thể wrap nhầm normal text. Mitigation: conservative thresholds + unit test với 20+ edge cases. Failure mode = visual ugly, không break functionality.</p>
+
+<h3>R5 — Migration breaking change cho power users</h3>
+<p>Default mode summary = behavior thay đổi đáng kể. User v1.0 power-user có thể confused. Mitigation: first-boot v1.1 send announcement message + REASONABLE default cho new install (summary) vs preserve cho existing chat (offer choice).</p>
+
+<h3>R6 — Markdown escape edge cases</h3>
+<p>MarkdownV2 chặt chẽ — escape sai 1 char là Telegram trả 400. Mitigation: comprehensive escape helper + tests + fallback to plain text on parse error.</p>
+
+<!-- ============================================================== -->
+<h2>11. Acceptance criteria</h2>
+
+<h3>A1 — Functional</h3>
+<ul class="checklist">
+  <li class="todo">Duplicate Claude tool_use bug fixed (verified via test stub)</li>
+  <li class="todo">tool_result events từ Codex + Cursor visible trong Telegram</li>
+  <li class="todo">4 modes (summary / normal / thinking / verbose) work end-to-end qua <code>/mode</code></li>
+  <li class="todo">AI summarize button render long output, tap → invoke session summarize</li>
+  <li class="todo">Done event có auto-summary trong summary/normal modes</li>
+  <li class="todo">Code-fence auto-wrap JSON / diff / bash output</li>
+  <li class="todo">Path collapse <code>/Users/X/...</code> → <code>~/...</code></li>
+  <li class="todo">Repeated tool collapse trong 5s window</li>
+  <li class="todo">Progress message edit-only cho status events trong summary mode</li>
+</ul>
+
+<h3>A2 — Code quality</h3>
+<ul class="checklist">
+  <li class="todo">Backward compat 100%: v1.0 user upgrade, existing config load OK, sessions resume OK</li>
+  <li class="todo">All v1.0 tests (435/2) vẫn pass + new tests ≥50 cases mới cho A-E</li>
+  <li class="todo">Mode filter not break verbose mode (preserve current v1.0 behavior khi mode = verbose)</li>
+  <li class="todo">Markdown escape comprehensive (test with adversarial inputs)</li>
+</ul>
+
+<h3>A3 — Documentation</h3>
+<ul class="checklist">
+  <li class="todo">README cập nhật mode system + new commands</li>
+  <li class="todo">Migration v1.0 → v1.1 section trong README</li>
+  <li class="todo">SDD HTML tại <code>docs/design/telecode-v1.1-streaming-ux-redesign.html</code></li>
+</ul>
+
+<h3>A4 — Senior review</h3>
+<ul class="checklist">
+  <li class="todo">Opus 4.7 senior review per phase: 0 actionable findings</li>
+  <li class="todo">Scope completeness 100%</li>
+  <li class="todo">Tech freshness Context7-verified cho any new deps</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>12. Files dự kiến chạm</h2>
+<table>
+  <thead><tr><th>Phase</th><th>File mới</th><th>File sửa</th></tr></thead>
+  <tbody>
+    <tr><td>A</td><td><code>src/util/ansi.ts</code>, <code>src/bot/tool-render.ts</code>, tests</td><td><code>src/agents/claude.ts</code> (drop duplicate emit), <code>src/agents/codex.ts</code> (stripAnsi), <code>src/bot/commands/index.ts</code> (tool_result branch + suggestion defer)</td></tr>
+    <tr><td>B</td><td><code>src/session/verbosity.ts</code> (mode types + filter), tests</td><td><code>src/session/store.ts</code> (schema migration), <code>src/bot/commands/index.ts</code> (/mode command + dispatch filter), <code>src/bot/router.ts</code> (mode callbacks), <code>src/bot/commands-registry.ts</code></td></tr>
+    <tr><td>C</td><td><code>src/bot/markdown.ts</code> (escape helpers), <code>src/bot/code-fence.ts</code> (detect + wrap), tests</td><td><code>src/bot/notifier.ts</code> (MarkdownV2 mode), <code>src/bot/tool-render.ts</code> (diff stats), <code>src/bot/commands/index.ts</code> (collapse window)</td></tr>
+    <tr><td>D</td><td><code>src/agents/summarize.ts</code>, <code>src/bot/summary-cache.ts</code>, tests</td><td><code>src/session/manager.ts</code> (inject pattern), <code>src/bot/commands/index.ts</code> (auto + on-demand + done summary), <code>src/bot/router.ts</code> (summarize callback)</td></tr>
+    <tr><td>E</td><td><code>src/bot/progress.ts</code>, tests</td><td><code>src/bot/commands/index.ts</code> (status + idle ping), <code>src/agents/*</code> (no change — status events đã emit sẵn)</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>13. Out of scope (v1.2+)</h2>
+<ul>
+  <li>Multi-language summarize (currently Vietnamese hardcode)</li>
+  <li>User-trainable summary style (vd "luôn show test counts")</li>
+  <li>Conversation-level (cross-session) memory</li>
+  <li>Pinned approval cards</li>
+  <li>Web UI for transcript viewer</li>
+  <li>Summary cost budgeting (auto-disable nếu hit threshold)</li>
+</ul>
+
+<hr/>
+<p style="color: var(--text-faint); font-size: 14px;">Plan v1.1 · 2026-05-21 · dangkhoi@users.noreply.github.com · Telecode workspace · APPROVED, executing</p>
+
+</div>
+</body>
+</html>

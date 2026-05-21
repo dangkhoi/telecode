@@ -96,6 +96,20 @@ class FakeRegistry {
   get(_k: AgentKind): AgentAdapter {
     return this.adapter;
   }
+  // Plan P1.1 — `require`/`has`/`list` satisfy the new open-set surface used
+  // by SessionManager.dispatch + registerCommands.
+  require(_k: AgentKind): AgentAdapter {
+    return this.adapter;
+  }
+  has(_k: AgentKind): boolean {
+    return true;
+  }
+  kinds(): string[] {
+    return [this.adapter.kind];
+  }
+  list(): { kind: string; displayName: string; badge: string }[] {
+    return [{ kind: this.adapter.kind, displayName: this.adapter.kind, badge: '·' }];
+  }
 }
 
 /**
@@ -150,12 +164,15 @@ async function setup(): Promise<Harness & { ready: Awaited<ReturnType<typeof ada
   const { notifier, appendStream, sendPlain, closeStream } = makeNotifier();
   const { bot, messageTextHandler } = makeBotSpy();
 
+  const fakeRegistry = new FakeRegistry(adapter);
   const deps: CommandDeps = {
     config: fakeConfig(),
     store,
     manager,
     broker: {} as ApprovalBroker,
     policy: {} as PolicyEngine,
+    // Plan P1.1: open-set registry replaces hardcoded claude|kiro list.
+    registry: fakeRegistry as never,
     notifierFor: () => notifier,
   };
   registerCommands(bot, deps);
@@ -164,6 +181,11 @@ async function setup(): Promise<Harness & { ready: Awaited<ReturnType<typeof ada
   const a = manager.createSession({ chatId: CHAT_ID, agent: 'claude', label: 'A', projectId: null });
   const b = manager.createSession({ chatId: CHAT_ID, agent: 'claude', label: 'B', projectId: null });
   store.setActiveSession(CHAT_ID, a.id);
+  // Phase B (v1.1): default mode is 'summary' which suppresses text/tool_use —
+  // these gating tests focus on routing logic, not the mode filter, so we
+  // explicitly opt into 'verbose' (the v1.0 firehose surface) so every event
+  // reaches the notifier/buffer and the assertions remain meaningful.
+  store.setChatDefaultMode(CHAT_ID, 'verbose');
 
   const handler = messageTextHandler();
 
@@ -233,8 +255,15 @@ describe('B2 onEvent gating — active session', () => {
       await Promise.resolve();
       expect(h.sendPlain).toHaveBeenCalledTimes(1);
       const [text, opts] = h.sendPlain.mock.calls[0]!;
-      expect(text).toMatch(/^\[A\] 🔧 Bash — /);
-      expect(opts).toEqual({ silent: true });
+      // v1.1 Phase A.4: friendly render replaces raw JSON dump
+      //   v1.0: "[A] 🔧 Bash — {\"cmd\":\"ls\"}"
+      //   v1.1: "[A] 🔧 Bash · ls" (renderToolUse → cmd value extracted)
+      expect(text).toMatch(/^\[A\] 🔧 Bash · /);
+      // v1.1 Phase A.5: suggestion keyboard is now deferred to tool_result
+      // (or 2s defer fallback), so the initial sendPlain no longer carries
+      // a reply_markup — only the `silent` flag survives.
+      expect((opts as Record<string, unknown>).silent).toBe(true);
+      expect((opts as Record<string, unknown>).reply_markup).toBeUndefined();
     } finally {
       h.cleanup();
     }
@@ -273,7 +302,9 @@ describe('B2 onEvent gating — background session', () => {
       expect(h.manager.hasBuffered(h.a.id)).toBe(true);
       const drained = h.manager.drainBuffer(h.a.id);
       expect(drained[0]).toMatchObject({ type: 'tool_use' });
-      expect(drained[0]!.data).toMatch(/^🔧 Read — /);
+      // v1.1 Phase A.4: friendly render emits "🔧 Read · <basename or relpath>"
+      // instead of the v1.0 raw "🔧 Read — {…JSON…}" dump.
+      expect(drained[0]!.data).toMatch(/^🔧 Read · /);
     } finally {
       h.cleanup();
     }

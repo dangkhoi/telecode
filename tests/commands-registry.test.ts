@@ -12,8 +12,9 @@ import {
 } from '../src/bot/keyboard-actions.js';
 
 describe('commands-registry: COMMANDS', () => {
-  it('exports exactly 10 entries', () => {
-    expect(COMMANDS).toHaveLength(10);
+  it('exports exactly 13 entries', () => {
+    // Phase B (v1.1) added /mode + /settings (was 11 in v1.0).
+    expect(COMMANDS).toHaveLength(13);
   });
 
   it('each entry has non-empty command + description', () => {
@@ -39,8 +40,12 @@ describe('commands-registry: COMMANDS', () => {
       'sessions',
       'projects',
       'status',
+      'dashboard',
       'clear',
       'handoff',
+      // Phase B (v1.1) — verbosity controls.
+      'mode',
+      'settings',
       'stop',
       'screenshot',
       'help',

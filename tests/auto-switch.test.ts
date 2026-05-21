@@ -219,8 +219,8 @@ describe('router B3 — approval auto-switch + session strip + buffer flush', ()
 
     // Row 0: Allow once + Allow always
     expect(rows[0]).toEqual(['✅ Allow once', '🌟 Allow always']);
-    // Row 1: Deny
-    expect(rows[1]).toEqual(['🚫 Deny']);
+    // Row 1: Forever + Deny (P0.4 added the Forever button).
+    expect(rows[1]).toEqual(['📌 Forever', '🚫 Deny']);
     // Row 2: session strip with active marker on B.
     // Sessions are ordered newest-first by updated_at; after createSession
     // the order is C, B, A (C created last).
@@ -375,5 +375,144 @@ describe('router B3 — approval auto-switch + session strip + buffer flush', ()
     expect(spy).toHaveBeenCalledTimes(1);
     h.broker.resolve(h.broker.pendingForSession(h.sessionB.id)[0]!.id, 'allow_once');
     await p;
+  });
+
+  // -------------------------------------------------------------------------
+  // P0.6 — wizard-aware auto-switch.
+  //
+  // When a conversations-plugin wizard is mid-flow, auto-switch must NOT
+  // change the active session (it would hijack the wizard's text input
+  // step). Instead the switch is queued and fires once the wizard exits.
+  // -------------------------------------------------------------------------
+  describe('P0.6 wizard-aware auto-switch', () => {
+    it('defers auto-switch while a wizard is active for the chat', async () => {
+      const { store, manager, broker, notifier, sessionA, sessionB } = setup();
+      let isActiveFlag = true;
+      const queued: Array<() => void | Promise<void>> = [];
+      const prompter = createApprovalPrompter({
+        store,
+        manager,
+        broker,
+        notifierFor: () => notifier,
+        wizardGuard: {
+          isActive: () => isActiveFlag,
+          deferUntilWizardExits: (_cid, fn) => {
+            queued.push(fn);
+          },
+        },
+      });
+      broker.attach(prompter);
+
+      const p = broker.ask({
+        sessionId: sessionB.id,
+        chatId: CHAT_ID,
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        inputPreview: 'ls',
+        sessionLabel: 'B',
+      });
+      await new Promise((r) => setImmediate(r));
+
+      // Wizard is active → no switch yet; one callback queued.
+      expect(store.getChatState(CHAT_ID).active_session_id).toBe(sessionA.id);
+      expect(queued).toHaveLength(1);
+      // Switch notice should NOT have been sent yet.
+      const switchNotice = notifier.calls.find((c) =>
+        c.text.startsWith('🔔 Đã chuyển sang'),
+      );
+      expect(switchNotice).toBeUndefined();
+
+      // Simulate wizard exit: flush the queue.
+      isActiveFlag = false;
+      for (const fn of queued) await fn();
+
+      expect(store.getChatState(CHAT_ID).active_session_id).toBe(sessionB.id);
+      const switchNoticeAfter = notifier.calls.find((c) =>
+        c.text.startsWith('🔔 Đã chuyển sang'),
+      );
+      expect(switchNoticeAfter).toBeDefined();
+
+      broker.resolve(broker.pendingForSession(sessionB.id)[0]!.id, 'allow_once');
+      await p;
+    });
+
+    it('does not defer when no wizard is active', async () => {
+      const { store, manager, broker, notifier, sessionA, sessionB } = setup();
+      void sessionA;
+      const queued: Array<() => void | Promise<void>> = [];
+      const prompter = createApprovalPrompter({
+        store,
+        manager,
+        broker,
+        notifierFor: () => notifier,
+        wizardGuard: {
+          isActive: () => false,
+          deferUntilWizardExits: (_cid, fn) => {
+            queued.push(fn);
+          },
+        },
+      });
+      broker.attach(prompter);
+
+      const p = broker.ask({
+        sessionId: sessionB.id,
+        chatId: CHAT_ID,
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        inputPreview: 'ls',
+        sessionLabel: 'B',
+      });
+      await new Promise((r) => setImmediate(r));
+      expect(queued).toHaveLength(0);
+      expect(store.getChatState(CHAT_ID).active_session_id).toBe(sessionB.id);
+
+      broker.resolve(broker.pendingForSession(sessionB.id)[0]!.id, 'allow_once');
+      await p;
+    });
+
+    it('queued switch re-checks pending-for: another session may have taken focus while wizard was open', async () => {
+      const { store, manager, broker, notifier, sessionA, sessionB, sessionC } = setup();
+      let isActiveFlag = true;
+      const queued: Array<() => void | Promise<void>> = [];
+      const prompter = createApprovalPrompter({
+        store,
+        manager,
+        broker,
+        notifierFor: () => notifier,
+        wizardGuard: {
+          isActive: () => isActiveFlag,
+          deferUntilWizardExits: (_cid, fn) => {
+            queued.push(fn);
+          },
+        },
+      });
+      broker.attach(prompter);
+
+      // Request approval for B while wizard active → queued.
+      const pB = broker.ask({
+        sessionId: sessionB.id,
+        chatId: CHAT_ID,
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        inputPreview: 'ls',
+        sessionLabel: 'B',
+      });
+      await new Promise((r) => setImmediate(r));
+      expect(queued).toHaveLength(1);
+      void sessionA;
+
+      // Meanwhile user manually flips active to C.
+      store.setActiveSession(CHAT_ID, sessionC.id);
+
+      // Now wizard exits — the queued switch must NOT override C.
+      isActiveFlag = false;
+      for (const fn of queued) await fn();
+      // Because B has a pending approval AND its own session is not the
+      // exclusion target now, hasPendingFor returns true → switch skipped.
+      expect(store.getChatState(CHAT_ID).active_session_id).toBe(sessionC.id);
+
+      broker.resolve(broker.pendingForSession(sessionB.id)[0]!.id, 'allow_once');
+      await pB;
+    });
   });
 });

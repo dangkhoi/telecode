@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Plan — Telecode v1.0 · Cross-platform &amp; Multi-agent</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 80px 32px 120px; }
+  header.hero { margin-bottom: 56px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 72px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 32px; font-size: 17px; }
+  h3 { font-size: 22px; font-weight: 600; letter-spacing: -0.015em; margin: 40px 0 12px; }
+  h4 { font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 28px 0 10px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 15px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 24px 28px; margin: 32px 0 48px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px 28px; margin: 24px 0; box-shadow: var(--shadow); }
+  .card h3 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.success { border-color: rgba(28,124,84,0.3); background: var(--success-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 10px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 64px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px 20px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.5; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+  .phase-header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-top: 56px; }
+  .phase-header h2 { margin: 0; }
+  .phase-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+  @media (max-width: 720px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 32px; } .lede { font-size: 18px; } h2 { font-size: 24px; }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Plan · Telecode v1.0</div>
+  <h1>Cross-platform &amp; multi-agent</h1>
+  <p class="lede">Đóng nốt T3 carry-over, mở registry adapter, hỗ trợ Linux + Windows native, và thêm 2 agentic CLI (Codex, Cursor) bên cạnh Claude + Kiro hiện hữu.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Target version</strong> · v1.0</span>
+    <span class="pill"><strong>Owner</strong> · dangkhoi@users.noreply.github.com</span>
+    <span class="pill"><strong>Estimated effort</strong> · 10–12 ngày</span>
+    <span class="pill"><strong>Phases</strong> · 7 (P0–P6)</span>
+    <span class="pill"><strong>Status</strong> · Decisions chốt, chờ approve để implement</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p>Telecode hiện ship v0.8 (172/172 tests, chỉ chạy macOS, hỗ trợ Claude + Kiro). Plan này đưa lên <strong>v1.0</strong>: dọn nốt 6 items T3 carry-over, refactor adapter registry sang open-set, hỗ trợ chạy native trên <strong>Linux (systemd)</strong> và <strong>Windows 11 (NSSM)</strong>, thêm 2 adapter <strong>Codex CLI</strong> + <strong>Cursor CLI</strong>, đóng 5 v0.6 P2 hardening items. Antigravity skip (GUI-first, headless chưa support — đợi 6 tháng).</p>
+  <p><strong>Ưu tiên dọn trước khi thêm:</strong> P0 (T3) + P1 (foundation refactor) là blocker cho mọi phase sau. P6 hardening có thể parallel với P3/P4.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>1. Bối cảnh</h2>
+<p class="section-sub">Trạng thái hiện tại, lý do mở rộng scope, và những gì phải đóng trước.</p>
+
+<h3>1.1 Telecode v0.8 — đã có gì</h3>
+<table>
+  <thead>
+    <tr><th>Phase</th><th>Version</th><th>Status</th><th>Tests</th><th>Highlight</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>telegram-bridge</td><td>v0.6</td><td><span class="badge badge-success">Shipped</span></td><td>31/31</td><td>Claude SDK + Kiro CLI adapter, ApprovalBroker, policy.yaml</td></tr>
+    <tr><td>ux-telegram-widgets</td><td>v0.7</td><td><span class="badge badge-success">Shipped</span></td><td>109/109</td><td>Slash menu, persistent reply keyboard, wizards <code>/new</code>, project picker</td></tr>
+    <tr><td>per-session-view-buffering</td><td>v0.8</td><td><span class="badge badge-success">Shipped + APPROVED</span></td><td>172/172</td><td>OutputBuffer ring, debounce notifier, catch-up flush, quick-switch strip</td></tr>
+  </tbody>
+</table>
+
+<h3>1.2 Vấn đề người dùng phát hiện</h3>
+<ul>
+  <li>Hai nút <code>🔀 Switch khác</code> và <code>📋 Tail logs</code> trên wizard success message <strong>dead-click</strong> — chỉ trả về toast hint dùng <code>/sessions</code> hoặc <code>/status logs</code>. Stub T3 chưa wire.</li>
+  <li>Telecode chỉ chạy macOS (launchd). Người dùng có máy Linux/Windows không cài được.</li>
+  <li>Chỉ hỗ trợ 2 agent (Claude SDK + Kiro CLI). Hệ sinh thái 2026 đã có thêm Codex CLI (OpenAI), Cursor CLI, Antigravity (Google). User muốn switch agent trong cùng Telegram bot.</li>
+</ul>
+
+<h3>1.3 Vì sao gộp tất cả vào 1 plan</h3>
+<p>P0 (T3 carry-over) và P1 (foundation refactor) <strong>là blocker</strong> cho P3/P4 (new adapters) và P5 (Windows). Tách thành nhiều plan nhỏ sẽ tốn overhead review/SDD nhiều lần cho cùng 1 mục tiêu lớn (đưa Telecode lên v1.0 “production-grade”). 1 mega-plan với 7 phase tuần tự + sub-agent DAG mỗi phase cho phép execute song song trong nội bộ phase mà vẫn rõ ràng acceptance criteria.</p>
+
+<!-- ============================================================== -->
+<h2>2. Goals &amp; Non-goals</h2>
+
+<h3>Goals</h3>
+<ul class="checklist">
+  <li class="todo"><strong>G1</strong> — Đóng 100% T3 backlog: 2 nút wizard + 3 Tier 3 features (#7/#8/#9) + wizard-aware auto-switch.</li>
+  <li class="todo"><strong>G2</strong> — Adapter registry open-set: thêm adapter mới chỉ cần 1 file + 1 dòng register, không touch <code>types.ts</code>/<code>config.ts</code>.</li>
+  <li class="todo"><strong>G3</strong> — Native Linux support: <code>systemd --user</code> service, no WSL.</li>
+  <li class="todo"><strong>G4</strong> — Native Windows 11 support: NSSM service (hoặc <code>node-windows</code>), no WSL.</li>
+  <li class="todo"><strong>G5</strong> — Codex CLI adapter (OpenAI): app-server JSON-RPC, built-in <code>approvalPolicy</code>.</li>
+  <li class="todo"><strong>G6</strong> — Cursor CLI adapter: ACP (Agent Client Protocol) qua stdio, <code>session/request_permission</code>.</li>
+  <li class="todo"><strong>G7</strong> — Hardening: HMAC gate token, hook server drain, daemon lockfile, list-sessions cache.</li>
+</ul>
+
+<h3>Non-goals</h3>
+<ul>
+  <li><strong>Antigravity adapter</strong> — Google ra mắt 19/05/2026, CLI Go-based <strong>GUI-first</strong>, headless mode chưa support (xác nhận từ Google Cloud Blog “Choosing Antigravity or Gemini CLI”). Đợi 6 tháng review lại.</li>
+  <li><strong>IDE integration</strong> — User chỉ chấp nhận CLI. Không build VS Code extension, không tích hợp Cursor IDE / Antigravity desktop.</li>
+  <li><strong>Persistent buffer qua daemon restart</strong> — Đã document out-of-scope ở v0.8, giữ nguyên.</li>
+  <li><strong>Multi-user / team mode</strong> — Telecode vẫn single-user local daemon.</li>
+  <li><strong>WSL fallback installer</strong> — Vì cả Kiro CLI và Codex CLI đều có native Windows binary, không cần fallback.</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>3. Phase 0 — T3 carry-over</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+    <span class="badge badge-warn">Blocker cho UX</span>
+  </div>
+</div>
+<p class="section-sub">Dọn nốt 6 items đã defer trong v0.7/v0.8.</p>
+
+<h3>P0.1 · <code>🔀 Switch khác</code> button — wire thật</h3>
+<ul>
+  <li>Sửa <code>src/bot/router.ts:380-384</code> <code>t3SessionListTrigger</code>: thay <code>answerCallbackQuery</code> ack-only bằng handler render <code>buildSessionStrip()</code> (đã tồn tại v0.8) hoặc reuse <code>renderSessionsList</code> từ <code>/sessions</code> handler.</li>
+  <li>Reply là inline message mới (không edit message wizard success) để giữ history wizard.</li>
+  <li>Test: callback <code>session:list-trigger</code> → bot reply có session list với <code>session:switch:&lt;id&gt;</code> buttons.</li>
+</ul>
+
+<h3>P0.2 · <code>📋 Tail logs</code> button — wire thật</h3>
+<ul>
+  <li>Sửa <code>src/bot/router.ts:385-389</code> <code>t3SessionLogsTrigger</code>: invoke same handler như <code>/status logs 30</code>, target session ID của session vừa tạo (cần đính kèm <code>sessionId</code> vào callback data: <code>session:logs-trigger:&lt;id&gt;</code> thay vì callback data trần).</li>
+  <li>Cập nhật <code>successKeyboard()</code> tại <code>src/bot/wizards/new-session.ts:99-104</code> để emit callback có sessionId.</li>
+  <li>Test: bấm nút → reply 30 dòng log gần nhất của session đó.</li>
+</ul>
+
+<h3>P0.3 · Follow-up inline suggestions (Tier 3 #7)</h3>
+<ul>
+  <li>Wire <code>extraButtons</code> hook trong <code>src/bot/reply-builders.ts:113</code>: sau mỗi tool result hoặc agent stop, append 2-3 buttons gợi ý hành động tiếp theo (vd “Tiếp tục”, “Hủy”, “Tóm tắt”).</li>
+  <li>Source gợi ý: simple heuristic dựa trên loại event (tool name, exit reason). Không cần LLM call thêm.</li>
+  <li>Acceptance: với output <code>fs_write</code> thành công → button “Xem file”, “Tiếp tục”, “Rollback”. Với output <code>execute_bash</code> exit 0 → button “Tiếp tục”, “Run again”.</li>
+</ul>
+
+<h3>P0.4 · “Allow forever” persistent rule (Tier 3 #8)</h3>
+<ul>
+  <li>Approval message hiện có 3 buttons: <code>once</code> / <code>always</code> / <code>deny</code>. <code>always</code> chỉ apply trong session hiện tại (mất khi daemon restart). Thêm button <code>📌 Forever</code> → ghi rule vào <code>~/.telecode/policy.yaml</code> để mọi session sau (kể cả sau restart) auto-allow.</li>
+  <li><strong>UX 2-step confirm</strong> (decision):
+    <ol>
+      <li>Tap <code>📌 Forever</code> → message edit thành <code>⚠️ Ghi vĩnh viễn quyền: &lt;tool&gt; với args &lt;...&gt;? Rule sẽ apply cho mọi session sau.</code> kèm 2 buttons <code>✅ Xác nhận</code> / <code>❌ Hủy</code>.</li>
+      <li>Tap <code>Xác nhận</code> → <code>policy.appendRule(toolName, args, 'allow_always')</code> ghi vào policy.yaml + <code>resolveApproval(allow_always)</code>. Tap <code>Hủy</code> → message reset về 4 buttons gốc, không action.</li>
+    </ol>
+  </li>
+  <li>Callback data: <code>apv:forever-init:&lt;id&gt;</code> (bước 1), <code>apv:forever-confirm:&lt;id&gt;</code> / <code>apv:forever-cancel:&lt;id&gt;</code> (bước 2).</li>
+  <li>Notify sau khi ghi thành công: <code>Đã thêm quyền vĩnh viễn. Sửa tại ~/.telecode/policy.yaml nếu cần.</code></li>
+  <li>Atomic write: ghi <code>policy.yaml.tmp</code> rồi <code>fs.rename</code> để tránh corrupt nếu crash giữa chừng.</li>
+</ul>
+
+<h3>P0.5 · Live status dashboard (Tier 3 #9)</h3>
+<ul>
+  <li>Implement <code>/dashboard</code> command: gửi 1 message rồi <code>editMessageText</code> mỗi 2s với snapshot: sessions đang chạy, pending approvals, last event time, buffer sizes.</li>
+  <li>Update loop dừng khi: user gọi <code>/dashboard stop</code>, hoặc message bị xóa, hoặc 5 phút idle.</li>
+  <li>Rate limit: Telegram cho edit ~30/s, mình edit 0.5/s an toàn.</li>
+</ul>
+
+<h3>P0.6 · Wizard-aware auto-switch</h3>
+<ul>
+  <li>Limitation hiện tại: ApprovalBroker callback chạy ngoài <code>ctx</code> nên không đọc được <code>ctx.conversation.active()</code> → có thể auto-switch trong khi wizard <code>/new</code> đang chạy → wizard text input bị hijack.</li>
+  <li>Fix: lưu <strong>conversation-active set</strong> trong <code>SessionManager</code> hoặc shared state — khi <code>ctx.conversation.enter('newSession')</code> set flag, exit unset. Broker check flag trước khi auto-switch, defer nếu đang trong wizard.</li>
+  <li>Test: trigger auto-switch event giữa wizard step 2 → không switch, queue để switch sau khi wizard exit.</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>4. Phase 1 — Foundation refactor</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+    <span class="badge badge-danger">Blocker cho P3/P4/P5</span>
+  </div>
+</div>
+<p class="section-sub">Mở registry adapter + portable path API. Không user-facing nhưng bắt buộc trước khi thêm adapter mới.</p>
+
+<h3>P1.1 · Adapter registry open-set</h3>
+<p>Hiện tại closed-set: phải edit 7 file để thêm 1 adapter. Refactor:</p>
+<ul>
+  <li><code>AgentKind</code> trong <code>src/agents/types.ts:1</code> đổi từ literal union <code>'claude' | 'kiro'</code> sang <code>type AgentKind = string</code> với runtime validation qua registry.</li>
+  <li><code>AgentRegistry</code> trong <code>src/agents/registry.ts</code> đổi sang plugin-style: <code>register(kind, factory)</code> method, no hardcoded list trong constructor.</li>
+  <li>File <code>src/agents/index.ts</code> mới: import all built-in adapters và call <code>registry.register(...)</code> — single point of registration. Thêm adapter mới = thêm 1 dòng vào file này.</li>
+  <li>Config schema trong <code>src/config.ts</code>: <code>agents</code> đổi thành <code>z.record(z.string(), agentConfigSchema)</code> — không hardcode <code>claude:</code> / <code>kiro:</code> nữa.</li>
+  <li>UI: <code>src/bot/wizards/new-session.ts</code> agent picker render dynamic từ <code>registry.list()</code>. Badge emoji + label đến từ adapter metadata (mỗi adapter export <code>displayName</code> + <code>badge</code>).</li>
+</ul>
+
+<h3>P1.2 · Path portability sweep</h3>
+<table>
+  <thead><tr><th>File:line</th><th>Issue</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/agents/kiro.ts:55</code></td><td><code>':'</code> hardcoded PATH delimiter</td><td><code>path.delimiter</code></td></tr>
+    <tr><td><code>src/agents/kiro.ts:32-49</code></td><td>Unix-only runtime path candidates</td><td>Branch theo <code>process.platform</code> — Windows candidates riêng</td></tr>
+    <tr><td><code>src/index.ts:51</code></td><td><code>kiroBinary.startsWith('/')</code></td><td><code>path.isAbsolute(kiroBinary)</code></td></tr>
+    <tr><td><code>src/bot/commands/index.ts:483</code></td><td><code>'/tmp/telecode-screen-*.png'</code></td><td><code>path.join(os.tmpdir(), 'telecode-screen-*.png')</code></td></tr>
+    <tr><td><code>src/bot/reply-builders.ts:361</code></td><td><code>p.split('/')</code> cho display path</td><td><code>p.split(path.sep)</code> + normalize</td></tr>
+    <tr><td><code>src/util/paths.ts:11-20</code></td><td>String concat forward-slash</td><td><code>path.join(TELECODE_HOME, 'config.yaml')</code></td></tr>
+    <tr><td><code>src/agents/kiro-agent-config.ts:68</code></td><td><code>mode: 0o600</code> ignored on Windows</td><td>Giữ nguyên (no-op) + doc note ACL responsibility</td></tr>
+  </tbody>
+</table>
+
+<h3>P1.3 · <code>/screenshot</code> command — platform gate</h3>
+<ul>
+  <li>Wrap <code>src/bot/commands/index.ts:483-507</code> bằng platform detection.</li>
+  <li>macOS: giữ nguyên <code>screencapture -x</code>.</li>
+  <li>Linux: detect <code>grim</code> (Wayland) → <code>gnome-screenshot -f</code> → <code>scrot</code>, theo thứ tự. Nếu không có nào, reply error có hint <code>apt install gnome-screenshot</code>.</li>
+  <li>Windows: PowerShell snippet <code>Add-Type -AssemblyName System.Windows.Forms; ...</code> capture <code>[Screen]::PrimaryScreen.Bounds</code>.</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>5. Phase 2 — Linux support</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 1d</span>
+  </div>
+</div>
+<p class="section-sub">Dễ nhất — chỉ thiếu service installer. Kiro/Claude/Codex/Cursor đều có Linux binary.</p>
+
+<h3>P2.1 · <code>scripts/install-systemd.sh</code></h3>
+<ul>
+  <li>Mirror cấu trúc <code>scripts/install-launchd.sh</code>: prompt config (Telegram token, allowed chat IDs), ghi <code>~/.telecode/config.yaml</code>.</li>
+  <li>Emit <code>~/.config/systemd/user/telecode.service</code>:
+    <pre><code>[Unit]
+Description=Telecode daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/node /opt/telecode/dist/index.js
+Restart=always
+RestartSec=5
+Environment=PATH=...
+Environment=TELECODE_HOME=%h/.telecode
+
+[Install]
+WantedBy=default.target</code></pre>
+  </li>
+  <li><code>systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now telecode</code>.</li>
+  <li><code>scripts/uninstall-systemd.sh</code>: <code>systemctl --user disable --now telecode</code> + xóa unit file.</li>
+  <li>Test thủ công trên Ubuntu 24.04 + Fedora 41.</li>
+</ul>
+
+<h3>P2.2 · README cập nhật</h3>
+<p>Thêm section “Installation — Linux” với 1 lệnh curl + setup wizard, ngang hàng với section macOS hiện có.</p>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>6. Phase 3 — Codex CLI adapter</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+    <span class="badge badge-success">Approval native</span>
+  </div>
+</div>
+<p class="section-sub">OpenAI Codex CLI (Rust, cross-platform) có sẵn JSON-RPC app-server + <code>approvalPolicy</code> built-in — fit pattern Kiro nhưng đơn giản hơn vì không cần hook bridge.</p>
+
+<h3>P3.1 · Interface</h3>
+<ul>
+  <li>File mới: <code>src/agents/codex.ts</code> — class <code>CodexAdapter implements AgentAdapter</code>.</li>
+  <li><code>kind = 'codex'</code>, <code>displayName = 'Codex'</code>, <code>badge = '🅒'</code>.</li>
+  <li>Config: <code>command</code> (default <code>codex</code>), <code>model</code> (default <code>gpt-5.1-codex</code>), <code>effort</code> (<code>medium</code>), <code>sandboxPolicy</code>.</li>
+  <li><strong>Auth</strong>: <em>native</em> — telecode KHÔNG xử lý API key, KHÔNG đọc <code>OPENAI_API_KEY</code>, KHÔNG trigger auth flow. Codex CLI phải được user login sẵn (qua <code>codex login</code> hoặc env var ở shell trước khi start daemon). Telecode chỉ spawn binary và assume đã sẵn sàng. Nếu Codex CLI bị unauth → adapter trả error event, user fix bên ngoài. Doc README ghi rõ pre-requisite.</li>
+</ul>
+
+<h3>P3.2 · Lifecycle</h3>
+<ul>
+  <li>Spawn <code>codex app-server</code> qua execa, giữ stdio JSON-RPC.</li>
+  <li>Init: gọi <code>initialize</code>, tạo thread qua <code>thread/new</code>.</li>
+  <li>Per turn: <code>turn/start</code> với:
+    <pre><code>{
+  "threadId": "...",
+  "input": [{ "type": "text", "text": userPrompt }],
+  "cwd": session.cwd,
+  "approvalPolicy": "unlessTrusted",
+  "sandboxPolicy": {
+    "type": "workspaceWrite",
+    "writableRoots": [session.cwd],
+    "networkAccess": true
+  },
+  "model": cfg.model,
+  "effort": cfg.effort
+}</code></pre>
+    <em>(Decision: <code>networkAccess: true</code> mặc định cho UX tốt — Codex có thể fetch package, gọi API. ApprovalBroker vẫn chặn mọi tool action qua <code>approvalPolicy: unlessTrusted</code>.)</em>
+  </li>
+  <li>Listen notifications: <code>turn/itemAdded</code> (text/tool_call), <code>turn/itemUpdated</code> (deltas), <code>command/exec/outputDelta</code> (cho streaming exec). Map sang <code>AgentEvent</code>.</li>
+  <li>Approval: khi Codex gửi <code>turn/permissionRequest</code>, route qua <code>ApprovalBroker.ask()</code> → reply <code>turn/permissionResponse</code>. <strong>Không cần hook server riêng</strong> như Kiro — protocol có sẵn.</li>
+</ul>
+
+<h3>P3.3 · Test</h3>
+<ul>
+  <li>Mock JSON-RPC server qua <code>node:net</code> hoặc spawn fake binary echo JSON-RPC. Verify lifecycle: init → turn → exit.</li>
+  <li>Approval test: fake permission request → broker.ask → response gửi đúng id.</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>7. Phase 4 — Cursor CLI adapter</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 2d</span>
+    <span class="badge badge-success">ACP protocol</span>
+  </div>
+</div>
+<p class="section-sub">Cursor CLI (<code>agent</code>) hỗ trợ ACP — JSON-RPC over stdio với <code>session/request_permission</code> built-in. Cross-platform.</p>
+
+<h3>P4.1 · Interface</h3>
+<ul>
+  <li>File mới: <code>src/agents/cursor.ts</code> — class <code>CursorAdapter implements AgentAdapter</code>.</li>
+  <li><code>kind = 'cursor'</code>, <code>displayName = 'Cursor'</code>, <code>badge = '✦'</code>.</li>
+  <li>Config: <code>command</code> (default <code>agent</code>), <code>model</code> (default <code>gpt-5.2</code> hoặc theo Cursor docs latest).</li>
+  <li><strong>Auth</strong>: <em>native</em> — Cursor CLI có persistent auth token tự quản lý (qua <code>cursor-agent login</code>). Telecode KHÔNG handle login, KHÔNG mở browser, KHÔNG lưu credentials. Skip <code>authenticate</code> step trong ACP handshake nếu token đã có (Cursor sẽ tự load). Nếu chưa login → ACP server trả error, adapter surface lên Telegram với hint <code>Chạy 'cursor-agent login' trước khi dùng adapter này</code>. Doc README ghi rõ pre-requisite.</li>
+</ul>
+
+<h3>P4.2 · Lifecycle (ACP)</h3>
+<ul>
+  <li>Spawn <code>agent acp</code> qua execa.</li>
+  <li>JSON-RPC handshake:
+    <ol>
+      <li><code>initialize</code> với <code>clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }</code>.</li>
+      <li><code>authenticate</code> với <code>methodId: 'cursor_login'</code>.</li>
+      <li><code>session/new</code> với <code>cwd: session.cwd, mcpServers: []</code> → nhận <code>sessionId</code>.</li>
+      <li><code>session/prompt</code> với user input → bắt đầu turn.</li>
+    </ol>
+  </li>
+  <li>Listen <code>session/update</code> notifications: <code>agent_message_chunk</code> (text stream), <code>tool_call</code> events. Map sang <code>AgentEvent</code>.</li>
+  <li>Approval: khi nhận <code>session/request_permission</code>, route qua <code>ApprovalBroker.ask()</code> → respond với <code>{ outcome: { outcome: 'selected', optionId: 'allow-once' | 'allow-always' | 'deny' } }</code>.</li>
+</ul>
+
+<h3>P4.3 · Test</h3>
+<ul>
+  <li>Mock ACP server stub trong tests. Verify protocol compliance (initialize → authenticate → session/new → session/prompt → updates → result).</li>
+  <li>Permission flow: stub gửi <code>session/request_permission</code> → broker → response gửi đúng id.</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>8. Phase 5 — Windows support</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 3–3.5d</span>
+    <span class="badge badge-warn">Trickiest</span>
+  </div>
+</div>
+<p class="section-sub">Windows 11 native — không cần WSL. Kiro CLI có native installer, Claude SDK + Codex + Cursor đều cross-platform. Tricky chính là service installer + Kiro hook integration.</p>
+
+<h3>P5.1 · Kiro Windows POC <span class="badge badge-warn">verify trước khi code installer</span></h3>
+<p>Trước khi code installer, POC 3 điểm tích hợp Telecode ↔ Kiro trên Windows VM:</p>
+<ol>
+  <li><strong>Agent config path</strong>: Kiro Windows đọc <code>%USERPROFILE%\.kiro\agents\</code>? Verify bằng <code>kiro-cli doctor</code> + tạo manual <code>telecode.json</code> + chạy <code>kiro-cli chat --agent telecode --no-interactive "test"</code>.</li>
+  <li><strong>preToolUse hook command shell</strong>: Doc Kiro cho ví dụ POSIX shell. Trên Windows, hook command có được parse bằng shell nội bộ Kiro, hay phải wrap qua <code>powershell -Command "..."</code> / <code>cmd.exe /c ...</code>? Test với hook đơn giản <code>echo hello &gt; %TEMP%\kiro-hook.log</code>.</li>
+  <li><strong>Gate script invocation</strong>: <code>kiro-gate.ts</code> shebang <code>#!/usr/bin/env node</code> không work trên Windows. Agent JSON config phải emit <code>"command": "node", "args": ["C:\\Users\\...\\kiro-gate.js"]</code> tường minh. Verify telecode đã làm vậy chưa.</li>
+</ol>
+<p>POC output: short report (Markdown) ghi 3 findings + fixes cần áp vào <code>src/agents/kiro-agent-config.ts</code>.</p>
+
+<h3>P5.2 · Service installer (PowerShell + NSSM)</h3>
+<p><strong>Decision: lean & portable</strong> — telecode KHÔNG bundle <code>nssm.exe</code>. User tự cài NSSM qua winget trước khi chạy installer. Doc README có pre-requisite section.</p>
+<ul>
+  <li><strong>Pre-requisite (user tự làm)</strong>:
+    <pre><code>winget install NSSM.NSSM
+# hoặc: choco install nssm
+# hoặc download manual từ nssm.cc</code></pre>
+  </li>
+  <li><code>scripts/install-windows.ps1</code> verify NSSM tồn tại (<code>Get-Command nssm</code>) → fail-fast với hint nếu chưa cài. Sau đó:
+    <ol>
+      <li>Prompt token + chat ID, ghi <code>%USERPROFILE%\.telecode\config.yaml</code>.</li>
+      <li><code>nssm install Telecode "C:\Program Files\nodejs\node.exe" "&lt;install-dir&gt;\dist\index.js"</code>.</li>
+      <li><code>nssm set Telecode AppEnvironmentExtra TELECODE_HOME=%USERPROFILE%\.telecode</code>.</li>
+      <li><code>nssm set Telecode AppRestartDelay 5000</code>, <code>nssm set Telecode ObjectName LocalSystem</code> (hoặc current user nếu user-scope).</li>
+      <li><code>nssm start Telecode</code>.</li>
+    </ol>
+  </li>
+  <li><code>scripts/uninstall-windows.ps1</code>: <code>nssm stop Telecode</code> + <code>nssm remove Telecode confirm</code>.</li>
+  <li>Alternative considered: <code>node-windows</code> npm package — pure JS, không cần NSSM. Trade-off: <code>node-windows</code> dễ cho user (no pre-req) nhưng kém mature cho crash-restart. <strong>Reject</strong>: user thích lean & portable hơn auto-magic; NSSM phổ biến + 1 lệnh winget.</li>
+  <li>Alternative fallback: Task Scheduler XML với <code>OnLogon</code> trigger — không có crash-restart nhưng zero dependency. Doc README đề cập như option “lightweight” cho user không muốn NSSM.</li>
+</ul>
+
+<h3>P5.3 · Source code Windows tweaks</h3>
+<ul>
+  <li><code>SIGBREAK</code> handler trong <code>src/index.ts</code> bên cạnh <code>SIGINT</code>/<code>SIGTERM</code>.</li>
+  <li><code>src/agents/kiro.ts</code>: candidate runtime paths Windows-specific (<code>%USERPROFILE%\AppData\Roaming\nvm</code>, <code>%USERPROFILE%\.cargo\bin</code>, <code>%LOCALAPPDATA%\Programs\Python\...</code>, <code>%USERPROFILE%\AppData\Roaming\npm</code>).</li>
+  <li><code>src/agents/kiro-agent-config.ts</code>: emit hook command theo platform (POC findings từ P5.1).</li>
+  <li><code>/screenshot</code> Windows path (đã cover ở P1.3).</li>
+</ul>
+
+<h3>P5.4 · Smoke test</h3>
+<ul>
+  <li>Windows 11 VM (UTM hoặc Parallels). Install qua PowerShell script. Boot daemon, gửi <code>/new</code> qua Telegram, tạo session Claude + session Kiro, verify approval flow + auto-switch.</li>
+  <li>Reboot VM → daemon tự start qua NSSM, sessions resume (theo SQLite state).</li>
+</ul>
+
+<!-- ============================================================== -->
+<div class="phase-header">
+  <h2>9. Phase 6 — Hardening (v0.6 P2 carry-over)</h2>
+  <div class="phase-meta">
+    <span class="badge badge-accent">Effort 1–1.5d</span>
+    <span class="badge badge-muted">Parallel với P3/P4</span>
+  </div>
+</div>
+<p class="section-sub">5 hardening items đã document defer ở v0.6. Có thể chạy song song không block các phase khác.</p>
+
+<ul class="checklist">
+  <li class="todo"><strong>P6.1</strong> — Per-boot HMAC token trên <code>TELECODE_GATE_URL</code>: generate random 32 bytes lúc daemon boot, embed vào env var truyền cho kiro-cli, hook server verify HMAC. Phòng same-user different-process spoof.</li>
+  <li class="todo"><strong>P6.2</strong> — <code>KiroHookServer.stop()</code> drain in-flight <code>broker.ask</code>: trước khi close server, wait pending approval (timeout 30s) hoặc reject all với “shutdown”.</li>
+  <li class="todo"><strong>P6.3</strong> — Daemon singleton lockfile: <code>~/.telecode/daemon.lock</code> giữ PID, boot check liveness, fail nếu đã có daemon đang chạy. Tránh dev vs launchd race.</li>
+  <li class="todo"><strong>P6.4</strong> — Cache <code>kiro-cli --list-sessions</code> per cwd: hiện gọi lại mỗi <code>/sessions</code>, cache 30s.</li>
+  <li class="todo"><strong>P6.5</strong> — Test coverage cho <code>writeKiroTelecodeAgent</code>: idempotency, atomic rename, mode-0o600 (skip assertion trên Windows).</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>10. Timeline đề xuất</h2>
+<table>
+  <thead>
+    <tr><th>Tuần</th><th>Phase</th><th>Effort</th><th>Có thể parallel?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>W1 D1–D2</td><td>P0 — T3 carry-over</td><td>2d</td><td>—</td></tr>
+    <tr><td>W1 D3–D4</td><td>P1 — Foundation refactor</td><td>2d</td><td>—</td></tr>
+    <tr><td>W1 D5</td><td>P2 — Linux support</td><td>1d</td><td>—</td></tr>
+    <tr><td>W2 D1–D2</td><td>P3 — Codex adapter</td><td>2d</td><td>P6 parallel</td></tr>
+    <tr><td>W2 D3–D4</td><td>P4 — Cursor adapter</td><td>2d</td><td>P6 parallel</td></tr>
+    <tr><td>W2 D5 + W3 D1–D2</td><td>P5 — Windows + Kiro POC</td><td>3–3.5d</td><td>—</td></tr>
+    <tr><td>W2 background</td><td>P6 — Hardening (5 items)</td><td>1–1.5d</td><td>✅ parallel</td></tr>
+    <tr><td>W3 D3</td><td>Consolidate + senior review + ship v1.0</td><td>1d</td><td>—</td></tr>
+  </tbody>
+</table>
+<p><strong>Total</strong>: ~13 ngày calendar (10–12 ngày thực, 2 ngày buffer cho review loops).</p>
+
+<!-- ============================================================== -->
+<h2>11. Risks &amp; open questions</h2>
+
+<h3>R1 — Antigravity headless support</h3>
+<p>Google có thể release headless mode cho Antigravity CLI trong 3–6 tháng (theo trend của Gemini CLI). Nếu xảy ra trước khi v1.0 ship, có nên gộp vào không? <strong>Decision đề xuất</strong>: KHÔNG. Antigravity adapter sẽ là plan riêng v1.1 — registry open-set ở P1 đủ để add adapter mới không phải re-plan.</p>
+
+<h3>R2 — Cursor CLI auth flow trên daemon</h3>
+<p>Cursor <code>authenticate</code> với <code>cursor_login</code> mở browser — daemon mode không có browser. Cần verify Cursor có <strong>persistent auth token</strong> (qua <code>~/.cursor/auth.json</code> hoặc tương tự) để adapter chỉ cần re-authenticate nếu token hết hạn. POC nhanh ở đầu P4.</p>
+
+<h3>R3 — Codex CLI tốc độ thay đổi API</h3>
+<p>Codex CLI đang ở pre-1.0 (rust v0.75 hiện tại). API <code>turn/start</code> có thể đổi. <strong>Mitigation</strong>: pin version qua install script, dùng Context7 verify version latest trước implement, document required version trong README.</p>
+
+<h3>R4 — Windows file lock semantics</h3>
+<p>SQLite WAL mode + atomic rename hoạt động khác trên Windows (rename qua file đang mở fail). Cần verify <code>better-sqlite3</code> handle đúng. POC: chạy unit tests SessionStore trên Windows VM.</p>
+
+<h3>R5 — NSSM dependency</h3>
+<p>NSSM cần cài qua winget hoặc bundle. Nếu user không có admin rights, winget có thể không install được. <strong>Mitigation</strong>: bundle <code>nssm.exe</code> trong release zip (NSSM là BSD-licensed, OK redistribute). Fallback: dùng Task Scheduler XML với <code>OnLogon</code> trigger (no crash-restart, nhưng đơn giản hơn).</p>
+
+<!-- ============================================================== -->
+<h2>12. Acceptance criteria</h2>
+
+<h3>A1 — Functional</h3>
+<ul class="checklist">
+  <li class="todo">Tất cả 6 T3 items có code + test + verify thủ công qua Telegram.</li>
+  <li class="todo">Tạo session với <code>kind: codex</code> hoặc <code>kind: cursor</code> qua wizard <code>/new</code> hoạt động end-to-end.</li>
+  <li class="todo">Telecode chạy native trên Ubuntu 24.04 + Windows 11 (verified qua VM smoke test).</li>
+  <li class="todo">Service auto-restart sau crash trên cả 3 OS.</li>
+</ul>
+
+<h3>A2 — Code quality</h3>
+<ul class="checklist">
+  <li class="todo">Adapter registry: thêm adapter giả lập “mock” chỉ touch 1 file mới + 1 dòng register. Verify bằng test.</li>
+  <li class="todo">Zero <code>'/'</code> hoặc <code>':'</code> hardcoded path/delimiter ngoài <code>node:path</code> API.</li>
+  <li class="todo">Tất cả tests cũ vẫn pass (≥172/172). Tests mới ≥40 cases cho 2 adapter + 10 cases cho T3 items + 8 cases cho Windows-specific utils.</li>
+</ul>
+
+<h3>A3 — Documentation</h3>
+<ul class="checklist">
+  <li class="todo">README có 3 install sections (macOS / Linux / Windows) ngang hàng.</li>
+  <li class="todo">SDD HTML tại <code>docs/design/telecode-v1.0-cross-platform-multi-agent.html</code> cover đầy đủ design decisions, file changes, verification.</li>
+  <li class="todo">Tech freshness table: 4 adapter (Claude / Kiro / Codex / Cursor) version + API verified qua Context7.</li>
+</ul>
+
+<h3>A4 — Senior review</h3>
+<ul class="checklist">
+  <li class="todo">Opus 4.7 senior review pass: 0 actionable <code>[P0]</code>–<code>[P3]</code> findings remaining.</li>
+  <li class="todo">Scope completeness check: 100% deliverables ✅.</li>
+  <li class="todo">Tech freshness check: tất cả dependency latest stable hoặc pinned với lý do.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>13. Test strategy</h2>
+
+<h3>Unit</h3>
+<ul>
+  <li>Mỗi adapter mới: stub binary (Codex JSON-RPC, Cursor ACP) qua <code>node:child_process</code> mock — verify protocol compliance, approval routing, event mapping.</li>
+  <li>Adapter registry: register/unregister, duplicate kind error, list ordering.</li>
+  <li>Path portability: snapshot test với <code>process.platform = 'win32' | 'linux' | 'darwin'</code> mocked.</li>
+</ul>
+
+<h3>Integration</h3>
+<ul>
+  <li>Wizard <code>/new</code> với dynamic agent picker render từ registry — verify Codex + Cursor xuất hiện.</li>
+  <li>T3 buttons E2E: tap <code>session:list-trigger</code> → reply có session list keyboard.</li>
+  <li>Auto-switch wizard guard: trigger event giữa wizard → no switch, defer to exit.</li>
+</ul>
+
+<h3>Manual smoke (3 OS)</h3>
+<ul>
+  <li>macOS: existing flow regression.</li>
+  <li>Linux Ubuntu 24.04: install systemd, gửi /new claude + /new kiro + /new codex + /new cursor, verify mỗi adapter chạy.</li>
+  <li>Windows 11: install NSSM, smoke test 4 adapter. Reboot VM → daemon resume.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>14. Sub-agent DAG (cho implementation phase)</h2>
+<p>Sau khi user approve plan, mỗi phase spawn DAG sub-agents song song theo workflow §2:</p>
+
+<div class="card">
+  <h4>Pattern cho mỗi phase</h4>
+  <ol>
+    <li><strong>Context7 validation</strong> — verify version + API latest cho dependencies mới (Codex CLI, Cursor CLI, NSSM nếu có docs). Ghi vào SDD section “Tech freshness”.</li>
+    <li><strong>Design + Code song song</strong> — 1 sub-agent viết SDD section, 1–2 sub-agents implement code + tests. Cùng commit vào branch phase.</li>
+    <li><strong>Consolidate</strong> — verify tests pass, đọc lại plan, check scope completeness (mọi deliverable trong phase có code + test + manual verify).</li>
+    <li><strong>Senior review (Opus 4.7)</strong> — đọc code + SDD + plan, fix <code>[P0]</code>–<code>[P3]</code>, loop đến clean.</li>
+  </ol>
+</div>
+
+<h3>Files dự kiến chạm</h3>
+<table>
+  <thead><tr><th>Loại</th><th>Phase</th><th>File mới</th><th>File sửa</th></tr></thead>
+  <tbody>
+    <tr><td>P0</td><td>T3 backlog</td><td>—</td><td><code>src/bot/router.ts</code>, <code>src/bot/wizards/new-session.ts</code>, <code>src/bot/reply-builders.ts</code>, <code>src/bot/commands/index.ts</code>, <code>src/approval/policy.ts</code>, <code>src/session/manager.ts</code></td></tr>
+    <tr><td>P1</td><td>Foundation</td><td><code>src/agents/index.ts</code></td><td><code>src/agents/types.ts</code>, <code>src/agents/registry.ts</code>, <code>src/config.ts</code>, <code>src/util/paths.ts</code>, <code>src/agents/kiro.ts</code>, <code>src/bot/wizards/new-session.ts</code>, <code>src/bot/reply-builders.ts</code></td></tr>
+    <tr><td>P2</td><td>Linux</td><td><code>scripts/install-systemd.sh</code>, <code>scripts/uninstall-systemd.sh</code></td><td>README.md</td></tr>
+    <tr><td>P3</td><td>Codex</td><td><code>src/agents/codex.ts</code>, <code>tests/codex.test.ts</code></td><td><code>src/agents/index.ts</code>, <code>src/config.ts</code></td></tr>
+    <tr><td>P4</td><td>Cursor</td><td><code>src/agents/cursor.ts</code>, <code>tests/cursor.test.ts</code></td><td><code>src/agents/index.ts</code>, <code>src/config.ts</code></td></tr>
+    <tr><td>P5</td><td>Windows</td><td><code>scripts/install-windows.ps1</code>, <code>scripts/uninstall-windows.ps1</code></td><td><code>src/index.ts</code>, <code>src/agents/kiro.ts</code>, <code>src/agents/kiro-agent-config.ts</code>, <code>src/bot/commands/index.ts</code>, README.md</td></tr>
+    <tr><td>P6</td><td>Hardening</td><td><code>src/util/hmac.ts</code> (?), <code>src/daemon/lockfile.ts</code> (?), <code>tests/kiro-agent-config.test.ts</code></td><td><code>src/util/kiro-hook-server.ts</code>, <code>src/cli/kiro-gate.ts</code>, <code>src/agents/kiro-agent-config.ts</code>, <code>src/index.ts</code></td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>15. Out of scope (defer to future)</h2>
+<ul>
+  <li><strong>Antigravity adapter</strong> — đợi headless mode (Q4/2026 ?). Registry open-set ở P1 đủ để add sau không phải re-plan.</li>
+  <li><strong>Gemini CLI adapter</strong> — có thể add sau như nhánh “Google ecosystem” riêng. Workflow giống Cursor (ACP-like).</li>
+  <li><strong>WSL fallback installer</strong> — Kiro + Codex + Cursor đều có native Windows binary, không cần.</li>
+  <li><strong>Persistent buffer qua daemon restart</strong> — v0.8 đã out-of-scope, giữ nguyên.</li>
+  <li><strong>Multi-user mode</strong> — Telecode vẫn single-user local daemon.</li>
+  <li><strong>Aggregate notification</strong> — “5 events done gộp 1” — v0.8 đã out-of-scope.</li>
+  <li><strong>IDE integration</strong> — user chỉ chấp nhận CLI.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>16. Decisions đã chốt</h2>
+<table>
+  <thead><tr><th>#</th><th>Vấn đề</th><th>Decision</th><th>Phase áp dụng</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>D1</td>
+      <td>Auth Codex / Cursor</td>
+      <td><strong>Native</strong> — telecode chỉ là cầu nối. Không lưu API key, không trigger auth flow, không mở browser. User phải <code>codex login</code> / <code>cursor-agent login</code> trước khi start daemon. Adapter surface error nếu CLI chưa auth.</td>
+      <td>P3, P4</td>
+    </tr>
+    <tr>
+      <td>D2</td>
+      <td>Phase 6 hardening</td>
+      <td><strong>Parallel</strong> với P3/P4 (không tách v1.1 riêng).</td>
+      <td>P6</td>
+    </tr>
+    <tr>
+      <td>D3</td>
+      <td>NSSM distribution</td>
+      <td><strong>User tự cài</strong> qua <code>winget install NSSM.NSSM</code>. Telecode lean & portable, KHÔNG bundle binary. README ghi pre-requisite. Installer fail-fast nếu chưa có NSSM. Fallback option Task Scheduler được nhắc trong doc.</td>
+      <td>P5</td>
+    </tr>
+    <tr>
+      <td>D4</td>
+      <td>“Allow forever” UX</td>
+      <td><strong>2-step confirm</strong> (tap 1 → message edit thành xác nhận, tap 2 → ghi policy.yaml). policy.yaml là persistent state, an toàn hơn tap nhầm.</td>
+      <td>P0.4</td>
+    </tr>
+    <tr>
+      <td>D5</td>
+      <td>Codex sandboxPolicy default</td>
+      <td><strong><code>networkAccess: true</code></strong> — UX tốt hơn (fetch package, gọi API). ApprovalBroker vẫn chặn mọi tool action qua <code>approvalPolicy: unlessTrusted</code>.</td>
+      <td>P3.2</td>
+    </tr>
+    <tr>
+      <td>D6</td>
+      <td>Dashboard refresh rate</td>
+      <td><strong>2s fix</strong>, không expose config user-tunable (giữ scope nhỏ).</td>
+      <td>P0.5</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Plan này đã <strong>finalized</strong>. Sẵn sàng start sub-agent DAG implementation theo §14 sau khi user approve.</p>
+
+<hr/>
+<p style="color: var(--text-faint); font-size: 14px;">Plan draft v1 · 2026-05-21 · dangkhoi@users.noreply.github.com · Telecode workspace</p>
+
+</div>
+</body>
+</html>

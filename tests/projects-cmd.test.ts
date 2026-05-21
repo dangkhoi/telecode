@@ -102,6 +102,14 @@ function setupCommand(): {
     manager,
     broker: {} as ApprovalBroker,
     policy: {} as PolicyEngine,
+    // Plan P1.1: open-set registry. `/projects` never touches it; no-op stub.
+    registry: {
+      has: () => true,
+      get: () => undefined,
+      require: () => { throw new Error('unused in /projects tests'); },
+      kinds: () => ['claude'],
+      list: () => [{ kind: 'claude', displayName: 'Claude', badge: '🤖' }],
+    } as never,
     notifierFor: () => ({} as never),
   };
   const { bot, handlers } = makeBotSpy();

@@ -35,7 +35,24 @@ ok "${HOME_DIR} (chmod 700)"
 if [[ ! -f "${HOME_DIR}/config.yaml" ]]; then
   cp "${REPO_DIR}/config.example.yaml" "${HOME_DIR}/config.yaml"
   chmod 600 "${HOME_DIR}/config.yaml"
-  ok "seeded config.yaml"
+
+  # Auto-resolve kiro-cli to its real absolute path so the daemon doesn't try
+  # to spawn the example's bare `kiro-cli` when launchd's minimal PATH happens
+  # to miss the install location (~/.local/bin etc.). Bare name still works
+  # via runtime PATH enrichment (buildKiroMcpPath) but writing the absolute
+  # path here is defence-in-depth and surfaces the resolution at install time.
+  # Env var override: TELECODE_KIRO_BINARY=/abs/path/to/kiro-cli ./install...
+  KIRO_BIN="${TELECODE_KIRO_BINARY:-$(command -v kiro-cli 2>/dev/null || echo "")}"
+  if [[ -n "${KIRO_BIN}" && -x "${KIRO_BIN}" ]]; then
+    # BSD sed (macOS) needs `-i ''`; substitute the example's `binary: kiro-cli`
+    # line with the resolved absolute path. Use `|` delimiter so `/` in paths
+    # doesn't conflict.
+    sed -i '' "s|^    binary: kiro-cli$|    binary: ${KIRO_BIN}|" "${HOME_DIR}/config.yaml"
+    ok "seeded config.yaml (kiro-cli → ${KIRO_BIN})"
+  else
+    ok "seeded config.yaml (kiro-cli not found in PATH — daemon will try bare name via enriched PATH)"
+    warn "If Kiro sessions fail with 'exit ?', install kiro-cli or set binary: /abs/path in ~/.telecode/config.yaml"
+  fi
 else
   ok "config.yaml already present"
 fi

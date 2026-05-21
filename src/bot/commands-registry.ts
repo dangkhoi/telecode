@@ -15,8 +15,12 @@ export const COMMANDS: readonly BotCommand[] = [
   { command: 'sessions', description: 'List + switch + close session' },
   { command: 'projects', description: 'List + chọn project' },
   { command: 'status', description: 'Trạng thái session active' },
+  { command: 'dashboard', description: 'Live dashboard (auto-refresh 2s)' },
   { command: 'clear', description: 'Clear context của session active' },
   { command: 'handoff', description: 'Summary context → clear → inject vào prompt kế tiếp' },
+  // Phase B (v1.1) — verbosity controls. /mode = per-session, /settings = chat-level.
+  { command: 'mode', description: 'Đổi verbosity mode của session active' },
+  { command: 'settings', description: 'Chat-level defaults (mode mặc định …)' },
   { command: 'stop', description: 'Dừng task đang chạy' },
   { command: 'screenshot', description: 'Chụp desktop Mac' },
   { command: 'help', description: 'Hướng dẫn nhanh' },

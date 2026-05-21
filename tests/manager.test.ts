@@ -12,6 +12,20 @@ class FakeRegistry {
   get(_k: AgentKind): AgentAdapter {
     return this.adapter;
   }
+  // Plan P1.1: SessionManager.dispatch uses `require` (strict get with a
+  // helpful error). FakeRegistry mirrors that to keep tests green.
+  require(_k: AgentKind): AgentAdapter {
+    return this.adapter;
+  }
+  has(_k: AgentKind): boolean {
+    return true;
+  }
+  list(): { kind: string; displayName: string; badge: string }[] {
+    return [{ kind: this.adapter.kind, displayName: this.adapter.kind, badge: '·' }];
+  }
+  kinds(): string[] {
+    return [this.adapter.kind];
+  }
 }
 
 function makeStore(): { store: SessionStore; cleanup: () => void } {

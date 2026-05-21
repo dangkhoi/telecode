@@ -12,6 +12,10 @@
  * Required env (set by the kiro adapter when it spawns kiro-cli):
  *   TELECODE_GATE_URL      e.g. http://127.0.0.1:8787/kiro-hook
  *   TELECODE_SESSION_ID    the telecode-side session UUID
+ *   TELECODE_GATE_TOKEN    P6.1 per-boot shared-secret token (hex). When
+ *                          present, attached as `Authorization: Bearer …` so
+ *                          the daemon can reject spoofed requests from other
+ *                          local processes under the same UID.
  *
  * The hook command in the agent config is the absolute path to this script.
  */
@@ -19,6 +23,7 @@ import { stdin } from 'node:process';
 
 const url = process.env.TELECODE_GATE_URL;
 const telecodeSessionId = process.env.TELECODE_SESSION_ID;
+const gateToken = process.env.TELECODE_GATE_TOKEN;
 
 async function readStdin(): Promise<string> {
   let data = '';
@@ -45,18 +50,30 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    'x-telecode-session': telecodeSessionId,
+  };
+  if (gateToken) headers['authorization'] = `Bearer ${gateToken}`;
+
   let res: Response;
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-telecode-session': telecodeSessionId,
-      },
+      headers,
       body: JSON.stringify(payload),
     });
   } catch (err) {
     process.stderr.write(`[telecode-kiro-gate] daemon unreachable: ${String(err)} — denying for safety\n`);
+    process.exit(2);
+  }
+
+  if (res.status === 401) {
+    // P6.1 — token mismatch. Most likely cause: kiro-cli inherited a stale
+    // TELECODE_GATE_TOKEN (e.g. daemon restarted with a fresh secret but the
+    // long-lived kiro-cli child still has the old env). Fail closed.
+    const detail = await res.text().catch(() => 'HTTP 401');
+    process.stderr.write(`[telecode-kiro-gate] daemon rejected token: ${detail.slice(0, 200)}\n`);
     process.exit(2);
   }
 

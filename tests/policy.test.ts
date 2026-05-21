@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PolicyEngine } from '../src/approval/policy.js';
@@ -98,5 +98,64 @@ describe('PolicyEngine', () => {
     const p = new PolicyEngine(path);
     expect(p.decide('shell', { command: 'rm -rf /tmp/x' }).decision).toBe('deny');
     expect(p.decide('execute_bash', { command: 'rm -rf /tmp/x' }).decision).toBe('deny');
+  });
+
+  // -------------------------------------------------------------------------
+  // P0.4 — appendRule + buildPattern (Forever button persistence)
+  // -------------------------------------------------------------------------
+
+  describe('P0.4 appendRule (Forever 2-step confirm persistence)', () => {
+    it('buildPattern produces escaped Tool(arg) form from object input', () => {
+      // Bash command should round-trip through the literal-escape path:
+      // glob meta `*` becomes `\*` so it's exact-match in the persisted rule.
+      const pat = PolicyEngine.buildPattern('Bash', { command: 'rm -rf /tmp/x' });
+      expect(pat).toBe('Bash(rm -rf /tmp/x)');
+      // A command WITH a `*` literal must be escaped so future calls match
+      // verbatim (not glob).
+      const pat2 = PolicyEngine.buildPattern('Bash', { command: 'echo *' });
+      expect(pat2).toBe('Bash(echo \\*)');
+    });
+
+    it('buildPattern returns bare tool name when input has no meaningful args', () => {
+      expect(PolicyEngine.buildPattern('Read', {})).toBe('Read');
+      expect(PolicyEngine.buildPattern('Read', '')).toBe('Read');
+    });
+
+    it('appendRule persists a literal allow rule + decide() resolves it', () => {
+      write('allow: []\ndeny: []\n');
+      const p = new PolicyEngine(path);
+      p.appendRule('Bash', { command: 'npm run lint' }, 'allow_always');
+      const yaml = readFileSync(path, 'utf8');
+      expect(yaml).toContain('Bash(npm run lint)');
+      // The persisted rule must auto-allow the same command in a fresh
+      // PolicyEngine — verifies the atomic write actually landed on disk.
+      const fresh = new PolicyEngine(path);
+      expect(fresh.decide('Bash', { command: 'npm run lint' }).decision).toBe('allow');
+    });
+
+    it('appendRule is atomic — tmp file is renamed not concatenated', () => {
+      write('allow: []\ndeny: []\n');
+      const p = new PolicyEngine(path);
+      p.appendRule('fs_write', { path: '/tmp/foo.txt' }, 'allow_always');
+      // Verify the directory does NOT contain a stray .tmp.* file once
+      // appendRule returns — proves the rename succeeded.
+      const tmps = readdirSync(dir).filter((f) => f.includes('.tmp.'));
+      expect(tmps).toEqual([]);
+      // Re-load + recheck — content is the new rule, not appended.
+      const reloaded = readFileSync(path, 'utf8');
+      const matches = (reloaded.match(/fs_write\(/g) ?? []).length;
+      expect(matches).toBe(1);
+    });
+
+    it('appendRule rejects unsupported decisions to leave room for future deny-forever', () => {
+      write('allow: []\ndeny: []\n');
+      const p = new PolicyEngine(path);
+      // We accept the current sole-supported decision; anything else must
+      // throw rather than silently no-op (would mask a UI wiring bug).
+      expect(() =>
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        p.appendRule('Bash', { command: 'x' }, 'deny_forever' as any),
+      ).toThrow(/unsupported decision/);
+    });
   });
 });

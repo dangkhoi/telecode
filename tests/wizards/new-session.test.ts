@@ -3,7 +3,24 @@ import type { Conversation } from '@grammyjs/conversations';
 import type { Context } from 'grammy';
 import type { SessionStore, SessionRow, ProjectRow, AgentKind } from '../../src/session/store.js';
 import type { SessionManager } from '../../src/session/manager.js';
+import { AgentRegistry } from '../../src/agents/registry.js';
+import type { AgentAdapter } from '../../src/agents/types.js';
 import { newSession, PROJECTS_PER_PAGE, type WizardDeps } from '../../src/bot/wizards/new-session.js';
+
+/**
+ * Build a registry pre-populated with stub claude + kiro adapters. The stubs
+ * never `run` — the wizard only reads `registry.list()` for picker rendering.
+ */
+function makeStubRegistry(extra: { kind: string; displayName: string; badge: string }[] = []): AgentRegistry {
+  const r = new AgentRegistry();
+  const stub = (k: string): AgentAdapter => ({ kind: k, run: async () => {} });
+  r.register('claude', () => stub('claude'), { kind: 'claude', displayName: 'Claude', badge: '🤖' });
+  r.register('kiro', () => stub('kiro'), { kind: 'kiro', displayName: 'Kiro', badge: '⚡' });
+  for (const e of extra) {
+    r.register(e.kind, () => stub(e.kind), { kind: e.kind, displayName: e.displayName, badge: e.badge });
+  }
+  return r;
+}
 
 // ---------------------------------------------------------------------------
 // Test scaffolding
@@ -137,7 +154,7 @@ function makeDeps(overrides?: {
     createSession: createSessionSpy,
   } as unknown as SessionManager;
 
-  return { store, manager };
+  return { store, manager, registry: makeStubRegistry() };
 }
 
 // ---------------------------------------------------------------------------
@@ -364,5 +381,82 @@ describe('newSession wizard', () => {
       typeof c[0] === 'string' && c[0].includes('lỗi'),
     );
     expect(errReply).toBeTruthy();
+  });
+
+  // ===========================================================================
+  // Plan P1.1 — picker is dynamic from registry, including the mock-adapter demo
+  // ===========================================================================
+  it('P1.1 — picker renders one button per registered adapter (3 with mock added)', async () => {
+    const deps = makeDeps();
+    // Re-bind registry with a 3rd "mock" adapter (the canonical demo from
+    // plan acceptance A2). Picker should now show 3 buttons.
+    deps.registry = makeStubRegistry([{ kind: 'mock', displayName: 'Mock', badge: '🧪' }]);
+
+    const conversation = makeConversation([makeCbCtx('wizard:new-cancel')], []);
+    const ctx = makeEntryCtx();
+    await newSession(conversation, ctx, deps);
+
+    const replies = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls;
+    // First reply renders the picker — its reply_markup carries one row per
+    // adapter (up to 3 per row + Cancel row).
+    const pickerReply = replies[0];
+    expect(pickerReply?.[0]).toContain('chọn agent');
+    const kb = pickerReply?.[1]?.reply_markup;
+    expect(kb).toBeDefined();
+    // Flatten rows and check button texts
+    const rows = kb.inline_keyboard as Array<Array<{ text: string; callback_data: string }>>;
+    const buttons = rows.flat();
+    const adapterButtons = buttons.filter((b) => b.callback_data.startsWith('wizard:new-agent:'));
+    expect(adapterButtons.map((b) => b.callback_data)).toEqual([
+      'wizard:new-agent:claude',
+      'wizard:new-agent:kiro',
+      'wizard:new-agent:mock',
+    ]);
+    expect(adapterButtons[2]?.text).toContain('Mock');
+    expect(adapterButtons[2]?.text).toContain('🧪');
+  });
+
+  it('P1.1 — picker selects custom adapter and uses its displayName in the project step', async () => {
+    const deps = makeDeps();
+    deps.registry = makeStubRegistry([{ kind: 'mock', displayName: 'Mock', badge: '🧪' }]);
+
+    const cbQueue = [
+      makeCbCtx('wizard:new-agent:mock'),
+      makeCbCtx('wizard:new-project:1'),
+    ];
+    const conversation = makeConversation(cbQueue, ['demo']);
+    const ctx = makeEntryCtx();
+    await newSession(conversation, ctx, deps);
+
+    expect(deps.manager.createSession).toHaveBeenCalledWith({
+      chatId: 42,
+      agent: 'mock',
+      label: 'demo',
+      projectId: 1,
+    });
+    // Project step reply text should include displayName "Mock"
+    const allReplies = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls;
+    const projectStepReply = allReplies.find((c) =>
+      typeof c[0] === 'string' && c[0].startsWith('Agent: Mock'),
+    );
+    expect(projectStepReply).toBeTruthy();
+  });
+
+  it('P1.1 — empty registry — wizard exits with friendly error (defensive)', async () => {
+    const deps = makeDeps();
+    // Replace with an empty registry — no adapter has been registered.
+    const { AgentRegistry } = await import('../../src/agents/registry.js');
+    deps.registry = new AgentRegistry();
+
+    const conversation = makeConversation([], []);
+    const ctx = makeEntryCtx();
+    await newSession(conversation, ctx, deps);
+
+    const replies = (ctx.reply as ReturnType<typeof vi.fn>).mock.calls;
+    const errReply = replies.find((c) =>
+      typeof c[0] === 'string' && c[0].includes('Không có agent'),
+    );
+    expect(errReply).toBeTruthy();
+    expect(deps.manager.createSession).not.toHaveBeenCalled();
   });
 });

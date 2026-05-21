@@ -3,9 +3,16 @@ import { readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DB_PATH, TELECODE_HOME } from '../util/paths.js';
+import {
+  isVerbosityMode,
+  type VerbosityMode,
+} from './verbosity.js';
+// Plan P1.1: AgentKind is now an open string type defined in agents/types.ts.
+// Re-export from here to keep existing imports stable while removing the
+// duplicate literal-union definition that used to live in this file.
+export type { AgentKind } from '../agents/types.js';
 
 export type SessionStatus = 'idle' | 'running' | 'waiting_approval' | 'interrupted' | 'closed';
-export type AgentKind = 'claude' | 'kiro';
 
 export interface ProjectRow {
   id: number;
@@ -17,7 +24,7 @@ export interface ProjectRow {
 export interface SessionRow {
   id: string;
   label: string;
-  agent: AgentKind;
+  agent: import('../agents/types.js').AgentKind;
   project_id: number | null;
   chat_id: number;
   sdk_session_id: string | null;
@@ -32,6 +39,13 @@ export interface SessionRow {
    * handoff context. See commands/index.ts plain-text handler.
    */
   handoff_context: string | null;
+  /**
+   * Phase B (v1.1): per-session verbosity override. `null` → fall back to the
+   * chat default (`chat_settings.default_mode`) and then `summary`. Set via
+   * `/mode <name>`. Stored as raw TEXT — coerced to {@link VerbosityMode} by
+   * {@link SessionStore.getSessionMode}.
+   */
+  verbosity_mode: string | null;
 }
 
 export interface ToolLogRow {
@@ -75,6 +89,13 @@ export class SessionStore {
     if (!colNames.has('handoff_context')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN handoff_context TEXT`);
     }
+    // Phase B (v1.1) — per-session verbosity override. Nullable so existing
+    // rows (created pre-v1.1) keep falling back to the chat default + the
+    // baked-in 'summary'. Idempotent: schema.sql adds the column for fresh
+    // installs, ALTER below adds it for upgrades.
+    if (!colNames.has('verbosity_mode')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN verbosity_mode TEXT`);
+    }
   }
 
   // ---------- Projects ----------
@@ -101,7 +122,7 @@ export class SessionStore {
   }
 
   // ---------- Sessions ----------
-  createSession(row: Omit<SessionRow, 'created_at' | 'updated_at' | 'transcript_tail' | 'last_message' | 'handoff_context'> & {
+  createSession(row: Omit<SessionRow, 'created_at' | 'updated_at' | 'transcript_tail' | 'last_message' | 'handoff_context' | 'verbosity_mode'> & {
     transcript_tail?: string;
     last_message?: string | null;
   }): SessionRow {
@@ -140,7 +161,7 @@ export class SessionStore {
       : `SELECT * FROM sessions WHERE chat_id = ? AND status != 'closed' ORDER BY updated_at DESC`;
     return this.db.prepare(sql).all(chatId) as SessionRow[];
   }
-  updateSession(id: string, patch: Partial<Pick<SessionRow, 'status' | 'sdk_session_id' | 'last_message' | 'transcript_tail' | 'label' | 'project_id' | 'handoff_context'>>): void {
+  updateSession(id: string, patch: Partial<Pick<SessionRow, 'status' | 'sdk_session_id' | 'last_message' | 'transcript_tail' | 'label' | 'project_id' | 'handoff_context' | 'verbosity_mode'>>): void {
     const fields: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) {
@@ -225,6 +246,76 @@ export class SessionStore {
       .prepare(`SELECT active_session_id, active_project_id FROM chat_state WHERE chat_id = ?`)
       .get(chatId) as { active_session_id: string | null; active_project_id: number | null } | undefined;
     return row ?? { active_session_id: null, active_project_id: null };
+  }
+
+  // ---------- Verbosity (Phase B / plan §B.2) ----------
+  /**
+   * Return the per-session verbosity override, or `null` when none was set
+   * (caller should then fall back to {@link getChatDefaultMode}).
+   *
+   * Returns `null` for malformed values too (defensive — protects against a
+   * future TEXT value that doesn't match any known mode, e.g. someone hand-
+   * edited the DB). The resolver in `verbosity.ts` will then fall through to
+   * the chat default → baked-in default.
+   */
+  getSessionMode(sessionId: string): VerbosityMode | null {
+    const row = this.db
+      .prepare(`SELECT verbosity_mode FROM sessions WHERE id = ?`)
+      .get(sessionId) as { verbosity_mode: string | null } | undefined;
+    if (!row || row.verbosity_mode == null) return null;
+    return isVerbosityMode(row.verbosity_mode) ? row.verbosity_mode : null;
+  }
+
+  /**
+   * Persist a per-session override. Reuses the existing `updateSession`
+   * path so the `updated_at` bookkeeping stays consistent with other writes.
+   */
+  setSessionMode(sessionId: string, mode: VerbosityMode): void {
+    this.updateSession(sessionId, { verbosity_mode: mode });
+  }
+
+  /**
+   * Return the per-chat default mode, or {@link DEFAULT_VERBOSITY_MODE}
+   * (which is `'summary'`) when the chat has no row yet. The fall-back is
+   * applied here so callers can treat the return as non-null.
+   *
+   * NOTE: this method is purely a read — it does NOT auto-insert a default
+   * row. The migration-message bookkeeping (plan §B.5) relies on the absence
+   * of a chat_settings row as the "first boot of v1.1 for this chat" marker;
+   * auto-inserting here would defeat that.
+   */
+  getChatDefaultMode(chatId: number): VerbosityMode {
+    const row = this.db
+      .prepare(`SELECT default_mode FROM chat_settings WHERE chat_id = ?`)
+      .get(chatId) as { default_mode: string | null } | undefined;
+    if (!row || row.default_mode == null) return 'summary';
+    return isVerbosityMode(row.default_mode) ? row.default_mode : 'summary';
+  }
+
+  /**
+   * Idempotent upsert for the chat default. Used by `/settings mode <name>`
+   * and by the migration-message handler in `src/index.ts` to mark a chat as
+   * "v1.1 announcement already shown".
+   */
+  setChatDefaultMode(chatId: number, mode: VerbosityMode): void {
+    this.db
+      .prepare(
+        `INSERT INTO chat_settings (chat_id, default_mode) VALUES (?, ?)
+         ON CONFLICT(chat_id) DO UPDATE SET default_mode = excluded.default_mode`,
+      )
+      .run(chatId, mode);
+  }
+
+  /**
+   * Returns `true` when the chat has NO chat_settings row yet — used by the
+   * v1.1 migration announcement (plan §B.5) to decide whether to send the
+   * one-shot "mode default is now Summary" message.
+   */
+  chatSettingsExists(chatId: number): boolean {
+    const row = this.db
+      .prepare(`SELECT 1 AS one FROM chat_settings WHERE chat_id = ?`)
+      .get(chatId) as { one: number } | undefined;
+    return row != null;
   }
 
   close(): void {

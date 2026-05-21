@@ -4,6 +4,8 @@ import type { Conversation } from '@grammyjs/conversations';
 import type { SessionStore } from '../../session/store.js';
 import type { SessionManager } from '../../session/manager.js';
 import type { AgentKind, SessionRow } from '../../session/store.js';
+import type { AdapterMetadata } from '../../agents/types.js';
+import type { AgentRegistry } from '../../agents/registry.js';
 import { buildPersistentKeyboard } from '../reply-builders.js';
 import { logger } from '../../util/logger.js';
 
@@ -19,6 +21,12 @@ import { logger } from '../../util/logger.js';
 export interface WizardDeps {
   store: SessionStore;
   manager: SessionManager;
+  /**
+   * Adapter registry — plan P1.1. Wizard reads `registry.list()` to render
+   * the agent picker dynamically; built-in adapters AND any future plugin
+   * register at boot and surface here without a wizard-side edit.
+   */
+  registry: AgentRegistry;
 }
 
 /** Projects per page in the picker step. Plan §5.1 step 3 calls for paginate-if->8. */
@@ -26,10 +34,14 @@ export const PROJECTS_PER_PAGE = 8;
 
 const LABEL_PATTERN = /^[a-zA-Z0-9_-]{1,40}$/;
 
-const AGENT_LABEL: Record<AgentKind, string> = {
-  claude: 'Claude',
-  kiro: 'Kiro',
-};
+/**
+ * Look up the user-facing label for an agent kind. Falls back to the kind
+ * string itself if the adapter is no longer registered (defensive — should
+ * never happen because we only show registered kinds in the picker).
+ */
+function labelFor(meta: ReadonlyArray<AdapterMetadata>, kind: AgentKind): string {
+  return meta.find((m) => m.kind === kind)?.displayName ?? kind;
+}
 
 /**
  * Light shape we only need from grammY's CallbackQueryContext. Lets us mock
@@ -47,17 +59,30 @@ type CbCtx = {
 };
 
 /**
- * Render the agent-picker keyboard. Single row of agent buttons +
- * a Cancel row. Callback data is namespaced under `wizard:new-*` so the
- * default CallbackRouter ignores them — they are consumed inside the
- * conversation via `waitFor('callback_query:data')`.
+ * Render the agent-picker keyboard. Dynamic — one button per registered
+ * adapter (plan P1.1) plus a Cancel row. Callback data is namespaced under
+ * `wizard:new-*` so the default CallbackRouter ignores them — they are
+ * consumed inside the conversation via `waitFor('callback_query:data')`.
+ *
+ * Layout: up to 3 adapters per row (so 2-6 adapters fit on two rows on
+ * mobile) followed by the Cancel row.
+ *
+ * Exported for tests.
  */
-function agentKeyboard(): InlineKeyboard {
-  return new InlineKeyboard()
-    .text('🤖 Claude', 'wizard:new-agent:claude')
-    .text('⚡ Kiro', 'wizard:new-agent:kiro')
-    .row()
-    .text('✖ Cancel', 'wizard:new-cancel');
+export function agentKeyboard(metadata: ReadonlyArray<AdapterMetadata>): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  let perRow = 0;
+  for (const m of metadata) {
+    kb.text(`${m.badge} ${m.displayName}`, `wizard:new-agent:${m.kind}`);
+    perRow++;
+    if (perRow >= 3) {
+      kb.row();
+      perRow = 0;
+    }
+  }
+  if (perRow > 0) kb.row();
+  kb.text('✖ Cancel', 'wizard:new-cancel');
+  return kb;
 }
 
 /**
@@ -96,11 +121,22 @@ function projectKeyboard(
   return { kb, totalPages, slice };
 }
 
-/** Trailing inline buttons on the success message — placeholder for T3 work. */
-function successKeyboard(): InlineKeyboard {
+/**
+ * Trailing inline buttons rendered on the wizard's "session created" message.
+ *
+ * Plan P0.2: the [📋 Tail logs] callback used to be the bare opaque key
+ * `session:logs-trigger` (no payload) which left the router unable to know
+ * WHICH session's logs the user wanted. We now embed the just-created session
+ * id so the router can dispatch the equivalent of `/status logs 30` for that
+ * specific session — even after the user has switched away.
+ *
+ * The [🔀 Switch khác] button intentionally carries NO payload; it always
+ * renders the chat's full session list (plan P0.1).
+ */
+export function successKeyboard(sessionId: string): InlineKeyboard {
   return new InlineKeyboard()
     .text('🔀 Switch khác', 'session:list-trigger')
-    .text('📋 Tail logs', 'session:logs-trigger');
+    .text('📋 Tail logs', `session:logs-trigger:${sessionId}`);
 }
 
 /** Acknowledge the callback so Telegram clears the spinner. Swallows errors. */
@@ -143,8 +179,20 @@ export async function newSession(
     return;
   }
 
-  // ---- Step 1: agent ----
-  await ctx.reply('Tạo session mới — chọn agent:', { reply_markup: agentKeyboard() });
+  // ---- Step 1: agent (plan P1.1 — picker dynamic from registry) ----
+  const adapterMetadata = deps.registry.list();
+  if (adapterMetadata.length === 0) {
+    // Defensive: should never happen at runtime (daemon registers built-ins
+    // at boot), but tests that construct a bare registry would surface here.
+    await ctx.reply('⚠️ Không có agent nào được đăng ký — kiểm tra config.');
+    return;
+  }
+  const validKinds = new Set(adapterMetadata.map((m) => m.kind));
+  const agentCbPrefix = 'wizard:new-agent:';
+
+  await ctx.reply('Tạo session mới — chọn agent:', {
+    reply_markup: agentKeyboard(adapterMetadata),
+  });
 
   let agent: AgentKind | null = null;
   while (!agent) {
@@ -155,16 +203,16 @@ export async function newSession(
       await cbCtx.editMessageText('❌ Wizard hủy');
       return;
     }
-    if (data === 'wizard:new-agent:claude') {
-      agent = 'claude';
-    } else if (data === 'wizard:new-agent:kiro') {
-      agent = 'kiro';
-    } else {
-      // Stray button (e.g. user tapped pagination on a stale screen). Ack
-      // and keep waiting on this same step rather than crash.
-      await safeAck(cbCtx);
-      continue;
+    if (data.startsWith(agentCbPrefix)) {
+      const kind = data.slice(agentCbPrefix.length);
+      if (validKinds.has(kind)) {
+        agent = kind;
+        await safeAck(cbCtx);
+        continue;
+      }
     }
+    // Stray button (e.g. user tapped pagination on a stale screen). Ack
+    // and keep waiting on this same step rather than crash.
     await safeAck(cbCtx);
   }
 
@@ -195,7 +243,7 @@ export async function newSession(
   // Build the first project payload using ctx.reply so non-cb resume paths
   // (rare) still surface UI; subsequent paints reuse cb ctx editMessageText.
   await ctx.reply(
-    `Agent: ${AGENT_LABEL[agent]} ✓\nChọn project:`,
+    `Agent: ${labelFor(adapterMetadata, agent)} ✓\nChọn project:`,
     { reply_markup: projectKeyboard(projects, page).kb },
   );
 
@@ -227,7 +275,7 @@ export async function newSession(
       await safeAck(cbCtx);
       try {
         await cbCtx.editMessageText(
-          `Agent: ${AGENT_LABEL[agent]} ✓\nChọn project:`,
+          `Agent: ${labelFor(adapterMetadata, agent)} ✓\nChọn project:`,
           { reply_markup: projectKeyboard(projects, page).kb },
         );
       } catch (err) {
@@ -254,7 +302,7 @@ export async function newSession(
 
   // ---- Step 3: label ----
   await ctx.reply(
-    `Agent: ${AGENT_LABEL[agent]}, Project: ${project.name} ✓\n` +
+    `Agent: ${labelFor(adapterMetadata, agent)}, Project: ${project.name} ✓\n` +
       `Nhập label cho session (vd: refactor-auth):\n` +
       `(gõ /cancel để hủy)`,
   );
@@ -318,9 +366,9 @@ export async function newSession(
 
   await ctx.reply(
     `✓ Session [${created.label}] tạo OK\n` +
-      `Agent: ${AGENT_LABEL[finalAgent]} · Project: ${project.name}\n` +
+      `Agent: ${labelFor(adapterMetadata, finalAgent)} · Project: ${project.name}\n` +
       `Gõ prompt để bắt đầu`,
-    { reply_markup: successKeyboard() },
+    { reply_markup: successKeyboard(created.id) },
   );
 
   // Restore the 6-button persistent reply keyboard (plan §4.2 "khôi phục sau

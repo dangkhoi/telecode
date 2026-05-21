@@ -25,11 +25,11 @@ describe('console scrub', () => {
 
   it('redacts Telegram bot token in error URLs (the grammy leak shape)', () => {
     captured = '';
-    // Shape stolen verbatim from a real stderr.log leak.
+    // Shape mirrors a real grammY stderr leak; token below is a synthetic fixture.
     const leak =
-      "FetchError: request to https://api.telegram.org/bot8822552947:AAHvFVSv4t-NZwrH18yDaR0UqxZj1Qzr6xg/getUpdates failed";
+      "FetchError: request to https://api.telegram.org/bot1234567890:AABBccDDeeFFggHHiiJJkkLLmmNNooPPqqRR/getUpdates failed";
     process.stderr.write(leak + '\n');
-    expect(captured).not.toContain('AAHvFVSv4t-NZwrH18yDaR0UqxZj1Qzr6xg');
+    expect(captured).not.toContain('AABBccDDeeFFggHHiiJJkkLLmmNNooPPqqRR');
     expect(captured).toContain('[REDACTED-TG]');
   });
 

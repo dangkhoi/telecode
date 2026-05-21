@@ -1,0 +1,1608 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SDD — Telecode v1.1 · Streaming UX redesign</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --warn: #b25000; --danger: #c8102e;
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --warn: #ff9f0a; --danger: #ff453a;
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 80px 32px 120px; }
+  header.hero { margin-bottom: 64px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 44px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 21px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 700px; }
+  h2 { font-size: 30px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 72px 0 8px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 40px 0 12px; }
+  h4 { font-size: 15px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 32px 0 12px; }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 24px; }
+  li { margin-bottom: 8px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13.5px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px 32px; margin-bottom: 20px; box-shadow: var(--shadow); }
+  .card h3 { margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 24px; font-size: 15px; }
+  th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: rgba(28,124,84,0.12); color: var(--success); }
+  .badge-warn { background: rgba(178,80,0,0.12); color: var(--warn); }
+  .badge-danger { background: rgba(200,16,46,0.1); color: var(--danger); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 10px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  hr { border: none; height: 1px; background: var(--border); margin: 64px 0; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px; }
+  .compare .col h5 { margin: 0 0 12px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after  { border-left: 3px solid var(--success); }
+  .compare .col pre { background: var(--surface-alt); margin: 0; }
+  @media (max-width: 720px) {
+    .wrap { padding: 48px 20px 80px; }
+    h1 { font-size: 34px; } .lede { font-size: 18px; } h2 { font-size: 24px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">SDD &middot; Telecode v1.1</div>
+  <h1>Streaming UX redesign &mdash; Design</h1>
+  <p class="lede">Companion to <code>docs/plans/telecode-v1.1-streaming-ux-redesign.html</code>. One section per phase, written in parallel with code. Phase A (bug fixes + quick wins) ships in this draft.</p>
+</header>
+
+<h2 id="phase-a">Phase A &mdash; Bug fixes + quick wins</h2>
+
+<h3 id="phase-a-context">Context</h3>
+<p>The v1.0 streaming pipeline forwards adapter <code>AgentEvent</code>s to the Telegram dispatcher inside <code>src/bot/commands/index.ts</code>. The dispatcher routes per-event:</p>
+<ul>
+  <li><code>text</code> &rarr; <code>notifier.appendStream(key, chunk, { silent: true })</code> with 3-second debounce + edit-message rotation.</li>
+  <li><code>tool_use</code> &rarr; one <code>sendPlain</code> per event, with the raw input JSON pasted into the message and a follow-up suggestion keyboard attached immediately.</li>
+  <li><code>error</code>, <code>done</code> &rarr; live + push notification, drain any background buffer first.</li>
+  <li><code>tool_result</code>, <code>status</code>, <code>session</code> &rarr; <em>silently ignored</em> (no dispatch branch).</li>
+</ul>
+<p>Plan §1 (Bugs &amp; pain points) flagged two real defects + three friendly-render gaps that don&rsquo;t need the bigger Phase B mode system to fix. Phase A ships those without touching dispatch architecture, so it can land independently and remains 100% backward-compatible (verbose users see the same rate of events; only the rendering differs).</p>
+
+<h4>Visual delta &mdash; before / after</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>v1.0 firehose</h5>
+    <pre>[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/notifier.ts"}
+[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/notifier.ts"}   ← duplicate
+[refactor-auth] 🔧 Bash — {"command":"npm test"}
+(tool_result silently dropped)
+[refactor-auth] ✅ done · $0.023</pre>
+  </div>
+  <div class="col after">
+    <h5>Phase A</h5>
+    <pre>[refactor-auth] 🔧 Read · notifier.ts
+    ✅ Read ok
+    [▶️ Tiếp tục]                              ← suggestion deferred to result
+[refactor-auth] 🔧 Bash · npm test
+    ✅ Bash ok
+    PASS tests/foo.test.ts
+    [▶️ Tiếp tục] [🔁 Run again]
+[refactor-auth] ✅ done · $0.023</pre>
+  </div>
+</div>
+
+<h3 id="phase-a-freshness">Tech Freshness &mdash; Phase A</h3>
+<p>Dependencies verified via Context7 (<code>resolve-library-id</code> + <code>query-docs</code>) before implementation. No new dependencies introduced.</p>
+
+<table>
+  <thead>
+    <tr><th>Library</th><th>Version in repo</th><th>Latest stable</th><th>Status</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>grammy</code> (<code>/websites/grammy_dev</code>)</td>
+      <td>1.40.x</td>
+      <td>1.40.x</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Verified <code>editMessageText</code> + <code>editMessageReplyMarkup</code> signatures via Context7. Both accept <code>(chat_id, message_id, [text,] other?, signal?)</code> and tolerate the &ldquo;message is not modified&rdquo; 400 path that Notifier already swallows. No rate limit beyond Telegram&rsquo;s default 30 edits/min/chat &mdash; Notifier&rsquo;s token bucket (1 token/sec, burst 3) stays well under.</td>
+    </tr>
+    <tr>
+      <td><code>@anthropic-ai/claude-agent-sdk</code></td>
+      <td>0.x</td>
+      <td>0.x</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>No SDK API touched. A.1 removes one <code>onEvent</code> emit inside our adapter; <code>canUseTool</code> + <code>HookCallbackMatcher</code> shapes unchanged. The dedup test stubs the SDK module to verify the callback wiring without booting it.</td>
+    </tr>
+    <tr>
+      <td><code>vitest</code></td>
+      <td>4.1.7</td>
+      <td>4.1.7</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Used for the 47 new test cases. <code>vi.useFakeTimers()</code> + <code>vi.advanceTimersByTimeAsync()</code> drive the 2-second defer fallback test in <code>tool-result-dispatch.test.ts</code>.</td>
+    </tr>
+    <tr>
+      <td><code>node:path</code> / <code>node:os</code></td>
+      <td>built-in</td>
+      <td>built-in</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Cross-platform path collapsing in <code>tool-render.ts</code> relies on <code>path.isAbsolute</code>, <code>path.relative</code>, <code>path.sep</code> and <code>os.homedir()</code> &mdash; all stable Node APIs available since v0.x. No hardcoded <code>/</code> anywhere in the helper.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="phase-a-scope">Scope Checklist &mdash; Phase A</h3>
+<ul class="checklist">
+  <li class="done"><strong>A.1</strong> &mdash; Fix duplicate Claude <code>tool_use</code>. Drop emit from <code>canUseTool</code>; only <code>PreToolUse</code> hook announces. New test <code>claude-tool-use-dedup.test.ts</code> &times; 1 stubs the SDK and asserts exactly one event reaches notifier when both callbacks fire.</li>
+  <li class="done"><strong>A.2</strong> &mdash; Surface <code>tool_result</code> events (Codex + Cursor adapters already emit; v1.0 dispatcher silently dropped). New dispatch branch renders ✅/❌ + preview, merges into the existing <code>tool_use</code> message via <code>editMessageText</code>. Tests <code>tool-result-dispatch.test.ts</code> &times; 7.</li>
+  <li class="done"><strong>A.3</strong> &mdash; Strip ANSI for Codex <code>command/exec/outputDelta</code>. Helper extracted from <code>kiro.ts</code> to <code>src/util/ansi.ts</code> + applied in both adapters. Tests <code>ansi.test.ts</code> &times; 6 cover SGR, cursor-show/hide, multi-line, idempotence, 256-colour palette.</li>
+  <li class="done"><strong>A.4</strong> &mdash; Friendly tool render. New <code>src/bot/tool-render.ts</code> with <code>renderToolUse()</code> + <code>collapsePath()</code>. Covers Read/Edit/Bash/Grep/Glob/Write/WebFetch/WebSearch + multi-adapter aliases (codex.exec, fs_read, fs_write). Tests <code>tool-render.test.ts</code> &times; 21 cover happy paths, fallback, path collapsing (cwd/home/length guard).</li>
+  <li class="done"><strong>A.5</strong> &mdash; Suggestion keyboard suppression. New <code>src/bot/pending-tools.ts</code> queue defers the keyboard until <code>tool_result</code> arrives (or a 2-second fallback fires for adapters that never emit one &mdash; Claude). Tests <code>pending-tools.test.ts</code> &times; 6 + behaviour test in <code>tool-result-dispatch.test.ts</code>.</li>
+</ul>
+
+<hr/>
+
+<h2 id="a-1">A.1 &mdash; Claude tool_use de-duplication</h2>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>v1.0 <code>src/agents/claude.ts</code> emitted <code>{type: 'tool_use'}</code> from two places:</p>
+  <ul>
+    <li><code>canUseTool</code> callback at line 55 &mdash; fired by the SDK&rsquo;s policy gate.</li>
+    <li><code>PreToolUse</code> hook at line 108 &mdash; fired after the SDK approves and is about to invoke the tool.</li>
+  </ul>
+  <p>For every Claude tool call, Telegram saw two announcements. The Codex + Cursor adapters never had this bug because they emit from a single point.</p>
+</div>
+
+<div class="card">
+  <h3>Decision</h3>
+  <p>Drop the <code>canUseTool</code> emit. <code>canUseTool</code> is a policy gate (<em>approve/deny</em>) and should not announce; the <code>PreToolUse</code> hook fires <em>after</em> the policy decision and is the correct moment for user-facing notification. This is the lighter-touch fix &mdash; removing the line preserves the SDK&rsquo;s contract (the hook is the SDK&rsquo;s canonical pre-call surface).</p>
+  <p>Side effects preserved: policy bookkeeping (<code>store.logTool</code>, <code>store.updateSession</code>) still runs inside <code>canUseTool</code>. Only the user-facing emit is removed.</p>
+</div>
+
+<div class="card">
+  <h3>File Changes</h3>
+  <ul>
+    <li><code>src/agents/claude.ts</code> &mdash; remove <code>start.onEvent({ type: 'tool_use', ... })</code> from the <code>decision === 'allow'</code> branch of <code>canUseTool</code> (former line 55). Replace with a comment that explains why this point is intentionally silent.</li>
+    <li><code>tests/claude-tool-use-dedup.test.ts</code> &mdash; new. Mocks <code>@anthropic-ai/claude-agent-sdk.query</code> to capture both the <code>canUseTool</code> and the <code>PreToolUse</code> hook the adapter wires, then invokes both for a single tool call and asserts the adapter emits exactly one <code>tool_use</code> event.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul>
+    <li>Unit: <code>claude-tool-use-dedup.test.ts &times; 1</code> passes.</li>
+    <li>Full suite: 482/2 skipped (was 435/2 + 47 new).</li>
+    <li>Manual smoke (deferred to Phase A ship): run a real Claude session, fire a Read tool, observe a single <code>🔧 Read &middot; ...</code> message in Telegram.</li>
+  </ul>
+</div>
+
+<h2 id="a-2">A.2 &mdash; Surface tool_result events</h2>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>The <code>AgentEvent</code> union already includes <code>{type: 'tool_result'; tool: string; ok: boolean; preview?: string}</code>. Codex (<code>codex.ts:435-451</code>) and Cursor (<code>cursor.ts:483-507</code>) emit them when commands complete. The dispatcher branch in <code>commands/index.ts</code> only handled <code>text | tool_use | error | done | session</code> &mdash; tool_result fell through silently. Result: user never saw whether a Bash command succeeded or what its exit was.</p>
+</div>
+
+<div class="card">
+  <h3>Decision</h3>
+  <ul>
+    <li>Add a <code>tool_result</code> branch in dispatch. Render line: <code>{icon} {tool} {label}{preview}</code> where <code>icon</code> is ✅ for <code>ok</code>, ❌ for failure, and <code>preview</code> (already 240-char-bounded by the adapter) is folded into the next line.</li>
+    <li>Correlate with a previously-emitted <code>tool_use</code> via the per-dispatch <code>PendingTools</code> queue (A.5). On match: edit the original message in place via <code>editMessageText</code>, merging use + result into one block. This halves Telegram message count and visually pairs the cause with the effect.</li>
+    <li>Orphan tool_result (no matching pending entry &mdash; e.g. tool_use never reached us, or A.5 defer already fired): send a fresh <code>sendPlain</code> so the outcome is still surfaced. Never silently drop.</li>
+    <li>Background sessions: buffer the result line (<code>type: 'tool_use'</code>) so catch-up still shows it when the user switches in.</li>
+    <li><em>No mode filter yet</em> &mdash; that lives in Phase B. Phase A renders every result.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File Changes</h3>
+  <ul>
+    <li><code>src/bot/commands/index.ts</code> &mdash; new <code>else if (e.type === 'tool_result')</code> branch under the dispatch <code>onEvent</code>. Active path edits via <code>notifier.editPlain</code>; orphan path falls back to <code>sendPlain</code>; background path appends to the per-session output buffer.</li>
+    <li><code>src/bot/notifier.ts</code> &mdash; new <code>editPlain(messageId, text, extra?)</code> + <code>editReplyMarkup(messageId, markup?)</code> methods. Both wrap the corresponding <code>bot.api.editMessage*</code> with the token bucket + the same &ldquo;message is not modified&rdquo; tolerance pattern used by the streaming flush path.</li>
+    <li><code>tests/tool-result-dispatch.test.ts</code> &mdash; 7 cases (orphan, merge happy path, ok=false, background buffered, defer fallback, done clears tracker, deferred suggestion attaches).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul>
+    <li>Unit: <code>tool-result-dispatch.test.ts &times; 7</code> passes.</li>
+    <li>The <code>AgentEvent</code> type union was sufficient as-is; no extension required. Adapter shape <code>{ type: 'tool_result'; tool; ok; preview? }</code> matches both Codex and Cursor emitters &mdash; verified by reading the adapter sources before implementing the dispatch branch.</li>
+  </ul>
+</div>
+
+<h2 id="a-3">A.3 &mdash; Strip ANSI for Codex bash output</h2>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>Codex emits <code>command/exec/outputDelta</code> notifications carrying base64-encoded stdout/stderr from the user&rsquo;s shell command. v1.0 base64-decoded the delta and forwarded the raw bytes as a <code>text</code> event &mdash; ANSI escape codes (colours from <code>cargo</code>/<code>pytest</code>/<code>npm</code>, spinner show/hide from <code>ora</code>) survived into Telegram as <code>\x1b[31mfailed\x1b[0m</code> garbage.</p>
+  <p>The Kiro adapter (<code>kiro.ts</code>) already had a <code>stripAnsi</code> helper that worked correctly. The fix is to share that helper.</p>
+</div>
+
+<div class="card">
+  <h3>Decision</h3>
+  <ul>
+    <li>Extract <code>stripAnsi</code> into a new pure module <code>src/util/ansi.ts</code> with both regex patterns (SGR + cursor show/hide) exposed via <code>_internals</code> for tests.</li>
+    <li>Kiro imports the shared helper (behaviour unchanged).</li>
+    <li>Codex&rsquo;s <code>command/exec/outputDelta</code> handler applies <code>stripAnsi</code> after base64 decode, before emitting the <code>text</code> event.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File Changes</h3>
+  <ul>
+    <li><code>src/util/ansi.ts</code> &mdash; new. <code>stripAnsi(s: string): string</code> + <code>_internals</code> with the underlying regexes. Heavily commented so future contributors know it&rsquo;s not exhaustive (no OSC/DCS support &mdash; add when needed).</li>
+    <li><code>src/agents/kiro.ts</code> &mdash; replace inline <code>ANSI_RE</code> + <code>CURSOR_HIDE_SHOW_RE</code> + local <code>stripAnsi</code> with <code>import { stripAnsi } from '../util/ansi.js'</code>. Behaviour identical (same regex source).</li>
+    <li><code>src/agents/codex.ts</code> &mdash; import <code>stripAnsi</code> + apply inside <code>command/exec/outputDelta</code> handler.</li>
+    <li><code>tests/ansi.test.ts</code> &mdash; 6 snapshot cases.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul>
+    <li>Unit: <code>ansi.test.ts &times; 6</code> passes.</li>
+    <li>Kiro behaviour preserved: existing <code>kiro.test.ts</code> (which inlines the same helper for its own assertions) continues to pass &mdash; we did not migrate that file&rsquo;s internal copy because the test asserts the regex behaviour directly, not the import path.</li>
+  </ul>
+</div>
+
+<h2 id="a-4">A.4 &mdash; Friendly tool render</h2>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>v1.0 dispatch rendered tool calls as <code>🔧 {tool} &mdash; {JSON.stringify(input).slice(0,200)}</code>. Result on Telegram:</p>
+  <pre><code>🔧 Read &mdash; {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/notifier.ts"}</code></pre>
+  <p>Plan §1.2 #2-3 flagged this as a top pain point: raw JSON noise + absolute paths that don&rsquo;t collapse to a phone-readable form.</p>
+</div>
+
+<div class="card">
+  <h3>Decision</h3>
+  <ul>
+    <li>New pure module <code>src/bot/tool-render.ts</code> exports two functions:
+      <ul>
+        <li><code>renderToolUse(toolName, input, ctx?)</code> &mdash; per-tool friendly line (<code>Read &middot; basename</code>, <code>Bash &middot; cmd[80]</code>, <code>Grep "pat" in path</code>, <code>Glob pattern</code>, <code>Write &middot; basename (size)</code>, etc.). Multi-adapter aliases (Claude/Cursor PascalCase + Kiro/Codex snake/dotted forms) all collapse to one rendering.</li>
+        <li><code>collapsePath(absPath, projectCwd?)</code> &mdash; three-step collapse: project cwd &rarr; <code>./relative</code>, else home &rarr; <code>~/relative</code>, else absolute. Length guard at 50 chars falls back to <code>&hellip;/&lt;last-2-segments&gt;</code>.</li>
+      </ul>
+    </li>
+    <li>Cross-platform: uses <code>node:path</code> + <code>os.homedir()</code>, no hardcoded <code>/</code>. Tests cover Linux/macOS absolute paths; Windows drive-letter is supported via the same <code>path.isAbsolute</code> / <code>path.relative</code> path (no platform fork inside the helper).</li>
+    <li>Dispatch wires it: tool_use branch composes <code>🔧 {renderToolUse(...)}</code> instead of the raw-JSON slice. Suggestion keyboard moved to A.5 (deferred to tool_result).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File Changes</h3>
+  <ul>
+    <li><code>src/bot/tool-render.ts</code> &mdash; new. ~210 LoC with heavy commentary on heuristics + the path-collapsing length guard.</li>
+    <li><code>src/bot/commands/index.ts</code> &mdash; <code>import { renderToolUse }</code>; tool_use branch composes <code>line</code> via the helper, passing the session&rsquo;s project cwd as <code>projectCwd</code> for relative collapsing.</li>
+    <li><code>tests/tool-render.test.ts</code> &mdash; 21 cases covering per-tool, multi-adapter aliases, fallback, all path-collapsing rules.</li>
+    <li><code>tests/session-gating.test.ts</code> &mdash; updated 2 assertions that asserted the v1.0 raw-JSON shape (<code>/^\[A\] 🔧 Bash &mdash; /</code>) to match the v1.1 friendly shape (<code>/^\[A\] 🔧 Bash &middot; /</code>).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul>
+    <li>Unit: <code>tool-render.test.ts &times; 21</code> passes.</li>
+    <li>Integration: dispatch composes the friendly line correctly, verified in <code>tool-result-dispatch.test.ts</code> (asserts <code>"🔧 Bash · ls"</code> appears in merged messages).</li>
+  </ul>
+</div>
+
+<h2 id="a-5">A.5 &mdash; Suggestion keyboard suppression</h2>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>v1.0 attached the follow-up suggestion keyboard (<code>[▶️ Tiếp tục] [🔁 Run again] [↩️ Rollback]</code>) at the moment <code>tool_use</code> fired &mdash; before the user could possibly know whether the call succeeded. The buttons looked premature ("Continue&hellip; from a failed thing? Run-again before knowing it ran?"). With A.2 now surfacing <code>tool_result</code>, the keyboard belongs on the result, not the use.</p>
+</div>
+
+<div class="card">
+  <h3>Decision</h3>
+  <ul>
+    <li>New helper module <code>src/bot/pending-tools.ts</code> &mdash; per-dispatch queue of pending tool_use messages, keyed by tool name (LIFO match because no adapter threads a stable call-id end-to-end).</li>
+    <li>Dispatch tool_use: send the message WITHOUT a reply_markup, register a pending entry, start a 2-second defer timer.</li>
+    <li>Dispatch tool_result: <code>resolve(toolName)</code>, cancel the timer, edit the original message in place adding both the result line and the suggestion keyboard (one round trip via <code>editMessageText</code> with <code>reply_markup</code>).</li>
+    <li>Adapters that never emit tool_result (currently Claude &mdash; deferred fix): the 2-second timer fires <code>onTimeout</code>, which retrofits the suggestion keyboard onto the original message via <code>editMessageReplyMarkup</code>. Preserves the v1.0 affordance exactly so the regression footprint is zero.</li>
+    <li><code>done</code> event clears the pending tracker &mdash; orphan defer timers can&rsquo;t fire after the dispatch window closed.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File Changes</h3>
+  <ul>
+    <li><code>src/bot/pending-tools.ts</code> &mdash; new. ~130 LoC pure helper. <code>add</code> / <code>resolve</code> / <code>clear</code> / <code>size</code> + <code>onTimeout</code> callback. No grammY/SDK imports &mdash; trivial to unit test.</li>
+    <li><code>src/bot/commands/index.ts</code> &mdash; instantiate one <code>PendingTools</code> per dispatch, wire into tool_use + tool_result + done branches.</li>
+    <li><code>src/bot/notifier.ts</code> &mdash; <code>editReplyMarkup</code> + <code>editPlain</code> helpers (also used by A.2).</li>
+    <li><code>tests/pending-tools.test.ts</code> &mdash; 6 cases (add, LIFO resolve, no match, defer fires, resolve cancels timer, clear, callback that throws).</li>
+    <li><code>tests/tool-result-dispatch.test.ts</code> &mdash; 7 cases incl. the &ldquo;2s defer fallback retrofits keyboard&rdquo; and &ldquo;done clears pending tracker&rdquo; scenarios.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Verification</h3>
+  <ul>
+    <li>Unit: <code>pending-tools.test.ts &times; 6</code> + relevant cases in <code>tool-result-dispatch.test.ts</code>.</li>
+    <li>Backward compat: any session whose adapter still doesn&rsquo;t emit tool_result (Claude) shows the keyboard after a 2-second delay &mdash; same behaviour as v1.0 from the user&rsquo;s perspective, just timing-shifted by 2s.</li>
+  </ul>
+</div>
+
+<hr/>
+
+<h2 id="phase-a-verification">Phase A &mdash; Verification</h2>
+
+<div class="card">
+  <h3>Test counts</h3>
+  <ul>
+    <li>Baseline (v1.0): <strong>435 passed / 2 skipped / 41 files</strong>.</li>
+    <li>Phase A: <strong>482 passed / 2 skipped / 46 files</strong>. Net +47 tests, +5 files.</li>
+    <li>New files: <code>ansi.test.ts</code> (6), <code>tool-render.test.ts</code> (21), <code>pending-tools.test.ts</code> (6), <code>claude-tool-use-dedup.test.ts</code> (1), <code>tool-result-dispatch.test.ts</code> (7). Two pre-existing assertions in <code>session-gating.test.ts</code> updated to the new friendly-render shape.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Backward compatibility</h3>
+  <ul>
+    <li>No config / DB / API changes. Existing sessions resume cleanly.</li>
+    <li>Adapters that haven&rsquo;t adopted tool_result (Claude) still emit suggestion keyboards via the 2-second defer fallback.</li>
+    <li>Adapters that already emit tool_result (Codex, Cursor) now show better UX (merged use+result block); no breakage.</li>
+    <li>The Notifier rate-limit token bucket already covers the new <code>editMessageText</code> + <code>editMessageReplyMarkup</code> traffic; Telegram&rsquo;s 30 edits/min/chat limit is comfortable headroom (worst case = 1 edit per tool call).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Manual smoke (recommended pre-ship)</h3>
+  <ul>
+    <li>Run a Claude session with a Read + Bash tool call &rarr; observe: single message per tool (no duplicate), friendly render, suggestion keyboard appears within 2-3s.</li>
+    <li>Run a Codex session that executes <code>npm test</code> &rarr; observe: ANSI-clean output (no <code>\x1b[31m</code> escapes), tool_result line shows ✅/❌.</li>
+    <li>Run a Cursor session with a Glob &rarr; observe: <code>🔧 Glob **/*.ts</code> + <code>✅ Glob ok</code> merged after result.</li>
+  </ul>
+</div>
+
+<hr/>
+
+<h2 id="phase-a-senior-review">Senior review Phase A &mdash; Opus 4.7 patches</h2>
+
+<p>Post-implementation review run (Opus 4.7) against the Phase A files. Plan §A.1&ndash;A.5 deliverables verified ✅ end-to-end (use → result merge, friendly render, ANSI strip, dedup, deferred suggestion). 3 actionable findings patched; 0 regressions; +7 new tests; tech-freshness OK.</p>
+
+<div class="card">
+  <h3>Findings + patches</h3>
+  <table>
+    <thead>
+      <tr><th>Severity</th><th>Finding</th><th>Patch</th><th>Files</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-warn">[P1]</span></td>
+        <td><strong>Race: tool_result before sendPlain resolves.</strong> v1.1 dispatch tool_use branch fires <code>void (async () =&gt; { msgId = await sendPlain(); pending.add(...) })()</code>, so a fast adapter that emits <code>tool_result</code> in the same tick (Cursor RPC stream, Codex sub-second exec) finds <code>pending.size === 0</code> on resolve → orphan-fallback path sends a SECOND message AND the original sendPlain later registers a pending entry whose 2s defer retrofits a stale suggestion keyboard onto a use-message that has no associated result. User sees three artefacts instead of one merged block.</td>
+        <td>Added <code>PendingTools.addPending(toolName, payload, sendPromise)</code> that enqueues SYNCHRONOUSLY with <code>messageId=null</code> and starts the defer timer only AFTER <code>sendPromise</code> resolves to a non-null id. Dispatch tool_use branch now calls <code>addPending</code> so a racing <code>tool_result</code> finds the entry, takes the merge branch, and awaits <code>entry.messageReady</code> before issuing <code>editPlain</code>. Send-failure (<code>id == null</code>) gracefully degrades to a fresh <code>sendPlain</code>. New tests: <em>race ordering</em>, <em>defer starts after send</em>, <em>send failure drops entry</em>, <em>send rejection normalised to null</em>.</td>
+        <td><code>src/bot/pending-tools.ts</code>, <code>src/bot/commands/index.ts</code>, <code>tests/pending-tools.test.ts</code>, <code>tests/tool-result-dispatch.test.ts</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-warn">[P1]</span></td>
+        <td><strong>Raw adapter id leaks into <code>✅</code> tool_result label.</strong> Use-message renders friendly (<code>🔧 Bash &middot; ls</code>) via <code>renderToolUse</code>, but result branch uses raw <code>e.tool</code> (<code>codex.exec</code>, <code>fs_write</code>) → user sees a mismatched <code>✅ codex.exec ok</code> directly under the friendly <code>🔧 Bash &middot;</code> line. Breaks the consistent vocabulary the friendly-render quick-win was designed to deliver.</td>
+        <td>Added <code>friendlyToolLabel(rawTool)</code> in <code>tool-render.ts</code> &mdash; maps <code>codex.exec | execute_bash | shell | Bash → Bash</code>, <code>fs_read | Read → Read</code>, <code>fs_write | NotebookEdit | Edit → Edit</code>, etc. Dispatch tool_result branch composes the friendly line via this helper. New test in <code>tool-result-dispatch.test.ts</code> asserts <em>codex.exec tool_result renders &ldquo;Bash&rdquo;</em>.</td>
+        <td><code>src/bot/tool-render.ts</code>, <code>src/bot/commands/index.ts</code>, <code>tests/tool-result-dispatch.test.ts</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-muted">[P2]</span></td>
+        <td><strong>Error event leaves defer timers alive.</strong> <code>done</code> branch correctly calls <code>pending.clear()</code> but <code>error</code> did not. If the adapter crashes mid-tool_use, the 2-second defer can retrofit a suggestion keyboard onto a use-message that already shows an unrelated <code>❌ &lt;error&gt;</code> below it.</td>
+        <td>Added <code>pending.clear()</code> to the error branch. New test <em>error event clears pending tracker</em> advances fake timers 5s after an error and asserts <code>editReplyMarkup</code> never fires.</td>
+        <td><code>src/bot/commands/index.ts</code>, <code>tests/tool-result-dispatch.test.ts</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-muted">[P2]</span></td>
+        <td><strong>onTimeout defensive guard.</strong> With the race-safe registration, <code>entry.messageId</code> can theoretically be null when <code>onTimeout</code> fires if a future code path schedules the timer before resolution. Belt &amp; braces.</td>
+        <td>Added an early <code>if (entry.messageId == null) return</code> guard inside the dispatch <code>onTimeout</code> callback. No behaviour change today; protects against future regressions.</td>
+        <td><code>src/bot/commands/index.ts</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Tech freshness re-verification</h3>
+  <ul>
+    <li><strong>grammy 1.43.0</strong> — Context7 confirms current. <code>editMessageText(chat_id, message_id, text, other?, signal?)</code> and <code>editMessageReplyMarkup(chat_id, message_id, other?, signal?)</code> signatures match Notifier&rsquo;s usage. Telegram&rsquo;s per-chat soft limit (~30 edits/min) sits comfortably above the token bucket&rsquo;s 60/min ceiling — no new contention introduced by the merge-edit flow.</li>
+    <li><strong>@anthropic-ai/claude-agent-sdk 0.3.145</strong> — no API touched in patches.</li>
+    <li><strong>vitest 4.1.7</strong> — used for the 7 new tests (<code>vi.useRealTimers</code> for the promise-microtask sequencing in <code>addPending</code> coverage).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Scope verdict</h3>
+  <ul class="checklist">
+    <li class="done"><strong>A.1</strong> &mdash; Claude tool_use dedup. Verified by test.</li>
+    <li class="done"><strong>A.2</strong> &mdash; tool_result dispatch + edit-in-place merge. Race + friendly-label patches applied.</li>
+    <li class="done"><strong>A.3</strong> &mdash; ANSI strip extracted + applied to Codex. Kiro behaviour preserved.</li>
+    <li class="done"><strong>A.4</strong> &mdash; Friendly tool render + path collapse. <code>friendlyToolLabel</code> added so result line matches use line.</li>
+    <li class="done"><strong>A.5</strong> &mdash; Suggestion deferral + 2s fallback. Race fix + error-path cleanup applied.</li>
+  </ul>
+  <p><strong>VERDICT: APPROVED.</strong> All Phase A acceptance criteria met. No scope gaps. Backward compat intact (489 passed / 2 skipped after patches; baseline pre-patch was 482).</p>
+</div>
+
+<div class="card">
+  <h3>Test counts after patches</h3>
+  <ul>
+    <li>Pre-review (Phase A as shipped): 482 passed / 2 skipped / 46 files.</li>
+    <li>Post-review: <strong>489 passed / 2 skipped / 46 files</strong> (+7 tests, no files added). Breakdown: <code>pending-tools.test.ts</code> 7 → 11 (race-safe addPending coverage); <code>tool-result-dispatch.test.ts</code> 7 → 10 (race scenario, friendly label, error-clears-pending).</li>
+    <li>Existing 482 tests unchanged ✅.</li>
+  </ul>
+</div>
+
+<p style="color: var(--text-faint); font-size: 14px;">SDD v1.1 &middot; 2026-05-21 &middot; Phase A shipped + senior review patches applied</p>
+
+<hr/>
+
+<!-- ====================================================================== -->
+<h2 id="phase-b">Phase B &mdash; Mode system</h2>
+
+<h3 id="phase-b-context">Context</h3>
+<p>v1.0 streamed every adapter <code>AgentEvent</code> to Telegram with no mode awareness &mdash; great for debugging on desktop, noisy on phones. Plan §2.1 split the user base into four personas with very different signal/noise needs:</p>
+<table>
+  <thead><tr><th>Persona</th><th>Bucket</th><th>Needs to see</th></tr></thead>
+  <tbody>
+    <tr><td>On-the-go (phone, glance)</td><td>~50%</td><td>approval + done + errors only</td></tr>
+    <tr><td>Casual monitor (phone, parallel)</td><td>~30%</td><td>+ tool calls + results compact</td></tr>
+    <tr><td>Focused (desktop, watching)</td><td>~15%</td><td>+ thinking + text response + status</td></tr>
+    <tr><td>Debugging (desktop, troubleshoot)</td><td>~5%</td><td>+ raw chunks + status (v1.0 firehose)</td></tr>
+  </tbody>
+</table>
+<p>Phase B introduces four mode tiers (<code>summary</code> / <code>normal</code> / <code>thinking</code> / <code>verbose</code>) per-session, falling back to a per-chat default, then a baked-in default of <code>summary</code>. The dispatch handler now filters events through {@link shouldEmit} before routing into the notifier or buffer paths from Phase A. Default = <code>summary</code> is a behaviour change for v1.0 power users; mitigated by the v1.1 boot announcement (§B.5).</p>
+
+<h3 id="phase-b-freshness">Tech Freshness &mdash; Phase B</h3>
+<p>Dependencies re-verified via Context7 before implementation. No new dependencies introduced.</p>
+<table>
+  <thead>
+    <tr><th>Library</th><th>Version in repo</th><th>Latest stable</th><th>Status</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>grammy</code> (<code>/websites/grammy_dev</code>)</td>
+      <td>1.43.0</td>
+      <td>1.43.0</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Context7 confirms <code>bot.command(name, handler)</code>, <code>InlineKeyboard().text(label, callbackData)</code>, and the <code>callback_query</code> dispatch surface we use for <code>mode:set:&lt;name&gt;</code> + <code>settings:mode:&lt;name&gt;</code> are current. <code>editMessageReplyMarkup(chat_id, message_id, other?, signal?)</code> shape matches our re-render path on mode change.</td>
+    </tr>
+    <tr>
+      <td><code>better-sqlite3</code> (<code>/wiselibs/better-sqlite3</code>)</td>
+      <td>12.10.0</td>
+      <td>12.10.x</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Context7 confirms <code>db.pragma('table_info(sessions)')</code> + <code>db.exec('ALTER TABLE …')</code> + <code>INSERT … ON CONFLICT(chat_id) DO UPDATE SET …</code> are the canonical idempotent-migration / upsert patterns. We use the same probe-then-ALTER guard already proven by Phase A for <code>handoff_context</code>.</td>
+    </tr>
+    <tr>
+      <td><code>vitest</code></td>
+      <td>4.1.7</td>
+      <td>4.1.7</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Used for 65 new test cases. <code>vi.fn()</code> for grammY bot spy + notifier spy; no fake-timer needs in Phase B (mode helpers + dispatch filter are synchronous).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="phase-b-design-decisions">Design Decisions</h3>
+
+<div class="card">
+  <h3>D1 &mdash; Two-table storage (sessions.verbosity_mode + chat_settings)</h3>
+  <p>Per-session override lives in <code>sessions.verbosity_mode TEXT NULL</code> (nullable &mdash; <code>null</code> means "use chat default"). Per-chat default lives in a new <code>chat_settings(chat_id PRIMARY KEY, default_mode TEXT NOT NULL DEFAULT 'summary')</code> table. Two tables, not one, because:</p>
+  <ul>
+    <li><strong>Migration story</strong>: an existing v1.0 DB gets <code>verbosity_mode</code> added via PRAGMA-guarded ALTER (idempotent, same pattern as Phase A's <code>handoff_context</code>). A separate table lets new chat-level settings (theme, language, summary cost cap) land later without touching <code>sessions</code>.</li>
+    <li><strong>Migration-message bookkeeping</strong>: §B.5 uses <em>"chat_settings has NO row yet"</em> as the v1.1 first-boot marker. Coupling chat-default storage to the existence of the row gives us a free, deterministic "have we shown the announcement?" probe without a dedicated flag column.</li>
+    <li><strong>Resolver simplicity</strong>: <code>resolveMode(sessionMode, chatDefault)</code> stays a 3-line pure function (<code>session ?? chat ?? 'summary'</code>) instead of conditional joins.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>D2 &mdash; Resolved-mode cache invalidated by command + chat-setting callbacks</h3>
+  <p>Dispatch resolves the effective mode ONCE per turn (<code>store.getSessionMode → store.getChatDefaultMode → 'summary'</code>) and stores it in a module-level <code>Map&lt;sessionId, VerbosityMode&gt;</code>. The cache:</p>
+  <ul>
+    <li>Eliminates SQLite reads from the per-event hot path (a Bash <code>tool_result</code> burst can be hundreds of events/turn).</li>
+    <li>Stays consistent during a turn (no half-mode behaviour mid-stream).</li>
+    <li>Honours mid-turn <code>/mode</code> changes on the <em>next</em> dispatch (we invalidate at the callback site). A user that wants effect <em>this</em> turn can <code>/stop</code> first &mdash; an explicit, predictable trade-off vs the complexity of re-resolving per event.</li>
+    <li><code>/settings mode &lt;name&gt;</code> blast-radius-invalidates every cached entry for sessions in the chat &mdash; broader scope, broader wipe.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>D3 &mdash; Filter matrix lives in `shouldEmit` (one source of truth)</h3>
+  <p>Per plan §B.4. The dispatcher pre-emits an early <code>if (!shouldEmit(e, currentMode)) return</code> guard; all event-type branches downstream keep their v1.0/Phase A semantics. Critical events (<code>error</code>, <code>done</code>, <code>session</code>) ALWAYS pass through &mdash; baked into the function, not the caller &mdash; so future additions can't accidentally suppress them by adding a case to a different branch.</p>
+  <table>
+    <thead>
+      <tr><th>Event</th><th>summary</th><th>normal</th><th>thinking</th><th>verbose</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>error</code></td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>done</code></td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>session</code></td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>tool_use</code></td><td>❌</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>tool_result</code> ok=true</td><td>❌</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>tool_result</code> ok=false</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>text</code></td><td>❌</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td><code>status</code></td><td>❌</td><td>❌</td><td>❌</td><td>✅</td></tr>
+    </tbody>
+  </table>
+  <p><em>Note &mdash; thinking events:</em> the current <code>AgentEvent</code> union does NOT yet have a <code>thinking</code> variant (Claude drops them, Cursor surfaces them as plain <code>text</code>). The plan §B.1 description still mentions "+ thinking blocks" for that tier; the surface lights up once a future adapter emits a dedicated event type. The matrix above is forward-compatible &mdash; we keep <code>thinking</code> as a tier today so users opting in get exactly the same other events as <code>normal</code> until the new variant ships.</p>
+</div>
+
+<div class="card">
+  <h3>D4 &mdash; Migration message: existence of chat_settings row = "shown"</h3>
+  <p>At boot, the daemon iterates <code>allowed_user_ids</code>. For each chat with <code>!chatSettingsExists</code>, it sends a Markdown announcement explaining the default change + the two opt-out paths (<code>/mode verbose</code> session, <code>/settings mode verbose</code> chat). After the send (success OR failure), the chat is marked sent by inserting the default row via <code>setChatDefaultMode(chatId, 'summary')</code>. Failure-on-send is logged + skipped (announcement is informative, not critical).</p>
+  <p>Verified text:</p>
+  <pre><code>📢 *Telecode v1.1* — verbosity modes
+
+Mode mặc định giờ là 🎯 *Summary* — chỉ show approval + done + errors.
+
+Muốn behavior cũ (verbose firehose):
+  • `/mode verbose`           — chỉ áp dụng cho session active
+  • `/settings mode verbose`  — đặt làm default cho cả chat
+
+Đổi mode bất kỳ lúc nào qua slash menu (`/mode`, `/settings`).</code></pre>
+</div>
+
+<h3 id="phase-b-scope">Scope Checklist &mdash; Phase B</h3>
+<ul class="checklist">
+  <li class="done"><strong>B.1</strong> &mdash; <code>VerbosityMode</code> type + <code>VERBOSITY_MODES</code> runtime list + <code>MODE_METADATA</code> + <code>shouldEmit</code> filter table + <code>resolveMode</code> resolver. New module <code>src/session/verbosity.ts</code>. Tests <code>verbosity.test.ts</code> × 36 (mode invariants + filter matrix all 4 modes × 8 event variants + resolver fallback).</li>
+  <li class="done"><strong>B.2</strong> &mdash; Idempotent ALTER for <code>sessions.verbosity_mode</code> + CREATE TABLE IF NOT EXISTS <code>chat_settings</code>. Helpers <code>getSessionMode</code> / <code>setSessionMode</code> / <code>getChatDefaultMode</code> / <code>setChatDefaultMode</code> / <code>chatSettingsExists</code>. Tests <code>verbosity-store.test.ts</code> × 11 (migration idempotent, v1.0 → v1.1 forward migration of legacy DB, get/set roundtrips, fallback chain, defensive null on garbage values).</li>
+  <li class="done"><strong>B.3</strong> &mdash; <code>/mode</code> + <code>/settings</code> commands in <code>src/bot/commands/index.ts</code> with 4-button inline picker via new <code>verbosityModeKeyboard</code> helper in <code>src/bot/keyboards.ts</code>. Callback routes <code>mode:set:&lt;name&gt;</code> + <code>settings:mode:&lt;name&gt;</code> wired in <code>src/bot/router.ts</code>. Slash-menu entries appended in <code>src/bot/commands-registry.ts</code> (11 → 13). Tests <code>mode-command.test.ts</code> × 13 covering no-arg + valid + invalid arg paths for both commands.</li>
+  <li class="done"><strong>B.4</strong> &mdash; Dispatch filter wired at the top of the <code>onEvent</code> callback in <code>commands/index.ts</code>. Per-session resolved-mode cache (<code>sessionModeCache</code> Map) refreshed once per turn; invalidated by <code>invalidateSessionModeCache</code> + <code>invalidateChatModeCache</code> from the router callbacks. Tests covered by 6 cases in <code>mode-command.test.ts</code> (summary suppresses tool_use/text/tool_result-ok, summary passes errors + tool_result-failed, verbose passes tool_use, normal passes text, cache+persistence interaction).</li>
+  <li class="done"><strong>B.5</strong> &mdash; v1.1 first-boot announcement in <code>src/index.ts</code> after <code>startBot</code> resolves. Iterates <code>allowed_user_ids</code>, sends one Markdown message per chat that has no <code>chat_settings</code> row, then inserts the row to mark sent. Network failure logged + skipped &mdash; never blocks boot.</li>
+</ul>
+
+<h2 id="b-1">B.1 &mdash; Mode definition</h2>
+
+<div class="card">
+  <h3>File: src/session/verbosity.ts (new)</h3>
+  <p>Pure module. No Telegram/SDK imports. Exports:</p>
+  <ul>
+    <li><code>VerbosityMode</code> type union (<code>'summary' | 'normal' | 'thinking' | 'verbose'</code>).</li>
+    <li><code>VERBOSITY_MODES</code> frozen array for runtime iteration + command validation.</li>
+    <li><code>DEFAULT_VERBOSITY_MODE = 'summary'</code> baked-in fallback.</li>
+    <li><code>MODE_METADATA</code> frozen <code>Record&lt;VerbosityMode, {icon, displayName, description}&gt;</code> with the four bilingual rows (🎯 Summary / 📝 Normal / 🧠 Thinking / 🔬 Verbose).</li>
+    <li><code>isVerbosityMode(s: unknown): s is VerbosityMode</code> &mdash; type guard used by <code>/mode &lt;name&gt;</code> parser + storage defensive coercion.</li>
+    <li><code>shouldEmit(event, mode): boolean</code> &mdash; the matrix from §D3, with critical events hard-coded to <code>true</code> regardless of mode.</li>
+    <li><code>resolveMode(sessionMode, chatDefault): VerbosityMode</code> &mdash; pure 3-line fallback resolver.</li>
+  </ul>
+  <p>The exhaustiveness check inside <code>shouldEmit</code> uses a <code>const _exhaustive: never</code> assertion so the TypeScript compiler nudges anyone adding a new <code>AgentEvent</code> variant to update the filter intentionally.</p>
+</div>
+
+<h2 id="b-2">B.2 &mdash; Storage migration + helpers</h2>
+
+<div class="card">
+  <h3>File: src/session/schema.sql + src/session/store.ts</h3>
+  <ul>
+    <li><code>schema.sql</code>: added <code>verbosity_mode TEXT</code> to the <code>sessions</code> CREATE TABLE (nullable). New <code>chat_settings(chat_id INTEGER PRIMARY KEY, default_mode TEXT NOT NULL DEFAULT 'summary')</code>.</li>
+    <li><code>store.ts</code>: added an extra PRAGMA-guarded ALTER block alongside the existing <code>handoff_context</code> migration so upgrading installations get the column without DROP/CREATE. Same probe-then-add pattern.</li>
+    <li><code>SessionRow</code>: extended with <code>verbosity_mode: string | null</code>. <code>createSession</code> omits the new field (defaults to NULL); <code>updateSession</code>'s Pick set includes <code>verbosity_mode</code>.</li>
+    <li>Five new helpers: <code>getSessionMode</code>, <code>setSessionMode</code>, <code>getChatDefaultMode</code>, <code>setChatDefaultMode</code>, <code>chatSettingsExists</code>. All defensively coerce DB values through <code>isVerbosityMode</code> &mdash; a hand-edited garbage value falls back instead of crashing.</li>
+  </ul>
+</div>
+
+<h2 id="b-3">B.3 &mdash; /mode + /settings commands</h2>
+
+<div class="card">
+  <h3>Files: src/bot/commands/index.ts + src/bot/keyboards.ts + src/bot/commands-registry.ts + src/bot/router.ts</h3>
+  <ul>
+    <li><strong>/mode</strong> command: no-arg path resolves session → chat → default + replies with a Markdown status card showing the current mode + source ("session override" vs "chat default → X") + a 4-button picker. <code>/mode &lt;name&gt;</code> validates against <code>VERBOSITY_MODES</code> (rejects with the full list as a hint on bogus input) and persists via <code>setSessionMode</code>.</li>
+    <li><strong>/settings</strong> command: no-arg = chat-level status + picker; <code>/settings mode &lt;name&gt;</code> sets the chat default and explains the apply-to-future-sessions semantics. Future settings (theme, language) extend the same subcommand surface.</li>
+    <li><strong>verbosityModeKeyboard(callbackPrefix, current)</strong>: shared builder used by both commands (parameterised on callback namespace) + the post-callback re-render. Layout 2×2 with a <code>●</code> marker on the active mode &mdash; instant visual feedback when the user taps a button.</li>
+    <li><strong>Slash-menu entries</strong>: <code>/mode</code> + <code>/settings</code> appended to <code>COMMANDS</code> in <code>commands-registry.ts</code>. Vietnamese descriptions, total surface grows 11 → 13.</li>
+    <li><strong>Callback router</strong>: <code>mode:set:&lt;name&gt;</code> writes session override + invalidates session cache; <code>settings:mode:&lt;name&gt;</code> writes chat default + invalidates every cached session for the chat. Both re-render the picker so the <code>●</code> marker reflects the new state without scrolling.</li>
+  </ul>
+</div>
+
+<h2 id="b-4">B.4 &mdash; Dispatch filter</h2>
+
+<div class="card">
+  <h3>File: src/bot/commands/index.ts dispatch handler</h3>
+  <p>Resolved-mode cache + early-return filter:</p>
+  <pre><code>// Resolve once per turn.
+const sessionMode = store.getSessionMode(cur.id);
+const chatDefault = store.getChatDefaultMode(chatId);
+const effectiveMode = resolveMode(sessionMode, chatDefault);
+setCachedSessionMode(cur.id, effectiveMode);
+
+void manager.dispatch({
+  // ...
+  onEvent: (e) => {
+    const activeId = store.getChatState(chatId).active_session_id;
+    const isActive = cur.id === activeId;
+    const currentMode = getCachedSessionMode(cur.id) ?? effectiveMode;
+    if (!shouldEmit(e, currentMode)) return;
+    // ... existing v1.1 Phase A branches unchanged ...
+  },
+});</code></pre>
+  <p><strong>Cache lifetime</strong>: per session, written at dispatch start, kept across the turn, invalidated explicitly by <code>/mode</code> + <code>/settings</code> callbacks. Lifetime intentionally short &mdash; we don't try to keep the cache fresh against direct DB writes from outside the bot (there aren't any in v1.1).</p>
+  <p><strong>Race protection</strong>: when the cache gets invalidated mid-turn (a user runs <code>/mode</code> while a dispatch is in flight), the fallback to <code>effectiveMode</code> (resolved at turn start) means the in-flight events still get a deterministic mode &mdash; never <code>undefined</code>, never a partial state. The new mode takes effect at the START of the next dispatch.</p>
+</div>
+
+<h2 id="b-5">B.5 &mdash; Migration message</h2>
+
+<div class="card">
+  <h3>File: src/index.ts boot sequence</h3>
+  <p>Placed in <code>main()</code> after <code>startBot(...)</code> resolves and before crash-recovery's stale-session notices. Per allowed user id:</p>
+  <ol>
+    <li>Probe <code>store.chatSettingsExists(chatId)</code>. Skip if true (announcement already shown on a previous boot).</li>
+    <li><code>bot.api.sendMessage</code> the Markdown announcement; catch + log on failure.</li>
+    <li><code>setChatDefaultMode(chatId, 'summary')</code> &mdash; the row insert marks "shown" so the next boot doesn't re-spam.</li>
+  </ol>
+  <p>Failure of the send is non-fatal by design: the announcement is helpful, not critical. The user can always discover the mode system via the slash menu (newly populated with <code>/mode</code> + <code>/settings</code> via <code>applyCommandsAndMenu</code> on the same boot).</p>
+</div>
+
+<h2 id="phase-b-verification">Phase B &mdash; Verification</h2>
+
+<div class="card">
+  <h3>Test counts</h3>
+  <ul>
+    <li>Baseline post-Phase-A: <strong>489 passed / 2 skipped / 46 files</strong>.</li>
+    <li>Phase B: <strong>554 passed / 2 skipped / 49 files</strong>. Net +65 tests, +3 files. Two pre-existing test files (<code>session-gating.test.ts</code>, <code>tool-result-dispatch.test.ts</code>) had one-line additions to opt into <code>verbose</code> mode so their original Phase A assertions remain meaningful under the new default; <code>commands-registry.test.ts</code> updated count + list assertions (11 → 13). Net new files: <code>verbosity.test.ts</code> (36), <code>verbosity-store.test.ts</code> (11), <code>mode-command.test.ts</code> (18).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Dispatch behaviour verification matrix</h3>
+  <p>Reproduces §D3 with explicit test scaffolding so a regression in any cell shows up as a single failing case.</p>
+  <table>
+    <thead>
+      <tr><th>Event</th><th>Mode</th><th>Expected</th><th>Test surface</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>tool_use</code></td><td>summary</td><td>suppressed</td><td><code>mode-command.test.ts</code> "summary: tool_use NOT emitted"</td></tr>
+      <tr><td><code>tool_use</code></td><td>verbose</td><td>emitted</td><td><code>mode-command.test.ts</code> "verbose: tool_use IS emitted"</td></tr>
+      <tr><td><code>tool_result</code> ok=true</td><td>summary</td><td>suppressed</td><td><code>mode-command.test.ts</code> "summary: tool_result ok=true suppressed"</td></tr>
+      <tr><td><code>tool_result</code> ok=false</td><td>summary</td><td>emitted</td><td><code>mode-command.test.ts</code> "summary: tool_result ok=false emitted"</td></tr>
+      <tr><td><code>text</code></td><td>summary</td><td>suppressed</td><td><code>mode-command.test.ts</code> "summary: text events suppressed"</td></tr>
+      <tr><td><code>text</code></td><td>normal</td><td>emitted</td><td><code>mode-command.test.ts</code> "normal: text events ARE emitted"</td></tr>
+      <tr><td><code>error</code></td><td>summary</td><td>emitted</td><td><code>mode-command.test.ts</code> "summary: error IS emitted"</td></tr>
+      <tr><td><code>status</code></td><td>summary/normal/thinking</td><td>suppressed</td><td><code>verbosity.test.ts</code> matrix (4 cases)</td></tr>
+      <tr><td><code>status</code></td><td>verbose</td><td>emitted</td><td><code>verbosity.test.ts</code> matrix</td></tr>
+      <tr><td><code>done</code> / <code>error</code> / <code>session</code></td><td>any</td><td>always emitted</td><td><code>verbosity.test.ts</code> matrix (12 cases)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Backward compatibility</h3>
+  <ul>
+    <li>All 489 pre-existing tests still green after migrating to the new default.</li>
+    <li>v1.0 SQLite databases get <code>verbosity_mode</code> + <code>chat_settings</code> added on first v1.1 open (covered by <code>verbosity-store.test.ts</code> "v1.0 schema is migrated forward").</li>
+    <li>Migration is idempotent: reopening the same DB doesn't re-run ALTER (covered by the same test file).</li>
+    <li>Existing sessions resume with <code>verbosity_mode=null</code> and fall back to chat default → <code>'summary'</code>. Power users who want the v1.0 firehose run <code>/mode verbose</code> (per-session) or <code>/settings mode verbose</code> (chat-level).</li>
+    <li>The v1.1 boot announcement (§B.5) lands exactly once per chat &mdash; not on every restart.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Cross-platform notes</h3>
+  <ul>
+    <li>No platform-specific code introduced in Phase B. SQLite migration uses standard ANSI SQL + better-sqlite3 PRAGMA wrappers that work identically on macOS, Linux, and Windows.</li>
+    <li>Markdown announcement uses Telegram's legacy <code>parse_mode: 'Markdown'</code> (not <code>MarkdownV2</code> &mdash; that's Phase C's surface). Same parser the rest of v1.0/v1.1 already uses, no new escaping surface.</li>
+  </ul>
+</div>
+
+<p style="color: var(--text-faint); font-size: 14px;">SDD v1.1 &middot; 2026-05-21 &middot; Phase B implementation complete (pre senior review)</p>
+
+<hr />
+
+<h2 id="phase-c">Phase C &mdash; Smart rendering</h2>
+
+<h3 id="phase-c-context">Context</h3>
+<p>Phases A + B fixed the worst v1.0 noise (raw-JSON tool_use dumps, missing tool_result events, no verbosity control). What remained were three smaller-but-related rendering issues users still hit daily on phones:</p>
+<ul>
+  <li><strong>Plain-text-only messages.</strong> Tool labels, file paths, and command strings were just words inside flowing prose. Phones render them in proportional font &mdash; visually indistinguishable from natural language.</li>
+  <li><strong>Burst spam.</strong> Agents in tight loops emit 3&ndash;6 identical tool_use events per second (e.g. <code>Read foo.ts; Read types.ts; Read util.ts</code>). v1.0 produces 6 vertical messages of nearly-identical noise for one conceptual operation.</li>
+  <li><strong>Opaque edits.</strong> <code>📝 Edit &middot; foo.ts</code> tells the user nothing about what changed. Power users want to peek without scrolling back to the agent's raw transcript.</li>
+</ul>
+<p>Phase C ships smart rendering: MarkdownV2 + auto code-fence detection + diff-aware Edit + burst collapse + monorepo-aware path collapsing. Each piece is independent &mdash; the dispatcher uses them as composable building blocks rather than a single new pipeline.</p>
+
+<h4>Visual delta &mdash; before / after</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>Phase A+B output</h5>
+    <pre>[refactor-auth] 🔧 Read &middot; foo.ts
+[refactor-auth] 🔧 Read &middot; types.ts
+[refactor-auth] 🔧 Read &middot; util.ts
+[refactor-auth] 🔧 Edit &middot; auth.ts
+    ✅ Edit ok
+{"file_path":"/Users/x/proj/sib/lib.ts"}
+&nbsp;
+(any stack trace renders as flowing prose)</pre>
+  </div>
+  <div class="col after">
+    <h5>Phase C</h5>
+    <pre>[refactor-auth] 🔧 Read &times;3 &middot; foo.ts, types.ts, util.ts
+[refactor-auth] 🔧 Edit &middot; auth.ts (-3 +7)
+    ✅ Edit ok
+    [📜 Show diff]
+&nbsp;
+```json
+{"file_path": "myrepo/sib/lib.ts"}
+```
+&nbsp;
+```
+TypeError: x is not a function
+    at Foo.bar (/tmp/foo.js:10:5)
+    at Object.&lt;anonymous&gt; (/tmp/foo.js:1:1)
+```</pre>
+  </div>
+</div>
+
+<h3 id="phase-c-tech">Tech freshness (Context7)</h3>
+<div class="card">
+  <h3>grammY 1.43.0 / Telegram MarkdownV2 verification</h3>
+  <p>Verified via <code>mcp__context7__query-docs</code> against <code>/websites/grammy_dev</code> on 2026-05-21:</p>
+  <ul>
+    <li><strong>parse_mode contract</strong>: confirmed <code>'MarkdownV2'</code> is the current name (not <code>'Markdown'</code> &mdash; legacy/deprecated).</li>
+    <li><strong>Escape set</strong>: <code>_ * [ ] ( ) ~ ` &gt; # + - = | { } . !</code> &mdash; reproduced verbatim from the grammY reference. Backslashes also need escaping (handled in a first pass so subsequent escape insertions don't double up).</li>
+    <li><strong>Inside <code>pre</code>/<code>code</code></strong>: only backtick + backslash need escaping. All MarkdownV2 specials are literal inside fences &mdash; that's what powers C.2's "wrap raw text in fence and skip escapeMd" path.</li>
+    <li><strong>Language tag</strong>: appended directly after the opening fence with no space (<code>```json\n&hellip;\n```</code>). Unknown languages render as plain monospace, no parser error.</li>
+  </ul>
+  <p>Verdict: grammY 1.43.0 + the underlying Bot API both expose the current spec. No deprecated patterns introduced. No upgrade flag required.</p>
+</div>
+
+<h2 id="c-1">C.1 &mdash; MarkdownV2 helpers</h2>
+
+<div class="card">
+  <h3>File: src/bot/markdown.ts (new)</h3>
+  <ul>
+    <li><strong>escapeMd(s)</strong>: two-pass escape. Pass 1 escapes backslashes (so pass 2's added backslashes don't get re-escaped); pass 2 prepends <code>\</code> to every spec-mandated special.</li>
+    <li><strong>codeBlock(content, lang?)</strong>: wraps in <code>```lang\n{content}\n```</code>. Inside the fence we escape ONLY backticks + backslashes per spec; MarkdownV2 specials like dots and brackets are literal. The <code>lang</code> slug is sanitised (strip <code>`</code> + newlines) as defence-in-depth against fence-breakout via malformed tag.</li>
+    <li><strong>inlineCode(s)</strong>: single-backtick span. Same backtick+backslash escape as code fences.</li>
+    <li><strong>bold / italic / strikethrough</strong>: wrappers that compose <code>escapeMd</code> for inner content. <code>*x*</code> / <code>_x_</code> / <code>~x~</code> form.</li>
+  </ul>
+  <p><strong>Design decision &mdash; regex character class</strong>: initial implementation used <code>[_*\[\]()~`&gt;#+\-=|{}.!]</code> as a single character class, which treats <code>+-=</code> as a RANGE (ASCII 43&ndash;61 covers digits, commas, dots, slashes &mdash; mangling innocent text). Fixed by switching to an alternation form (<code>\_ | \* | \[ | &hellip;</code>) compiled once at module load. Caught by a "preserves non-special characters verbatim" test.</p>
+  <p><strong>Test count</strong>: 27 cases in <code>tests/markdown.test.ts</code> &mdash; covers every spec special, adversarial inputs (all-specials, embedded triple-backticks, Vietnamese + emoji + ZWJ + RTL marks), wrapper composition, empty/null defensive paths.</p>
+</div>
+
+<h2 id="c-2">C.2 &mdash; Auto code-fence detection</h2>
+
+<div class="card">
+  <h3>File: src/bot/code-fence.ts (new)</h3>
+  <ul>
+    <li><strong>detectCodeBlock(text)</strong>: returns <code>{ lang, isCode: true } | null</code>. Heuristics applied in order of specificity:
+      <ol>
+        <li><strong>JSON</strong> &mdash; <code>{&hellip;}</code> or <code>[&hellip;]</code> outer brackets AND contains a quoted-key pattern <code>"&hellip;":</code>. Rejects inline blurbs like <code>"user said {hello}"</code> (no quoted key) and bare numeric arrays.</li>
+        <li><strong>Diff</strong> &mdash; ≥ 2 lines starting with <code>+</code> or <code>-</code> at column 0 AND a hunk header (<code>@@&hellip;@@</code>) or file header (<code>---&nbsp;</code> / <code>+++&nbsp;</code>). Both conditions required &mdash; markdown bullet lists don't trigger.</li>
+        <li><strong>Shell transcript</strong> &mdash; ≥ 2 lines starting with <code>$&nbsp;</code> or <code>&gt;&nbsp;</code>. Leading space mandatory so <code>$variable</code> doesn't trigger.</li>
+        <li><strong>Stack trace</strong> &mdash; ≥ 2 lines matching <code>/^\s+at [A-Za-z_$&lt;]/</code>. Covers Node and JVM styles. Returns <code>lang: null</code> (no syntax highlighter for "stack trace" universally available).</li>
+        <li><strong>Generic monospace fallback</strong> &mdash; text &gt; 200 chars AND has newline AND shows alignment cues (2+ indented lines OR 2+ runs of 3+ consecutive spaces). Returns <code>lang: null</code>.</li>
+      </ol>
+    </li>
+    <li><strong>maybeWrapCodeBlock(text)</strong>: convenience wrapper that returns either fenced MarkdownV2 (on detection) or the original text unchanged (caller decides whether to escape further).</li>
+  </ul>
+  <p><strong>Design decision &mdash; conservative thresholds</strong>: every heuristic uses ≥ 2 markers instead of ≥ 1. Rationale: false positives (wrapping prose in <code>```</code>) make the message uglier; false negatives (missing a snippet) leave it unchanged. Plan §C.2 calls this out explicitly &mdash; we err on the side of "leave alone unless markers are strong."</p>
+  <p><strong>Performance</strong>: ~5 short regexes per call, all module-level globals. No <code>matchAll</code> allocations &mdash; we use a local <code>countMatches</code> that increments a counter via <code>exec()</code>. Safe to call per text event in the streaming hot path.</p>
+  <p><strong>Test count</strong>: 19 cases in <code>tests/code-fence.test.ts</code> &mdash; per-heuristic happy paths + negative cases (inline curly braces, single +/- bullet, naked <code>$HOME</code> reference, short text with newline, long flowing prose without alignment) + defensive (empty / whitespace / non-string).</p>
+</div>
+
+<h2 id="c-3">C.3 &mdash; Diff stats for Edit tool</h2>
+
+<div class="card">
+  <h3>Files: src/bot/tool-render.ts (extend) + src/bot/diff-cache.ts (new)</h3>
+  <ul>
+    <li><strong>renderToolUse extension</strong>: when input carries both <code>old_string</code> + <code>new_string</code> (Claude <code>Edit</code>, Codex <code>apply_patch</code>, Kiro <code>fs_write</code>, also <code>oldString</code>/<code>newString</code> camelCase variants), the renderer appends <code>(-X +Y)</code> with <code>X = old.split('\n').length</code>, <code>Y = new.split('\n').length</code>. When <code>old === new</code> we render <code>(no change)</code> instead of <code>(-1 +1)</code> &mdash; differentiates real edits from no-op regenerations.</li>
+    <li><strong>friendlyToolLabel</strong> extended to map <code>apply_patch &rarr; Edit</code> so Codex tool_result lines read <code>✅ Edit ok</code> matching the use header.</li>
+    <li><strong>DiffCache (in-memory)</strong>: per-session, keyed by <code>(sessionId, callId)</code>, TTL 15 min, LRU cap 50 entries per session. Eviction policy:
+      <ul>
+        <li>On insert: opportunistic TTL sweep (O(N), N ≤ 50) + LRU evict of oldest entry when cap reached.</li>
+        <li>On read: refresh <code>tsMs</code> so frequently-viewed diffs survive cache pressure.</li>
+        <li>On session close: <code>clearSession(sessionId)</code> drops the whole shard in O(1).</li>
+      </ul>
+      No global timer &mdash; sweep is opportunistic on writes. Avoids the "<code>setInterval</code> pinning the process alive" issue.
+    </li>
+    <li><strong>renderDiffBlock(filePath, old, new)</strong>: produces unified-diff style block ready for wrapping in <code>codeBlock(&hellip;, 'diff')</code>. Format:
+      <pre><code>--- a/foo.ts
++++ b/foo.ts
+-old line
++new line</code></pre>
+    No hunk header (no line-number context for snippet edits). Empty-old / empty-new handled (pure insert / pure delete). Both empty → <code>(no change)</code> sentinel.
+    </li>
+  </ul>
+  <p><strong>Design decision &mdash; cache vs SQLite persistence</strong>: diffs are ephemeral viewer state. Daemon restart loses them &mdash; acceptable trade-off vs 10× DB footprint with low usage value. Plan §C.3 specified in-memory; this matches.</p>
+  <p><strong>Test count</strong>: 19 cases in <code>tests/tool-render-diff.test.ts</code> &mdash; diff-stats render (multi-line, single-line, no-change, fs_write/apply_patch/Edit aliases, camelCase keys, friendly label) + DiffCache (set/get/TTL/LRU/clearSession/duplicate-key/size diagnostics) + renderDiffBlock formatting.</p>
+</div>
+
+<h2 id="c-4">C.4 &mdash; Collapse repeated tool calls</h2>
+
+<div class="card">
+  <h3>File: src/bot/tool-collapse.ts (new)</h3>
+  <ul>
+    <li><strong>ToolCollapseManager</strong>: per-session burst collapser. Internal state: <code>Map&lt;sessionId::toolName, { msgId, count, items, firstSeenAt, lastSeenAt }&gt;</code>. Key includes sessionId for race isolation.</li>
+    <li><strong>handle(sessionId, toolName, item, prefix) &rarr; CollapseAction</strong>: discriminated union <code>{ action: 'send' | 'edit', &hellip; }</code>. Dispatcher acts on the result; manager itself never touches Telegram API.
+      <ul>
+        <li>First emit for (session, tool) → <code>'send'</code>, count=1.</li>
+        <li>Subsequent emit within 5s window → <code>'edit'</code> on the recorded <code>msgId</code>, count incremented, items appended.</li>
+        <li>Tool switch for same session → previous entry finalized (forgotten); fresh send.</li>
+        <li>5s+ elapsed → fresh send, count reset.</li>
+      </ul>
+    </li>
+    <li><strong>recordSent(key, msgId)</strong>: dispatcher calls after <code>sendPlain</code> resolves. <code>recordSent(key, null)</code> tears down so we don't try to edit a phantom message after a send failure.</li>
+    <li><strong>Items truncation</strong>: when concatenated items exceed <code>maxDisplayChars</code> (default 80), keeps newest items + prepends "…". Newest-first because debugging usually cares about the freshest file names.</li>
+    <li><strong>Background sweep</strong>: 60s interval (configurable), evicts entries past window. Timer is <code>unref</code>'d so it doesn't pin the Node process alive on a quiet daemon.</li>
+    <li><strong>clearSession(sessionId)</strong>: drops all entries for the session in O(M) where M is shard size. Called by session-close handler.</li>
+    <li><strong>stop()</strong>: shuts down the sweep timer cleanly. Idempotent. Called on daemon shutdown.</li>
+  </ul>
+  <p><strong>Design decision &mdash; pure utility, no Telegram coupling</strong>: the manager returns "what to do" (send/edit + formatted text + key), not "do it." Lets the dispatcher reuse the existing <code>notifier.sendPlain</code> / <code>notifier.editPlain</code> path with its rate limiting, scrubbing, and 429 handling intact. The wiring into <code>commands/index.ts</code> is deferred to a follow-up integration pass &mdash; this PR ships the building block + tests.</p>
+  <p><strong>Race protection</strong>: events for the same session are serialized through <code>dispatch.onEvent</code> &mdash; no concurrent <code>handle</code> calls possible per session. Cross-session isolation via key prefix.</p>
+  <p><strong>Test count</strong>: 10 cases in <code>tests/tool-collapse.test.ts</code> &mdash; 3-events-within-window, 4th-after-window, tool switch, session isolation, clearSession, items truncation, recordSent(null) teardown, missing recordSent fallback, idempotent stop().</p>
+</div>
+
+<h2 id="c-5">C.5 &mdash; Path collapsing enhance (git-root + Windows)</h2>
+
+<div class="card">
+  <h3>File: src/bot/tool-render.ts (extend)</h3>
+  <ul>
+    <li><strong>Phase A baseline</strong> (unchanged): <code>./</code> for projectCwd, <code>~/</code> for $HOME, <code>…/&lt;last-2-segments&gt;</code> past 50 chars.</li>
+    <li><strong>Phase C.5 git-root branch</strong>: when <code>projectCwd</code> is provided AND the target lives in a sibling package of the same git workspace (NOT under projectCwd itself), collapse to <code>&lt;repo-name&gt;/&lt;relative-path&gt;</code>. Walks parent directories looking for <code>.git</code> (accepts file OR directory &mdash; the file form is used by <code>git worktree</code> linked workspaces). Walk bounded to 32 ancestors against pathological symlink loops.</li>
+    <li><strong>Resolution priority</strong>: <code>./</code> (project cwd) → <code>&lt;repo&gt;/&hellip;</code> (git root) → <code>~/</code> (home) → absolute. Most-specific to least-specific.</li>
+    <li><strong>Git-root cache</strong>: TTL 5 min, max 32 entries, keyed by starting directory. Avoids syscall storms during busy turns. LRU eviction when full (no true LRU needed &mdash; git roots don't churn).</li>
+    <li><strong>Windows handling</strong>: relies on <code>path.parse(p).root</code> for the stop condition (returns <code>'/'</code> on posix, <code>'C:\\'</code> on win32). <code>path.isAbsolute</code> + <code>path.relative</code> are already platform-aware in Node.</li>
+    <li><strong>Length guard</strong>: still applies after git-root collapse &mdash; deeply-nested monorepo paths fall back to <code>…/&lt;last-2-segments&gt;</code> as before.</li>
+  </ul>
+  <p><strong>Design decision &mdash; lazy detection, not eager</strong>: git-root lookup runs only when the path doesn't match projectCwd or $HOME. Most paths hit projectCwd → no syscall cost. The cache covers the remaining cases.</p>
+  <p><strong>Test count</strong>: 6 new cases in <code>tests/tool-render.test.ts</code> &mdash; sibling-package collapse, projectCwd-still-preferred-over-git-root, fall-through-to-home, absolute-when-neither-matches, cache smoke test (3× same lookup), deeply-nested length guard.</p>
+</div>
+
+<h2 id="phase-c-verification">Phase C &mdash; Verification</h2>
+
+<div class="card">
+  <h3>Test counts</h3>
+  <ul>
+    <li>Baseline post-Phase-B: <strong>554 passed / 2 skipped / 49 files</strong>.</li>
+    <li>Phase C: <strong>646 passed / 2 skipped / 53 files</strong>. Net +92 tests, +4 files. New files:
+      <ul>
+        <li><code>tests/markdown.test.ts</code> (27)</li>
+        <li><code>tests/code-fence.test.ts</code> (19)</li>
+        <li><code>tests/tool-render-diff.test.ts</code> (19)</li>
+        <li><code>tests/tool-collapse.test.ts</code> (10)</li>
+      </ul>
+      Extended files:
+      <ul>
+        <li><code>tests/tool-render.test.ts</code>: +6 git-root cases (29 → 35 covered by run, gross 32 reported &mdash; pre-existing 26 baseline + 6 new).</li>
+      </ul>
+    </li>
+    <li>All 554 Phase-A+B tests still green &mdash; backward compatible. Verified by full <code>npm test</code>.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes summary</h3>
+  <ul>
+    <li><strong>New</strong>: <code>src/bot/markdown.ts</code>, <code>src/bot/code-fence.ts</code>, <code>src/bot/diff-cache.ts</code>, <code>src/bot/tool-collapse.ts</code>.</li>
+    <li><strong>New tests</strong>: <code>tests/markdown.test.ts</code>, <code>tests/code-fence.test.ts</code>, <code>tests/tool-render-diff.test.ts</code>, <code>tests/tool-collapse.test.ts</code>.</li>
+    <li><strong>Modified</strong>: <code>src/bot/tool-render.ts</code> (diff stats on Edit, git-root path collapse, <code>apply_patch</code> alias), <code>tests/tool-render.test.ts</code> (git-root cases).</li>
+    <li><strong>Untouched</strong>: <code>src/bot/notifier.ts</code> (parse_mode passthrough already supported via SendPlainExtra), <code>src/bot/commands/index.ts</code> dispatch handler (integration with collapse + MarkdownV2 deferred to follow-up PR &mdash; the building blocks are unit-testable + ship independently).</li>
+  </ul>
+  <p><strong>Why integration deferred</strong>: the dispatcher already passed Phase A+B senior review with race-safe pending-tool tracking + mode filter. Threading the collapse manager + MarkdownV2 + diff cache through it requires touching the hot path &mdash; out of scope for the smart-rendering primitives PR. The follow-up will:</p>
+  <ol>
+    <li>Replace <code>renderToolUse</code> output with <code>escapeMd(rendered)</code> + flag <code>parse_mode: 'MarkdownV2'</code>.</li>
+    <li>Insert <code>toolCollapse.handle(&hellip;)</code> before <code>sendPlain</code> in the <code>tool_use</code> branch.</li>
+    <li>Run <code>maybeWrapCodeBlock</code> on text-event chunks before stream append.</li>
+    <li>Wire <code>diff:show:&lt;sessionId&gt;:&lt;callId&gt;</code> callback in the router to read <code>diffCache</code> + reply MarkdownV2 fenced block.</li>
+    <li>Add <code>diffCache.clearSession</code> + <code>toolCollapse.clearSession</code> to the session-close handler.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h3>Backward compatibility</h3>
+  <ul>
+    <li><strong>Verbose mode preserved</strong>: the new helpers are pure utility functions &mdash; they don't fire until the dispatcher opts in. Until the integration PR lands, the v0.8 + Phase A/B rendering is byte-identical.</li>
+    <li><strong>Plain text fallback</strong>: when MarkdownV2 parsing fails (Telegram 400 "can't parse entities"), notifier already catches + retries plain via <code>handleSendError</code>. The integration PR will add a parse_mode-strip retry path before the final fallback so a single malformed escape doesn't lose the whole message.</li>
+    <li><strong>Existing tests</strong>: all 554 pre-existing tests pass without modification.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Cross-platform notes</h3>
+  <ul>
+    <li><strong>Path handling</strong>: git-root walk uses <code>path.parse(cur).root</code> as the stop condition (cross-platform). <code>existsSync</code> + <code>statSync</code> handle <code>.git</code> as either file (worktree-linked) or directory (canonical). 32-ancestor walk bound prevents symlink-loop hangs on any platform.</li>
+    <li><strong>Display separators</strong>: forward slashes always after collapse (via <code>toDisplaySep</code>) so a Windows host sending tool-call paths to a Linux user (or vice-versa) reads consistently. Telegram clients render both.</li>
+    <li><strong>Timer behaviour</strong>: <code>ToolCollapseManager</code>'s background sweep uses <code>setInterval(&hellip;).unref()</code> &mdash; same pattern as the existing notifier's flush timer. <code>unref</code> is a no-op when undefined (older Node), so the manager remains safe to instantiate on any platform.</li>
+  </ul>
+</div>
+
+<hr/>
+<h2>Phase C — Integration completion</h2>
+<p class="section-sub">Closing scope gap per workflow &sect;2.1 &mdash; wire primitives into dispatch để user thấy behavioral change.</p>
+
+<div class="card success">
+  <h3>Scope gap rationale</h3>
+  <p>Phase C primitives ship (markdown helpers + code-fence detect + collapse manager + diff cache + path enhance) nhưng dispatch không gọi → user không thấy behavioral change. Workflow &sect;2.1 anti-pattern: "tests pass nhưng UI không dùng được". Integration agent đã wire 5 INT steps trước khi socket disconnect.</p>
+</div>
+
+<h3>5 integration steps shipped</h3>
+<table>
+  <thead><tr><th>Step</th><th>Wire point</th><th>File diff</th></tr></thead>
+  <tbody>
+    <tr><td>INT.1 ToolCollapseManager → dispatch tool_use</td><td><code>src/bot/commands/index.ts</code> tool_use branch trước <code>sendPlain</code> &mdash; gọi <code>toolCollapseMgr.handle()</code> → action <code>edit</code> hoặc <code>send</code></td><td>+~120 LoC</td></tr>
+    <tr><td>INT.2 MarkdownV2 code-fence wrap → text events</td><td><code>src/bot/notifier.ts</code> + dispatch text branch &mdash; <code>maybeWrapCodeBlock</code> + <code>escapeMd</code> non-code parts, parse_mode MarkdownV2 + plain text fallback on 400</td><td>+~80 LoC</td></tr>
+    <tr><td>INT.3 Diff cache populate → Edit/fs_write/apply_patch tool_use</td><td><code>src/bot/commands/index.ts</code> tool_use branch &mdash; extract <code>old_string</code>+<code>new_string</code> → <code>diffCache.set</code>, attach <code>[&#128220; Show diff]</code> button conditional on mode</td><td>+~60 LoC</td></tr>
+    <tr><td>INT.4 <code>diff:show</code> callback handler</td><td><code>src/bot/router.ts</code> &mdash; cache lookup + render <code>codeBlock(diff, "diff")</code> + split nếu &gt;3500 chars + miss hint</td><td>+~70 LoC</td></tr>
+    <tr><td>INT.5 clearSession hooks → session close</td><td><code>src/session/manager.ts</code> close path &mdash; cleanup <code>toolCollapseMgr.clearSession</code> + <code>diffCache.clearSession</code></td><td>+12 LoC</td></tr>
+  </tbody>
+</table>
+
+<h3>New file</h3>
+<ul>
+  <li><code>src/bot/runtime-state.ts</code> &mdash; module-singleton holders cho <code>ToolCollapseManager</code> + <code>DiffCache</code> instances (process-lifetime, cleared per-session on close).</li>
+</ul>
+
+<h3>Verification</h3>
+<ul class="checklist">
+  <li class="done"><strong>646/2 tests pass</strong> (no regression, same as pre-integration baseline)</li>
+  <li class="done"><strong>typecheck clean</strong></li>
+  <li class="done">Backward compat: verbose mode preserved (collapse no-ops when explicit verbose mode active per filter chain), plain text fallback works (MarkdownV2 400 retry)</li>
+  <li class="done">Race condition: <code>PendingTools</code> integration verified &mdash; tool_result still merges into collapsed message via stored <code>msgId</code></li>
+  <li class="partial">Manual VM smoke (real Telegram chat) &mdash; deferred to v1.1 ship-time smoke test</li>
+</ul>
+
+<h3>User-visible delta (Phase C end-to-end now live)</h3>
+<div class="compare">
+  <div class="col before">
+    <h5>Before (Phase B only)</h5>
+    <pre>[refactor-auth] 🔧 Read &middot; notifier.ts
+[refactor-auth] 🔧 Read &middot; types.ts
+[refactor-auth] 🔧 Read &middot; reply-builders.ts
+[refactor-auth] 🔧 Edit &middot; auth.ts
+[refactor-auth] [JSON dump 1500 chars unwrapped]</pre>
+  </div>
+  <div class="col after">
+    <h5>After (Phase C wired)</h5>
+    <pre>[refactor-auth] 🔧 Read &times;3 &middot; notifier.ts, types.ts, reply-builders.ts
+[refactor-auth] 📝 Edit &middot; auth.ts (-3 +7)
+    [&#128220; Show diff]
+[refactor-auth] (code block JSON wrapped + monospace)</pre>
+  </div>
+</div>
+
+<p style="color: var(--text-faint); font-size: 14px;">SDD v1.2 &middot; 2026-05-21 &middot; Phase C primitives + integration complete; ready for B+C senior review</p>
+
+<hr />
+
+<!-- ====================================================================== -->
+<h2 id="phase-bc-senior-review">Senior review Phase B + C &mdash; Opus 4.7 patches</h2>
+
+<p>Post-implementation review (Opus 4.7) covering Phase B (mode system) + Phase C (smart rendering primitives + integration completion) together. Plan deliverables verified end-to-end against the running test suite + integrated dispatch path. Three actionable findings patched; zero regressions; +3 net new tests; tech-freshness OK (no upgrades required).</p>
+
+<div class="card">
+  <h3>Scope checklist &mdash; Phase B</h3>
+  <ul class="checklist">
+    <li class="done"><strong>B.1</strong> &mdash; <code>VerbosityMode</code> + <code>shouldEmit</code> + <code>resolveMode</code> in <code>src/session/verbosity.ts</code>. Filter matrix verified per §D3 (summary suppresses tool_use / text / tool_result-ok / status; passes errors + done + session + failed results; verbose enables everything). Exhaustiveness assertion guards future <code>AgentEvent</code> additions.</li>
+    <li class="done"><strong>B.2</strong> &mdash; Idempotent ALTER TABLE for <code>sessions.verbosity_mode</code> (PRAGMA-probed) + CREATE TABLE IF NOT EXISTS <code>chat_settings</code>. 5 store helpers all coerce DB values via <code>isVerbosityMode</code>. <code>verbosity-store.test.ts</code> covers v1.0 → v1.1 forward migration + idempotent re-open + defensive null-on-garbage.</li>
+    <li class="done"><strong>B.3</strong> &mdash; <code>/mode</code> + <code>/settings</code> commands in <code>commands/index.ts</code>; 2&times;2 picker in <code>verbosityModeKeyboard</code>; callbacks <code>mode:set:&lt;name&gt;</code> + <code>settings:mode:&lt;name&gt;</code> in <code>router.ts</code>; slash menu grown 11 → 13 in <code>commands-registry.ts</code>.</li>
+    <li class="done"><strong>B.4</strong> &mdash; Dispatch filter wired with one-shot resolve at turn start + per-session mode cache. <code>invalidateSessionModeCache</code> + <code>invalidateChatModeCache</code> wired to the callbacks. Bug pre-patches: cache leaked entries on session close (P3 below).</li>
+    <li class="done"><strong>B.5</strong> &mdash; First-boot announcement in <code>src/index.ts</code> with <code>chatSettingsExists</code> probe; failure-tolerant; idempotent via row insert at end.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Scope checklist &mdash; Phase C (primitives + integration)</h3>
+  <ul class="checklist">
+    <li class="done"><strong>C.1</strong> &mdash; <code>markdown.ts</code> escape helpers. Spec coverage verified against the grammY MarkdownV2 reference. 27 tests including all-specials, embedded backticks, Vietnamese/RTL/emoji edge cases. The "alternation, not character class" decision is documented.</li>
+    <li class="done"><strong>C.2</strong> &mdash; <code>code-fence.ts</code> auto-detection (JSON / diff / shell / stack / monospace). Conservative ≥2-marker thresholds. 19 tests cover happy paths + negatives ("user said {hello}", naked $variable, single + bullet).</li>
+    <li class="done"><strong>C.3</strong> &mdash; <code>tool-render.ts</code> diff stats + <code>diff-cache.ts</code> per-session TTL+LRU. Verified clearSession O(1) shard drop; opportunistic sweep on writes (no global timer). 19 tests.</li>
+    <li class="done"><strong>C.4</strong> &mdash; <code>tool-collapse.ts</code> 5s burst collapse. Sweep timer <code>.unref()</code>'d; per-session keying for race isolation. 10 tests.</li>
+    <li class="done"><strong>C.5</strong> &mdash; <code>tool-render.ts</code> git-root collapse with TTL cache + walk-bounded; <code>path.parse(p).root</code> cross-platform stop condition. 6 git-root tests added.</li>
+    <li class="done"><strong>INT.1&ndash;INT.5</strong> &mdash; All five integration points wired in <code>commands/index.ts</code> + <code>router.ts</code> + <code>session/manager.ts</code> hook callers + <code>runtime-state.ts</code> singletons. Bug pre-patches: <code>diff:show</code> missing chat ownership check (P1 below) + collapse-burst tool_result orphan regression (P1 below).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Findings + patches</h3>
+  <table>
+    <thead>
+      <tr><th>Severity</th><th>Finding</th><th>Patch</th><th>Files</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="badge badge-warn">[P1]</span></td>
+        <td><strong>Collapse-burst tool_result orphan regression.</strong> Phase C.4 collapse manager folds N tool_use events into 1 message, but the integration only enqueued ONE pending entry (on the first send). For adapters that emit one tool_result per tool_use (Codex, Cursor), only the FIRST tool_result resolved into the collapsed message &mdash; the remaining N-1 fell through to the orphan branch and were sent as fresh, redundant <code>[A] ✅ Read ok</code> messages. Net effect: a 3-Read burst produced 1 collapsed + 2 orphan messages instead of a single merged message, defeating the collapse UX promise.</td>
+        <td>In the <code>collapse.action === 'edit'</code> branch, also <code>pending.addPending(e.tool, payload, Promise.resolve(collapse.msgId))</code> so each burst event has a pending entry. To prevent the LIFO consume from rendering a stale older line, added <code>PendingTools.updateAllPayloads(toolName, mut)</code> that refreshes EVERY matching entry's stored line. All N tool_result events now resolve a pending entry and editPlain the SAME collapsed message; intermediate edits are idempotent (Telegram swallows "message is not modified"). New tests: <em>updateAllPayloads &times;2</em> in <code>pending-tools.test.ts</code>, <em>collapse-burst: every tool_result merges into the collapsed message</em> in <code>tool-result-dispatch.test.ts</code>.</td>
+        <td><code>src/bot/pending-tools.ts</code>, <code>src/bot/commands/index.ts</code>, <code>tests/pending-tools.test.ts</code>, <code>tests/tool-result-dispatch.test.ts</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-warn">[P1]</span></td>
+        <td><strong>Missing chat ownership check on <code>diff:show</code> callback.</strong> The handler in <code>router.ts</code> looked up the cached diff by <code>(sessionId, callId)</code> without verifying the session belongs to the current chat. With multiple users in <code>allowed_user_ids</code>, user B could (in theory) replay user A's button callback_data and surface user A's diff. Mirrors a security pattern already enforced on <code>session:switch</code> / <code>session:close</code> / <code>session:handoff</code>.</td>
+        <td>Added a chat-id guard at the top of <code>diffShowHandler</code>: lookup <code>store.getSession(sessionId)</code> and bail with <em>"not found"</em> when missing OR <code>chat_id !== ctx.chat.id</code>. Also enriched the plain-text fallback to include the file-path header so context isn't lost when MarkdownV2 fails. (Direct unit test deferred &mdash; router callback wiring isn't unit-testable without invasive refactor; the change matches the existing chat-id pattern verified by <code>router-p0.test.ts</code> for switch/close.)</td>
+        <td><code>src/bot/router.ts</code></td>
+      </tr>
+      <tr>
+        <td><span class="badge badge-muted">[P3]</span></td>
+        <td><strong><code>sessionModeCache</code> leak on session close.</strong> The per-session resolved-mode cache (Phase B.4) is never evicted, so a long-running daemon accumulates entries for closed sessions. Bounded by total session count but still a slow leak.</td>
+        <td>Added <code>invalidateSessionModeCache(target.id)</code> alongside the existing <code>discardBuffer / toolCollapseMgr.clearSession / diffCache.clearSession</code> calls in BOTH session-close paths (<code>/session close</code> in <code>commands/index.ts</code> AND <code>session:close:&lt;id&gt;</code> in <code>router.ts</code>). No new test &mdash; verified by inspection that all four cleanups now happen in lockstep.</td>
+        <td><code>src/bot/commands/index.ts</code>, <code>src/bot/router.ts</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Tech freshness re-verification (Context7)</h3>
+  <table>
+    <thead>
+      <tr><th>Library</th><th>Version in repo</th><th>Status</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>grammy</code> (<code>/websites/grammy_dev</code>)</td>
+        <td>1.43.0</td>
+        <td><span class="badge badge-success">OK</span></td>
+        <td>Re-confirmed <code>parse_mode: 'MarkdownV2'</code> + <code>sendMessage(chat, text, { parse_mode })</code> + <code>editMessageReplyMarkup(chat, message_id, other?, signal?)</code> shapes are current via the live <code>grammy.dev</code> docs. No deprecated patterns introduced by Phase C's MarkdownV2 migration.</td>
+      </tr>
+      <tr>
+        <td><code>better-sqlite3</code> (<code>/wiselibs/better-sqlite3</code>)</td>
+        <td>12.10.0</td>
+        <td><span class="badge badge-success">OK</span></td>
+        <td>Confirmed <code>db.pragma('table_info(sessions)')</code> + probe-then-ALTER + <code>INSERT ... ON CONFLICT(chat_id) DO UPDATE SET ...</code> are canonical patterns. <code>pragma</code> normalizes SQLite quirks better than prepared statements &mdash; matches our store usage.</td>
+      </tr>
+      <tr>
+        <td><code>vitest</code></td>
+        <td>4.1.7</td>
+        <td><span class="badge badge-success">OK</span></td>
+        <td>No new APIs touched. <code>vi.useFakeTimers()</code> + <code>vi.advanceTimersByTimeAsync()</code> still the canonical async-timer pattern; mixed real/fake usage in the burst tests follows the same shape as the Phase A defer fallback test.</td>
+      </tr>
+    </tbody>
+  </table>
+  <p><strong>Verdict</strong>: No upgrades flagged. Phase B + C ship on current stable dependency surface.</p>
+</div>
+
+<div class="card">
+  <h3>Test results</h3>
+  <ul>
+    <li>Pre-review: <strong>646 passed / 2 skipped / 53 files</strong>.</li>
+    <li>Post-review: <strong>649 passed / 2 skipped / 53 files</strong>. Net +3 tests, 0 files added. Breakdown:
+      <ul>
+        <li><code>pending-tools.test.ts</code>: 11 → 13 (<em>updateAllPayloads</em> happy + no-match cases).</li>
+        <li><code>tool-result-dispatch.test.ts</code>: 10 → 11 (<em>collapse-burst: every tool_result merges</em>).</li>
+      </ul>
+    </li>
+    <li>All 646 pre-existing tests unchanged. <code>npm run typecheck</code> passes clean.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Cross-platform notes</h3>
+  <ul>
+    <li>Verbosity store ALTER + chat_settings CREATE use ANSI SQL + standard SQLite PRAGMA &mdash; identical behavior on macOS / Linux / Windows.</li>
+    <li>Diff cache + collapse manager have no platform-dependent state. Timer <code>.unref()</code> is a no-op on older Node (cross-version safe).</li>
+    <li>MarkdownV2 helpers are pure-string &mdash; no platform interactions. Unicode (Vietnamese, RTL, emoji) covered in <code>markdown.test.ts</code> adversarial cases.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Scope verdict</h3>
+  <p><strong>APPROVED.</strong> All Phase B + Phase C deliverables (including the integration scope completion noted in the prior SDD section) verified end-to-end:</p>
+  <ul>
+    <li>Mode system works (per-session override + chat default + announcement + cache + filter matrix).</li>
+    <li>Smart rendering primitives composed correctly (MarkdownV2 wrap + code-fence detect + diff cache + collapse manager).</li>
+    <li>Integration wires every primitive into the dispatch hot path; user-visible delta from Phase A+B to Phase C end-state matches the §"User-visible delta" mockup.</li>
+    <li>Three findings (2x P1, 1x P3) patched in-place &mdash; no scope creep, no out-of-band refactors.</li>
+  </ul>
+  <p><strong>Test count locked at 649 / 2 skipped / 53 files.</strong></p>
+</div>
+
+<p style="color: var(--text-faint); font-size: 14px;">SDD v1.3 &middot; 2026-05-21 &middot; Phase B+C senior review patches applied &middot; ready for Phase D</p>
+
+<hr/>
+
+<!-- ====================================================================== -->
+<h2 id="phase-d">Phase D &mdash; Agentic compression</h2>
+
+<h3 id="phase-d-context">Context</h3>
+<p>Phase A surfaced <code>tool_result</code> events. Phase B added mode-aware filtering. Phase C wrapped structured text in code fences and collapsed bursts. None of those touched the most expensive UX failure mode of v1.0: <strong>raw 200-line bash output dropped verbatim into Telegram</strong>. Rule-based truncation (the <code>preview.slice(0, 240)</code> path) loses the meaningful signal &mdash; the test count, the failure file, the deprecation warning &mdash; and keeps the noise.</p>
+<p>Phase D inverts the relationship: instead of telecode trying to format the output, <strong>telecode asks the running agent to summarize it</strong>. The agent already has full project context (recent commands, file layout, test conventions) so its 2-line summary is dramatically more useful than any heuristic we could ship. Plan §7 calls this the "killer feature" of v1.1.</p>
+
+<h4>The D2 decision &mdash; reuse session, share its budget</h4>
+<p>We considered three architectures before the user locked in the call:</p>
+<ol>
+  <li><strong>Separate Anthropic API key</strong> &mdash; cleanest cost separation, but adds a second auth surface, second rate-limit envelope, and a config step that breaks the "telegram-first, zero-setup" promise.</li>
+  <li><strong>Local rule-based summarize</strong> &mdash; no extra cost, but the whole reason rule-based is bad is exactly what we're trying to fix.</li>
+  <li><strong>Reuse the running session</strong> (<span class="badge badge-success">chosen</span>) &mdash; inject a hidden prompt through the same adapter that handled the user's turn. Same auth, same provider, same budget. Cost transparency comes from per-call <code>logger.info</code> entries so the user can audit via <code>journalctl</code>.</li>
+</ol>
+<p>The trade-off lives in plan §10 R2 (cost transparency) and §10 R3 (context-window pollution). Mitigations: conservative threshold (default 500 chars), per-session summarize mutex (no spam under burst), and graceful fallback to the original truncated preview on timeout / error.</p>
+
+<h4>Visual delta &mdash; before / after</h4>
+<div class="compare">
+  <div class="col before">
+    <h5>Phase A+B+C (200-line dump)</h5>
+    <pre>[refactor-auth] 🔧 Bash &middot; npm test
+    ✅ Bash ok
+    PASS tests/foo.test.ts
+    PASS tests/bar.test.ts
+    ... 198 more lines ...
+[refactor-auth] ✅ done · $0.0231</pre>
+  </div>
+  <div class="col after">
+    <h5>Phase D (agent-summarized)</h5>
+    <pre>[refactor-auth] 🔧 Bash · npm test
+    ✅ Bash ok
+    Đã chạy 432 tests, 2 skipped, all pass trong 3.5s.
+    [📜 Full output (200 lines)] [💬 Re-summarize]
+[refactor-auth] ✅ Done · 47s · $0.0231
+    Tách validateToken ra file riêng, thêm 5 unit tests, all pass.</pre>
+  </div>
+</div>
+
+<h3 id="phase-d-freshness">Tech freshness (Context7)</h3>
+<table>
+  <thead>
+    <tr><th>Library</th><th>Version in repo</th><th>Latest stable</th><th>Status</th><th>Action</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>@anthropic-ai/claude-agent-sdk</code> (<code>/websites/code_claude</code>)</td>
+      <td>0.3.145</td>
+      <td>0.3.x</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Context7 confirmed the canonical session-resume pattern: pass <code>resume: sessionId</code> in <code>query(options)</code>. The hidden summarize prompt rides the same <code>SessionManager.dispatch</code> path the user's prompts already use &mdash; no new SDK surface. <code>session_id</code> from <code>ResultMessage</code> is the same value we already persist in <code>sessions.sdk_session_id</code>; reusing it is the documented "follow-up" pattern.</td>
+    </tr>
+    <tr>
+      <td><code>async-mutex</code> (<code>/dirtyhairy/async-mutex</code>)</td>
+      <td>0.5.0</td>
+      <td>0.5.x</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Context7 confirmed <code>Mutex.runExclusive</code>, <code>waitForUnlock</code>, and <code>isLocked</code> are the current surface. We use a new per-session mutex map (<code>summarizeMutexes</code>) to coalesce parallel summarize calls; <code>waitForIdle</code> on <code>SessionManager</code> calls <code>mutex.waitForUnlock</code> so summarize queues behind the busy mutex instead of getting rejected with the "⏳ session busy" short-circuit.</td>
+    </tr>
+    <tr>
+      <td><code>grammy</code> (<code>/websites/grammy_dev</code>)</td>
+      <td>1.43.0</td>
+      <td>1.43.0</td>
+      <td><span class="badge badge-success">OK</span></td>
+      <td>Re-confirmed <code>editMessageText</code> + <code>editMessageReplyMarkup</code> shapes accept the callback-data we generate (<code>summary:ai:&lt;messageId&gt;</code>, <code>summary:full:&lt;messageId&gt;</code>). The 64-byte callback_data limit is well within budget (max ~40 chars per our format).</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3 id="phase-d-design">Design decisions</h3>
+
+<div class="card">
+  <h3>D1 &mdash; Pure helper module <code>src/agents/summarize.ts</code>; no adapter changes</h3>
+  <p>We <em>could</em> have added a <code>summarize(prompt)</code> method to the <code>AgentAdapter</code> interface and asked each adapter (Claude, Codex, Cursor, Kiro) to implement it natively. We deliberately did not, for three reasons:</p>
+  <ul>
+    <li><strong>Surface stability</strong>: <code>AgentAdapter</code> is the v1.0 contract. Adding a method forces every existing adapter to upgrade, including the experimental Cursor / Codex adapters that aren't fully production-ready.</li>
+    <li><strong>One mechanism, every adapter</strong>: routing summarize through <code>SessionManager.dispatch</code> reuses the same code path that handles user prompts &mdash; ANY future adapter automatically gets summarize support the day it registers.</li>
+    <li><strong>Simpler reasoning</strong>: a summary call is just another agent turn. Same logging, same abort propagation, same DB updates &mdash; no parallel control flow to debug.</li>
+  </ul>
+  <p>Signature: <code>summarizeWithSession({ manager, store, sessionId, content, instruction, kind, timeoutMs })</code> returns <code>Promise&lt;string | null&gt;</code>. Callers MUST handle <code>null</code> by falling back to the original content &mdash; never crash, never block.</p>
+</div>
+
+<div class="card">
+  <h3>D2 &mdash; Two mutexes per session, different jobs</h3>
+  <p>Three concurrency hazards lurk:</p>
+  <ol>
+    <li><strong>User dispatch vs summarize</strong>: the user's turn holds <code>SessionManager</code>'s per-session busy mutex; a summarize call hitting <code>manager.dispatch</code> mid-turn would be rejected by the <code>isLocked</code> short-circuit. Fix: <code>SessionManager.waitForIdle</code> (calls <code>mutex.waitForUnlock</code>). Summarize queues instead of erroring.</li>
+    <li><strong>Two summarize calls racing for the same session</strong>: e.g. user taps [💬 AI summary] on two tool_result messages within 200ms. Both would queue on the busy mutex, both would consume a roundtrip. Fix: a separate <code>summarizeMutexes: Map&lt;sessionId, Mutex&gt;</code>. <code>runExclusive</code> serializes them so the second call sees a fresh budget after the first returns.</li>
+    <li><strong>Two summarize calls for DIFFERENT sessions</strong>: must run concurrently (no shared state). Verified by <code>tests/summarize.test.ts</code> "parallel summarize calls for DIFFERENT sessions do NOT serialize" &mdash; we assert <code>maxInflight === 2</code> when sidA + sidB summarize together.</li>
+  </ol>
+  <p>The two mutexes don't compose &mdash; they protect different resources. The session-busy mutex protects the agent's wire (you can't have two adapter.run calls open with the same resume id); the summarize mutex protects telecode's cost story (you don't accidentally bill the user for redundant calls).</p>
+</div>
+
+<div class="card">
+  <h3>D3 &mdash; Threshold + env override, conservative default</h3>
+  <p>500-char default (<code>autoSummarizeThreshold()</code>). Rationale:</p>
+  <ul>
+    <li>Short outputs (single test result, one-line shell output, file-write confirmation) already fit the 240-char truncated preview cleanly. Summarizing them wastes a roundtrip and produces worse output than the raw text.</li>
+    <li>500 chars is roughly 10 lines of typical bash output &mdash; well past the "I can scan this in a glance" threshold for phone-format Telegram messages.</li>
+    <li>Power users can tune via <code>TELECODE_AUTO_SUMMARIZE_THRESHOLD</code> (e.g. <code>0</code> to summarize EVERYTHING, or <code>5000</code> to only condense massive log dumps).</li>
+  </ul>
+  <p>Verbose mode bypasses the threshold entirely &mdash; verbose users opted into the raw firehose, summarize would defeat the purpose.</p>
+</div>
+
+<div class="card">
+  <h3>D4 &mdash; Cache scope: in-memory, TTL 1h, LRU 100, session-keyed for ownership</h3>
+  <p>The summary cache (<code>SummaryCache</code> in <code>src/bot/summary-cache.ts</code>) maps <code>messageId &rarr; { fullText, toolLabel, sessionId, tsMs }</code>. The <code>sessionId</code> field is critical for two reasons:</p>
+  <ul>
+    <li><strong>Ownership check</strong>: when a user taps <code>summary:ai:&lt;msgId&gt;</code> we lookup the cached <code>sessionId</code>, fetch the session row, and verify <code>session.chat_id === ctx.chat.id</code>. Mirrors the Phase C [P1] senior-review fix for <code>diff:show</code> &mdash; without this, user B could in theory replay user A's button.</li>
+    <li><strong>Bulk eviction on session close</strong>: <code>clearSession(sessionId)</code> walks the cache once and drops every matching entry. The session-close paths (<code>/session close</code> + <code>session:close:&lt;id&gt;</code> callback) now call this alongside the existing <code>diffCache.clearSession</code> + <code>toolCollapseMgr.clearSession</code> + <code>discardSummarizeMutex</code> trio.</li>
+  </ul>
+  <p>TTL 1h is intentionally long &mdash; a user might tap a button hours after the agent finished. LRU cap 100 bounds memory; opportunistic sweep on writes (no global timer pinning Node alive).</p>
+</div>
+
+<div class="card">
+  <h3>D5 &mdash; Two-phase render for auto-summarize</h3>
+  <p>The dispatcher does NOT block waiting for the summary. On <code>tool_result</code> with <code>preview.length &gt; threshold</code>:</p>
+  <ol>
+    <li><strong>Immediate edit</strong>: replace the deferred <code>tool_use</code> message with <code>🔧 Bash · ls\n✅ Bash ok\n⏳ Summarizing 1.2KB output…</code>. User sees feedback within the normal dispatch latency.</li>
+    <li><strong>Async summarize</strong>: <code>void (async () =&gt; …)</code> fires summarize, which waits for the session mutex (still held by the in-flight turn), then dispatches a hidden prompt.</li>
+    <li><strong>Second edit (success)</strong>: <code>🔧 Bash · ls\n✅ Bash ok\n{summary}</code> with <code>[📜 Full output (N lines)] [💬 Re-summarize]</code> buttons.</li>
+    <li><strong>Second edit (fail)</strong>: replace placeholder with the original truncated preview body + <code>[💬 AI summary]</code> for manual retry. User is never stranded with a stuck "⏳ Summarizing…" message.</li>
+  </ol>
+  <p>The placeholder body's "⏳ Summarizing N output" format encodes the size (via <code>formatBytesShort</code>) so the user knows whether this is a 500-byte blurb or a 12KB log.</p>
+</div>
+
+<h3 id="phase-d-scope">Scope checklist &mdash; Phase D</h3>
+<ul class="checklist">
+  <li class="done"><strong>D.1</strong> &mdash; <code>summarizeWithSession</code> helper in new <code>src/agents/summarize.ts</code>. 30s default timeout, per-session mutex coalesce, fallback null. <code>SessionManager.waitForIdle</code> added to bypass the busy short-circuit. Tests <code>tests/summarize.test.ts</code> &times; 10 (happy / no-resume / vanished / timeout / error / partial / mutex serializes / cross-session parallel / discard mutex / default timeout constant).</li>
+  <li class="done"><strong>D.2</strong> &mdash; Auto-summarize tool_result branch in <code>src/bot/commands/index.ts</code>. Threshold gate (default 500, env override). Two-phase render (placeholder &rarr; summary OR fallback). Tests <code>tests/auto-summarize.test.ts</code> &times; 7 (short skip / long happy / verbose skip / no-resume skip / failure fallback / env threshold / cache populated).</li>
+  <li class="done"><strong>D.3</strong> &mdash; <code>[💬 AI summary]</code> button on tool_result messages with cached preview. Router callback <code>summary:ai:&lt;messageId&gt;</code> in <code>src/bot/router.ts</code>. Cache + ownership check. Tests <code>tests/summary-on-demand.test.ts</code> &times; 9 (cache set/get/TTL/LRU/touch refresh/clearSession + 4 handler-semantics cases incl. ownership + miss + summarize success).</li>
+  <li class="done"><strong>D.4</strong> &mdash; Auto done-summary on <code>done</code> branch. Mode = summary OR normal triggers; verbose preserves v1.0 lowercase "done" tail. Approval-pending guard. Tests <code>tests/auto-done-summary.test.ts</code> &times; 7 (normal happy / verbose skip / summary mode trigger / no-resume / failure fallback / no-cost-format / approval-pending guard).</li>
+  <li class="done"><strong>D.5</strong> &mdash; <code>[📜 Full output (N lines)]</code> button on auto-summarize result. Router callback <code>summary:full:&lt;messageId&gt;</code>. MarkdownV2 ```bash fence + split at line boundaries when > 3500 chars + plain-text fallback. Tests <code>tests/summary-full-output.test.ts</code> &times; 8 (verbatim retrieval / split happy / short single / single long line / codeBlock format / miss / cross-chat / TTL).</li>
+</ul>
+
+<h2 id="d-1">D.1 &mdash; Session reinjection helper</h2>
+
+<div class="card">
+  <h3>Files</h3>
+  <ul>
+    <li><strong>New</strong>: <code>src/agents/summarize.ts</code> &mdash; ~190 LoC. Exports <code>summarizeWithSession</code>, <code>summarizeMutexes</code> (for tests), <code>discardSummarizeMutex</code>, <code>DEFAULT_SUMMARIZE_TIMEOUT_MS</code>, type <code>SummarizeKind</code>.</li>
+    <li><strong>Modified</strong>: <code>src/session/manager.ts</code> &mdash; +18 LoC. Added <code>waitForIdle(sessionId)</code> that calls <code>mutex.waitForUnlock</code> (resolves immediately when idle).</li>
+    <li><strong>New tests</strong>: <code>tests/summarize.test.ts</code> &mdash; 10 cases. Mocks an in-process adapter so we don't touch the real SDK; verifies happy path, timeout, error, mutex coalesce, cross-session parallelism, and TTL constants.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Race-safety notes</h3>
+  <p>The dispatch loop inside <code>summarizeWithSession</code> is structured to fail-safe:</p>
+  <ol>
+    <li>Acquire summarize mutex (queues parallel summarize calls for same session).</li>
+    <li>Verify session row exists + has <code>sdk_session_id</code> &mdash; bail with <code>null</code> if not.</li>
+    <li><code>waitForIdle</code> against the session-busy mutex; bail with <code>null</code> if the overall timeout elapses during the wait.</li>
+    <li>Dispatch the hidden prompt; collect text events. Stop collecting on done/error.</li>
+    <li>Race the dispatch promise against a remaining-budget timeout (<code>timeoutMs - elapsedDuringWait</code>).</li>
+    <li>Trim + return; log <code>{ sessionId, kind, elapsedMs, inputChars, outputChars }</code> for cost auditing.</li>
+  </ol>
+  <p>The "race the dispatch against the timeout" pattern doesn't <em>abort</em> the underlying dispatch — that would interrupt the user's session. It just stops waiting for the answer; the dispatch eventually finishes and its result is dropped on the floor. Acceptable: summary is best-effort, never critical-path.</p>
+</div>
+
+<h2 id="d-2">D.2 &mdash; Auto-summarize long tool_result</h2>
+
+<div class="card">
+  <h3>Files</h3>
+  <ul>
+    <li><strong>New</strong>: <code>src/bot/summary-cache.ts</code> &mdash; <code>SummaryCache</code> class + process singleton + <code>_resetSummaryCache</code> for tests. TTL 1h, LRU 100.</li>
+    <li><strong>Modified</strong>: <code>src/bot/commands/index.ts</code> &mdash; new <code>autoSummarizeThreshold()</code> helper (env-overridable), <code>AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION</code> + <code>AUTO_DONE_SUMMARIZE_INSTRUCTION</code> constants, <code>formatBytesShort()</code> helper, and a ~90-line block in the <code>tool_result</code> branch that handles placeholder + async summarize + fallback. Total added: ~140 LoC.</li>
+    <li><strong>New tests</strong>: <code>tests/auto-summarize.test.ts</code> &mdash; 7 cases including the multi-turn adapter harness that responds to both the user's prompt and the subsequent summarize prompt.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Why the placeholder body shows "✅ Bash ok" before the summary lands</h3>
+  <p>The user already knows the tool succeeded (the ✅ marker is unambiguous). What they don't know is what the output SAID. The placeholder pattern <code>🔧 Bash · ls\n✅ Bash ok\n⏳ Summarizing 1.2KB output…</code> respects that &mdash; the result status is shown immediately, only the content interpretation is deferred.</p>
+  <p>Alternatives considered:</p>
+  <ul>
+    <li><strong>Placeholder shows ONLY "⏳ Summarizing…"</strong> &mdash; hides the result status. Bad if summarize takes &gt;5s — the user sees nothing actionable.</li>
+    <li><strong>Show truncated preview + summary together</strong> &mdash; doubles the message length. Defeats the "fits on phone glance" goal.</li>
+  </ul>
+</div>
+
+<h2 id="d-3">D.3 &mdash; On-demand AI summary button</h2>
+
+<div class="card">
+  <h3>Files</h3>
+  <ul>
+    <li><strong>Modified</strong>: <code>src/bot/router.ts</code> &mdash; new <code>summaryAiHandler</code> closure registered as <code>.on('summary', 'ai', …)</code>. ~95 LoC. Mirrors the chat-id ownership pattern from <code>diff:show</code>.</li>
+    <li><strong>Modified</strong>: <code>src/bot/commands/index.ts</code> &mdash; non-auto-summarize tool_result path now attaches a <code>[💬 AI summary]</code> button when <code>fullPreview.length &gt; 0</code> AND session has a resume id. Orphan tool_result also gets the button (pre-send to capture id, then editReplyMarkup with the real callback_data).</li>
+    <li><strong>New tests</strong>: <code>tests/summary-on-demand.test.ts</code> &mdash; 9 cases covering both <code>SummaryCache</code> invariants and handler semantics.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Why button data encodes messageId not "sessionId + callId"</h3>
+  <p>Phase C.3's <code>diff:show</code> uses <code>diff:show:&lt;sessionId&gt;:&lt;callId&gt;</code> because diff entries are keyed on a synthetic <code>callId</code> per tool invocation. Phase D works differently &mdash; the cache key is the <em>Telegram message id</em>, which is unique system-wide and already captures session ownership via the cached <code>sessionId</code> field. Encoding just <code>summary:ai:&lt;messageId&gt;</code> keeps callback data shorter (under the 64-byte Telegram limit even for jumbo message ids) and removes the ambiguity of which session owns a given button when a message gets re-edited.</p>
+</div>
+
+<h2 id="d-4">D.4 &mdash; Auto done-summary</h2>
+
+<div class="card">
+  <h3>Files</h3>
+  <ul>
+    <li><strong>Modified</strong>: <code>src/bot/commands/index.ts</code> &mdash; replaced the <code>done</code> branch's 8-line tail-send with a ~50-line two-phase block. Verbose mode preserves the v1.0 lowercase "done" tail byte-identically. Approval-pending guard inspects <code>session.status === 'waiting_approval'</code> defensively.</li>
+    <li><strong>New tests</strong>: <code>tests/auto-done-summary.test.ts</code> &mdash; 7 cases. The multi-turn adapter harness lets us exercise <em>both</em> the user dispatch and the subsequent summarize dispatch with predictable text responses.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Why the done card is sent first, then edited</h3>
+  <p>The dispatch turn's <code>done</code> event is the user's "we're back to idle" signal. Delaying it by 5-30 seconds (the summarize call) would feel like the session was hung. Sending the enhanced tail (<code>✅ Done · 47s · $0.0231</code>) immediately + editing it later when the summary arrives keeps the perceived latency unchanged while still delivering the agentic value-add.</p>
+  <p>If summarize fails (timeout / null), the user is left with the enhanced tail &mdash; still strictly more informative than v1.0's <code>✅ done · $0.023</code>. No surprise, no stuck state.</p>
+</div>
+
+<h2 id="d-5">D.5 &mdash; Full output viewer</h2>
+
+<div class="card">
+  <h3>Files</h3>
+  <ul>
+    <li><strong>Modified</strong>: <code>src/bot/router.ts</code> &mdash; new <code>summaryFullHandler</code> closure registered as <code>.on('summary', 'full', …)</code>. ~80 LoC. Splits cached full text at line boundaries when &gt; 3500 chars; wraps each part in <code>codeBlock(part, 'bash')</code> via the shared MarkdownV2 helpers; falls back to plain-text reply on parser errors.</li>
+    <li><strong>Modified</strong>: <code>src/bot/commands/index.ts</code> &mdash; auto-summarize success path attaches <code>[📜 Full output (N lines)] [💬 Re-summarize]</code>. Line count is computed via <code>fullPreview.split('\n').length</code> at button-render time so the user sees how much they're about to fetch.</li>
+    <li><strong>New tests</strong>: <code>tests/summary-full-output.test.ts</code> &mdash; 8 cases. Validates the verbatim retrieval, line-boundary split (incl. the "single line &gt; max" edge case where we MUST emit one part rather than chop mid-line), MarkdownV2 fence format, miss + cross-chat + TTL.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Why a single line > 3500 chars stays as one part</h3>
+  <p>Mid-line truncation of bash output is worse than overflow &mdash; the user loses the meaningful end (often the actual error message). Telegram's 4096-char hard limit will then reject the send; the plain-text fallback catches that and posts the un-fenced raw line, which clips at the wire level but at least delivers SOME content. Honest failure beats silent truncation.</p>
+</div>
+
+<h2 id="phase-d-verification">Phase D &mdash; Verification</h2>
+
+<div class="card">
+  <h3>Test counts</h3>
+  <ul>
+    <li>Baseline (post Phase B+C senior review): <strong>649 passed / 2 skipped / 53 files</strong>.</li>
+    <li>Phase D: <strong>690 passed / 2 skipped / 58 files</strong>. Net +41 tests, +5 files.</li>
+    <li>Breakdown:
+      <ul>
+        <li><code>tests/summarize.test.ts</code> &mdash; 10 cases (D.1).</li>
+        <li><code>tests/auto-summarize.test.ts</code> &mdash; 7 cases (D.2).</li>
+        <li><code>tests/summary-on-demand.test.ts</code> &mdash; 9 cases (D.3 + cache invariants).</li>
+        <li><code>tests/auto-done-summary.test.ts</code> &mdash; 7 cases (D.4).</li>
+        <li><code>tests/summary-full-output.test.ts</code> &mdash; 8 cases (D.5).</li>
+      </ul>
+    </li>
+    <li>All 649 pre-existing tests unchanged. <code>npx tsc --noEmit</code> passes clean.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Manual smoke (recommended pre-ship)</h3>
+  <ul>
+    <li><strong>Auto-summarize on long Bash output</strong>: run a Claude session, prompt "run npm test and report what happened" → observe placeholder "⏳ Summarizing N output…" within ~2s, then summary edit within 5-30s depending on agent latency. Buttons [📜 Full output] + [💬 Re-summarize] visible after.</li>
+    <li><strong>On-demand summary on regular tool_result</strong>: switch to <code>/mode normal</code>, run a quick command (e.g. <code>ls</code>) → observe tool_result with [💬 AI summary] button → tap → observe placeholder "⏳ Summarizing on demand…" → final summary.</li>
+    <li><strong>Auto done-summary</strong>: in summary mode, finish any non-trivial task → observe <code>✅ Done · 47s · $0.0231</code> appears immediately, then the summary line appears edited-in 5-30s later.</li>
+    <li><strong>Verbose preservation</strong>: switch to <code>/mode verbose</code>, run anything → observe the v1.0 lowercase <code>✅ done · $0.0231</code> tail (no "Done" capitalization, no duration breakdown, no summary edit).</li>
+    <li><strong>Threshold override</strong>: <code>export TELECODE_AUTO_SUMMARIZE_THRESHOLD=0</code> → every tool_result with non-empty preview triggers auto-summarize (useful for stress testing).</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Backward compatibility</h3>
+  <ul>
+    <li><strong>Verbose mode preserved byte-identically</strong>: the <code>currentMode === 'verbose'</code> branch in tool_result skips auto-summarize entirely; the <code>done</code> branch's <code>enableAutoDoneSummary</code> guard short-circuits to the v1.0 tail.</li>
+    <li><strong>No DB schema change</strong>: the summary cache is in-memory; no migration, no SQLite ALTER. Daemon restart loses cache &mdash; intentional (transient viewer state).</li>
+    <li><strong>No adapter API change</strong>: <code>AgentAdapter</code> interface unchanged. New adapters automatically inherit Phase D support the moment they register.</li>
+    <li><strong>Sessions without sdk_session_id</strong>: bail to the v1.0 baseline render. Common case: fresh session that never ran a prompt yet.</li>
+    <li><strong>Cost transparency</strong>: every summarize call writes a structured log entry (<code>kind, sessionId, elapsedMs, inputChars, outputChars, agent</code>). User can audit cost via <code>journalctl -u telecode</code> or the daily rolling log file.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Cross-platform notes</h3>
+  <ul>
+    <li>No platform-specific code in Phase D. The summarize module uses pure JS + the existing adapter abstraction. <code>SessionManager.waitForIdle</code> reuses <code>async-mutex</code>'s cross-platform implementation.</li>
+    <li>Markdown rendering inside <code>summaryFullHandler</code> uses the Phase C helpers (already cross-platform).</li>
+    <li>The summary cache is a plain JS Map &mdash; no filesystem, no native bindings.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Out of scope (deferred to v1.2+)</h3>
+  <ul>
+    <li><strong>Multi-language summary</strong>: instruction text is hardcoded Vietnamese (matches user locale). Localisation deferred per plan §13.</li>
+    <li><strong>Cost budgeting / auto-disable</strong>: a daily cost cap that pauses auto-summarize when exceeded. Plan §13 also flags this. For v1.1 the user audits via logger and can override threshold to disable per-session.</li>
+    <li><strong>Streaming summary display</strong>: currently we collect all chunks then edit once. A streaming edit (chunk-by-chunk) would feel more responsive but adds Telegram edit-rate-limit complexity.</li>
+    <li><strong>Cross-session memory</strong>: each summarize call is isolated to one session's context. Cross-session summarize (e.g. "what did I do across all sessions today") deferred.</li>
+  </ul>
+</div>
+
+<hr/>
+
+<h2 id="phase-e">Phase E &mdash; Activity indicators</h2>
+<p class="section-sub">Single rolling progress message per session: bootstrap on first event, edit in place as work progresses, finalize on done/error. Plan reference: <a href="../plans/telecode-v1.1-streaming-ux-redesign.html#phase-e">plan &sect;8</a>.</p>
+
+<div class="card">
+  <h3>Context</h3>
+  <p>After Phase B suppressed <code>tool_use</code>, <code>text</code>, and <code>status</code> events in <code>summary</code> mode (and <code>status</code> + <code>thinking</code> in <code>normal</code>), users have no visible heartbeat during long agent turns. Phase D's done-summary lands AFTER the turn ends; users on flaky mobile connections start to question whether the daemon is alive when a heavy Bash / Edit / network sequence takes 30+ seconds. A v1.0 firehose of status messages was rejected in plan &sect;1 as too noisy.</p>
+  <p>Solution: maintain ONE Telegram message per active session, edited in place as adapter events flow. The user sees a glance-readable "what's happening right now" line that updates ~once per second (throttled hard at 1500ms) and survives long idle stretches via the ping ladder.</p>
+</div>
+
+<div class="card">
+  <h3>Tech Freshness</h3>
+  <table>
+    <thead><tr><th>Library</th><th>Version</th><th>API used</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><code>grammy</code></td><td>1.43.0</td><td><code>bot.api.sendMessage</code>, <code>editMessageText</code>, <code>deleteMessage</code></td><td>OK &mdash; verified via Context7 (<code>/websites/grammy_dev</code>) on 2026-05-21. Stable since 1.x.</td></tr>
+      <tr><td><code>async-mutex</code></td><td>0.5.0</td><td><code>Mutex.runExclusive</code></td><td>OK &mdash; same API as existing usage in <code>session/manager.ts</code>.</td></tr>
+      <tr><td>node:timers</td><td>built-in</td><td><code>setTimeout</code>/<code>clearTimeout</code> with <code>.unref()</code></td><td>OK &mdash; standard Node 22+ API.</td></tr>
+    </tbody>
+  </table>
+  <p><strong>Telegram rate limits</strong> (verified via Context7 grammy_dev plugins/auto-retry + advanced/flood):</p>
+  <ul>
+    <li>20 edits/minute/group chat (documented soft cap; Telegram may change).</li>
+    <li>Our 1500ms throttle = 40 edits/min/session worst case. In a 1:1 chat (no group) we stay well below per-chat caps. In a hypothetical shared group with 2+ concurrent sessions, total chat-level edit rate could exceed the soft cap &mdash; mitigated by:
+      <ul>
+        <li>Edits dropped silently when text hasn't changed (idempotent updates contribute zero traffic).</li>
+        <li>429 responses trigger <code>handleEditError</code> in the broader notifier; the ProgressManager's edits are best-effort and tolerate transient failures without stalling the turn.</li>
+        <li>Group-chat use is out of v1.1 personas (plan &sect;2.1, persona profile = solo dev DMs the bot).</li>
+      </ul>
+    </li>
+    <li>Auto-retry plugin not wired for the progress path on purpose &mdash; progress is best-effort and should not block dispatch on retry latency.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>Design Decisions</h3>
+  <ul>
+    <li><strong>Single message per session, not per turn</strong>: the progress message exists for the lifetime of an active dispatch (start &rarr; done/error). New turn = new message; aborted turn (error) leaves a tombstone visible until next turn.</li>
+    <li><strong>Throttle 1500ms</strong>: balances responsiveness (felt as "live") against Telegram limits. Throttle is a HARD GATE &mdash; dropped edits are not queued. The next event past the gate carries the latest state, which is the correct UX for a status line.</li>
+    <li><strong>Idle ping ladder</strong>: 30s, 60s, 2m, 3m, 4m, 5m+. Each step reschedules on activity (reset to 30s on every <code>update()</code>). Past 5m+ no more pings &mdash; user should <code>/stop</code> themselves. Ladder is data-driven (frozen array) so future tuning is a one-line change.</li>
+    <li><strong>Per-session async-mutex</strong>: start/update/finalize are serialized per session so a fast-arriving event burst cannot interleave a <code>start</code> mid-<code>finalize</code> (which would orphan a freshly-created message). Cross-session: independent mutexes &mdash; sessions for different chats don't block each other.</li>
+    <li><strong>Mode awareness</strong>: <code>verbose</code> mode short-circuits all progress operations. The mode resolver is sync (cached) so we don't add a SQLite hit per event.</li>
+    <li><strong>Sync <code>clear()</code></strong>: used by session-close hooks (<code>router.ts</code>, <code>commands/index.ts</code>). It does NOT call Telegram &mdash; close paths must not block on network IO. The stale message stays on the user's screen until they scroll past, which is acceptable for an explicit close action (vs. <code>finalize()</code> on done/error where the daemon owns the lifecycle).</li>
+    <li><strong>Bootstrap trigger</strong>: ANY event type triggers the first <code>start()</code> if no state exists. Originally considered "status only" but adapters vary on which event arrives first &mdash; <code>tool_use</code> can land before any <code>status</code>. Bootstrapping on first-event gives a uniform UX across Claude/Kiro/Codex/Cursor.</li>
+    <li><strong>Tombstone on error, delete on done</strong>: Phase D's done-summary card supersedes the progress message; deleting avoids stale "⏳ Working…" alongside the summary. Errors leave a tombstone so a user scrolling back can correlate failures.</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>File changes</h3>
+  <table>
+    <thead><tr><th>File</th><th>Change</th></tr></thead>
+    <tbody>
+      <tr><td><code>src/bot/progress.ts</code></td><td>NEW. <code>ProgressManager</code> class + <code>renderStatusEvent</code> pure function + <code>ProgressApi</code>/<code>ModeResolver</code>/<code>AgentEventStatus</code> types.</td></tr>
+      <tr><td><code>src/bot/runtime-state.ts</code></td><td>Add <code>progressMgr</code> singleton binding + <code>initProgressManager()</code> + dispose hook in <code>_resetRuntimeState()</code>.</td></tr>
+      <tr><td><code>src/bot/router.ts</code></td><td>Call <code>initProgressManager()</code> on boot wiring bot.api &amp; mode resolver. Hook <code>progressMgr?.clear(id)</code> into <code>session:close:&lt;id&gt;</code> callback.</td></tr>
+      <tr><td><code>src/bot/commands/index.ts</code></td><td>Wire dispatch event branches: bootstrap on first event, <code>update</code> on status/tool_use/text, <code>finalize</code> on done/error. Hook <code>progressMgr?.clear()</code> into <code>/session close</code> path.</td></tr>
+      <tr><td><code>tests/progress.test.ts</code></td><td>NEW. 12 unit tests for ProgressManager (lifecycle, throttle, idle ladder, mode awareness, error tolerance).</td></tr>
+      <tr><td><code>tests/progress-status.test.ts</code></td><td>NEW. 8 unit tests for <code>renderStatusEvent</code> (known statuses, payload extraction, fallbacks).</td></tr>
+      <tr><td><code>tests/progress-integration.test.ts</code></td><td>NEW. 5 integration tests verifying dispatch wires ProgressManager correctly for each event type plus verbose-mode skip.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Verification matrix: event &times; mode &rarr; progress action</h3>
+  <table>
+    <thead><tr><th>event</th><th>summary</th><th>normal</th><th>thinking</th><th>verbose</th></tr></thead>
+    <tbody>
+      <tr><td>first-of-turn (any)</td><td><code>start()</code></td><td><code>start()</code></td><td><code>start()</code></td><td>skip</td></tr>
+      <tr><td><code>status</code></td><td><code>update(renderStatusEvent)</code></td><td><code>update(renderStatusEvent)</code></td><td><code>update(renderStatusEvent)</code></td><td>skip (raw firehose preserved)</td></tr>
+      <tr><td><code>tool_use</code></td><td><code>update("⏳ Running &lt;label&gt;…")</code></td><td><code>update</code></td><td><code>update</code></td><td>skip</td></tr>
+      <tr><td><code>text</code> (first chunk)</td><td><code>update("⏳ Generating response…")</code></td><td><code>update</code></td><td><code>update</code></td><td>skip</td></tr>
+      <tr><td><code>text</code> (subsequent)</td><td>throttled out</td><td>throttled out</td><td>throttled out</td><td>skip</td></tr>
+      <tr><td><code>tool_result</code></td><td>no progress call</td><td>no progress call</td><td>no progress call</td><td>skip</td></tr>
+      <tr><td><code>done</code></td><td><code>finalize()</code> &rarr; deleteMessage</td><td><code>finalize()</code></td><td><code>finalize()</code></td><td>skip</td></tr>
+      <tr><td><code>error</code></td><td><code>finalize("❌ &lt;head&gt;")</code></td><td><code>finalize</code></td><td><code>finalize</code></td><td>skip</td></tr>
+      <tr><td>30s/60s/.../5m idle</td><td>edit "Working… (Xs)"</td><td>edit</td><td>edit</td><td>skip</td></tr>
+      <tr><td>session:close callback</td><td><code>clear()</code> (sync, no API)</td><td><code>clear()</code></td><td><code>clear()</code></td><td><code>clear()</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Before / after mockup</h3>
+  <div class="compare">
+    <div class="col before">
+      <h5>v1.0 firehose (verbose-equivalent)</h5>
+      <div class="mock">⏳ [refactor-auth] kiro_spawning
+⏳ [refactor-auth] codex_turn_started
+🔧 [refactor-auth] Read · auth.ts
+🔧 [refactor-auth] Read · session.ts
+🔧 [refactor-auth] Grep "validateSession" in src/
+🔧 [refactor-auth] Edit · auth.ts
+✅ [refactor-auth] Edit ok
+🔧 [refactor-auth] Bash · npm test
+✅ [refactor-auth] Bash ok
+… 8 more messages …
+✅ [refactor-auth] done · $0.0432</div>
+    </div>
+    <div class="col after">
+      <h5>v1.1 summary mode + rolling progress</h5>
+      <div class="mock">[refactor-auth] dispatching…
+⏳ Starting…             ← edits in place ↓
+⏳ Codex thinking…
+⏳ Running Read…
+⏳ Running Grep…
+⏳ Running Edit…
+⏳ Running Bash…
+⏳ Generating response…
+                          ← deleted on done ↓
+✅ Done · 12s · $0.0432
+Refactored validateSession to use HMAC tokens; all 14 tests pass.</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Out of scope (deferred to v1.2+)</h3>
+  <ul>
+    <li><strong>Per-tool progress percentages</strong>: e.g. "Running tests… 3/14 passing". Requires adapter-side progress streaming; current adapters only emit start/end of each tool.</li>
+    <li><strong>Inline progress in approval flow</strong>: when an approval is mid-flight the progress message goes silent (no events). Considered piggy-backing approval prompts into the same message; out-of-scope due to keyboard layout collisions.</li>
+    <li><strong>Persistent progress across daemon restart</strong>: progress state lives in process memory only. A daemon restart mid-turn leaves the Telegram message orphaned. Plan &sect;13 already flags daemon-restart resilience as out of scope.</li>
+    <li><strong>Multi-message progress</strong>: extending to N parallel sessions in the same chat works (each session has its own progress message) but no aggregate "dashboard" progress. The <code>/dashboard</code> command in v1.0 covers the aggregate view separately.</li>
+  </ul>
+</div>
+
+<!-- ============================================================== -->
+<h2 id="phase-de-senior-review">Senior review Phase D + E &mdash; Opus 4.7 patches</h2>
+<p class="section-sub">Combined batched review of Phase D (agentic compression) + Phase E (activity indicators). Plan &sect;7-&sect;8 deliverables fully ticked off; 4 findings patched in place; final test suite 717&nbsp;/&nbsp;2 across 61 files.</p>
+
+<div class="card">
+  <h3>Scope verdict &mdash; APPROVED</h3>
+  <p>Every D and E acceptance criterion in plan &sect;7&ndash;&sect;8 has corresponding production code, integration wiring, and passing tests. No scope gap detected. Reviewer patched four issues across the dispatch + summarize path; all green after the loop.</p>
+</div>
+
+<h3>Findings + patches</h3>
+<table>
+  <thead><tr><th>Tag</th><th>Severity</th><th>File / line</th><th>Issue</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>R1</td>
+      <td><strong>[P1]</strong></td>
+      <td><code>src/bot/commands/index.ts</code> dispatch progress wiring</td>
+      <td>First event's friendly progress text was lost. Wiring fired <code>void progressMgr.start(... '⏳ Starting…')</code> immediately followed by <code>void progressMgr.update(text)</code>, but <code>update()</code> reads <code>this.states.get()</code> BEFORE awaiting its mutex and early-returned because state wasn't yet set by the async <code>sendMessage</code> inside <code>start()</code>. Result: user saw the generic placeholder for the full 1500ms throttle window even though the first event already carried a meaningful status ("Codex thinking…", "Running Bash…").</td>
+      <td>Compute the friendly text from the event up front, then dispatch as either the bootstrap argument to <code>start()</code> (when no state exists) OR the argument to <code>update()</code> (when state exists). Updated the existing "first status event bootstraps…" integration test to expect the rendered status text and added a <code>tool_use</code>-first regression test.</td>
+    </tr>
+    <tr>
+      <td>R2</td>
+      <td><strong>[P2]</strong></td>
+      <td><code>src/agents/summarize.ts</code> idle-wait + outer timeout</td>
+      <td>Both the idle-wait <code>setTimeout(resolve, timeoutMs)</code> and the outer race <code>setTimeout</code> created handles that were never cleared when the alternative resolved first. On a long-running daemon doing many summarize calls each call leaked one Node Timeout until the timer naturally fired. Not a correctness bug (the timer kept the process alive but never produced incorrect behavior) but a slow memory footprint creep.</td>
+      <td>Hold both timer handles in <code>let</code> bindings and <code>clearTimeout()</code> after the race resolves. Verified by re-running the existing timeout test (50ms budget) plus the parallel mutex serialize test.</td>
+    </tr>
+    <tr>
+      <td>R3</td>
+      <td><strong>[P2]</strong></td>
+      <td><code>src/agents/summarize.ts</code> after <code>waitForIdle</code></td>
+      <td>If the user closed the session via <code>/session close</code> while summarize was waiting for the busy mutex, a stale summarize would still call <code>manager.dispatch</code> on the closed session and trigger an unwanted agent run (and a wasted token spend).</td>
+      <td>Re-fetch the session row via <code>store.getSession(sessionId)</code> after <code>waitForIdle</code> resolves. Bail with <code>null</code> when <code>status === 'closed'</code> or the row vanished. Returns null gracefully so the caller falls back to the original content.</td>
+    </tr>
+    <tr>
+      <td>R4</td>
+      <td><strong>[P3]</strong></td>
+      <td><code>src/agents/summarize.ts</code> cwd resolution</td>
+      <td>The cwd lookup poked <code>store.db.prepare(\`SELECT path FROM projects WHERE id = ?\`)</code> directly, bypassing the typed <code>store.getProject(id)</code> helper. Brittle to schema column rename; consistency regression vs the rest of the codebase which uniformly uses the helper.</td>
+      <td>Replaced raw SQL with <code>store.getProject(sess.project_id ?? null)</code>.</td>
+    </tr>
+    <tr>
+      <td>R5</td>
+      <td><strong>[P3]</strong></td>
+      <td><code>src/bot/commands/index.ts</code> auto done-summary gate</td>
+      <td>The <code>enableAutoDoneSummary</code> gate read <code>cur.sdk_session_id</code> from the row captured at dispatch start. On the very first turn that field is still null even though the adapter writes it mid-dispatch — by the time <code>done</code> fires the DB row has the resume id but the captured <code>cur</code> doesn't. Result: the first done card on a brand-new session never got the auto-summary even though the agent technically could resume.</td>
+      <td>Read the fresh row via <code>store.getSession(cur.id)</code> (already fetched right above for the approval-pending guard) and prefer its <code>sdk_session_id</code> for the gate. Falls back to the stale value as a safety net.</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Tech freshness check (Context7)</h3>
+<table>
+  <thead><tr><th>Library</th><th>Installed</th><th>Status</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td><code>@anthropic-ai/claude-agent-sdk</code></td><td>0.3.145</td><td>OK</td><td>The <code>resume: sessionId</code> pattern used by <code>summarizeWithSession</code> matches the canonical Context7-confirmed follow-up signature. No deprecated calls.</td></tr>
+    <tr><td><code>async-mutex</code></td><td>0.5.0</td><td>OK</td><td>Context7 confirms <code>Mutex.runExclusive</code>, <code>waitForUnlock</code>, <code>isLocked</code> are the current API surface. Both the per-session summarize mutex and the <code>ProgressManager</code> mutex use these correctly.</td></tr>
+    <tr><td><code>grammy</code></td><td>1.43.0</td><td>OK</td><td>Context7-confirmed <code>editMessageText</code>/<code>sendMessage</code>/<code>deleteMessage</code> signatures; <code>GrammyError</code> + <code>HttpError</code> + 400 error-code shape used by the "message gone" detector match the documented format.</td></tr>
+    <tr><td><code>pino</code></td><td>10.3.1</td><td>OK</td><td>Cost-transparency logging in summarize emits structured fields via the existing <code>logger</code> singleton; no console.* leaks in any of the new D/E source files (grep clean).</td></tr>
+  </tbody>
+</table>
+
+<h3>Integration audit (D &times; E &times; A &times; B &times; C)</h3>
+<ul class="checklist">
+  <li class="done"><strong>D vs B mode filter</strong>: auto-summarize and progress wiring respect the <code>currentMode</code> cache populated by Phase B; verbose skips both, summary/normal honor both. No double-suppress, no leaked events.</li>
+  <li class="done"><strong>E vs B status-suppression</strong>: progress dispatch runs BEFORE <code>shouldEmit</code> so status events suppressed in summary mode still drive the rolling indicator &mdash; the intended trade-off, explicitly documented in commands/index.ts comments.</li>
+  <li class="done"><strong>D vs C collapse + diff cache</strong>: tool_result merge path correctly composes <code>row</code> + <code>diff:show</code> + <code>summary:ai</code>/<code>summary:full</code> buttons across all branches. Pre-cache + post-cache writes both honor the same <code>messageId</code> key.</li>
+  <li class="done"><strong>D done-summary + E finalize</strong>: <code>done</code> branch fires <code>progressMgr.finalize(cur.id)</code> (delete) and Phase D.4's <code>sendPlain</code> separately. Two different Telegram messages, no edit/delete race on the same id.</li>
+  <li class="done"><strong>D auto-summarize 2-phase render + E progress update</strong>: tool_result events do NOT push a progress update (only tool_use does), so the placeholder + summary edit happen on the merged tool message while the rolling progress indicator updates on the NEXT tool_use / status / text event. No conflict.</li>
+  <li class="done"><strong>Session close cleanup</strong>: router <code>session:close</code> + commands <code>/session close</code> + router <code>session:close:&lt;id&gt;</code> all call <code>summaryCache.clearSession</code>, <code>discardSummarizeMutex</code>, AND <code>progressMgr?.clear</code>. Triple coverage, no leak.</li>
+</ul>
+
+<h3>Test summary</h3>
+<p>Before review: <strong>716 passed / 2 skipped</strong> across 61 files. After review (1 test updated + 1 regression test added + 4 source patches): <strong>717 passed / 2 skipped</strong> across 61 files. No flakes; full suite green in 5.66s.</p>
+
+<p style="color: var(--text-faint); font-size: 14px;">SDD v3 &middot; 2026-05-21 &middot; Phase A-E + senior review complete &middot; 717/2 tests &middot; ready for v1.1 ship</p>
+
+</div>
+</body>
+</html>

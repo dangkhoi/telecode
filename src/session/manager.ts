@@ -67,6 +67,24 @@ export class SessionManager {
     return this.rt(sessionId).mutex.isLocked();
   }
 
+  /**
+   * Wait until the session's busy mutex is released (or resolve immediately
+   * if the session is already idle). Phase D — `summarizeWithSession` calls
+   * this before dispatching the hidden summarize prompt so it queues behind
+   * any in-flight user dispatch instead of getting rejected with the
+   * "⏳ session busy" short-circuit.
+   *
+   * Does NOT acquire the mutex — callers must follow up with a real
+   * `dispatch()` call which will compete with any new callers fairly.
+   * Returns a Promise that resolves after the next unlock; if the session is
+   * never locked, resolves on the next microtask.
+   */
+  async waitForIdle(sessionId: string): Promise<void> {
+    const rt = this.rt(sessionId);
+    if (!rt.mutex.isLocked()) return;
+    await rt.mutex.waitForUnlock();
+  }
+
   interrupt(sessionId: string): boolean {
     const r = this.runtimes.get(sessionId);
     if (!r?.abort) return false;
@@ -106,6 +124,16 @@ export class SessionManager {
   }
 
   /**
+   * Bytes currently buffered for `sessionId`. Returns 0 when no buffer
+   * exists. Surface for `/dashboard` (plan P0.5) so it can show per-session
+   * background buffer size without poking internals.
+   */
+  bufferBytesFor(sessionId: string): number {
+    const buf = this.buffers.get(sessionId);
+    return buf ? buf.bytesUsed() : 0;
+  }
+
+  /**
    * Permanently drop the session's buffer (if any). Called when the session
    * is closed / removed so the Map entry doesn't leak across daemon lifetime.
    * Idempotent: safe to call for a session that never buffered.
@@ -126,7 +154,7 @@ export class SessionManager {
     await rt.mutex.runExclusive(async () => {
       rt.abort = new AbortController();
       this.store.updateSession(opts.sessionId, { status: 'running' });
-      const adapter = this.registry.get(opts.agent);
+      const adapter = this.registry.require(opts.agent);
       try {
         await adapter.run({
           sessionId: opts.sessionId,

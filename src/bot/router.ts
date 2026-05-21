@@ -10,20 +10,44 @@ import {
 import type { TelecodeConfig } from '../config.js';
 import type { SessionStore } from '../session/store.js';
 import type { SessionManager } from '../session/manager.js';
+import type { AgentRegistry } from '../agents/registry.js';
 import type { ApprovalBroker, ApprovalRequest } from '../approval/broker.js';
-import type { PolicyEngine } from '../approval/policy.js';
+import { PolicyEngine } from '../approval/policy.js';
 import { Notifier } from './notifier.js';
-import { registerCommands, executeHandoff } from './commands/index.js';
-import { approvalKeyboard } from './keyboards.js';
-import { buildSessionStrip, splitCatchUp, type SessionListItem } from './reply-builders.js';
+import {
+  registerCommands,
+  executeHandoff,
+  invalidateSessionModeCache,
+  invalidateChatModeCache,
+} from './commands/index.js';
+import {
+  approvalKeyboard,
+  approvalForeverConfirmKeyboard,
+  verbosityModeKeyboard,
+} from './keyboards.js';
+import {
+  MODE_METADATA,
+  isVerbosityMode,
+  resolveMode,
+} from '../session/verbosity.js';
+import { buildSessionList, buildSessionStrip, splitCatchUp, type SessionListItem } from './reply-builders.js';
 import { CallbackRouter } from './callback-router.js';
 import { registerProjectCallbacks } from './callbacks/projects.js';
+import { diffCache, renderDiffBlock } from './diff-cache.js';
+import { summaryCache } from './summary-cache.js';
+import { summarizeWithSession, discardSummarizeMutex } from '../agents/summarize.js';
+import { codeBlock, escapeMd } from './markdown.js';
+import { toolCollapseMgr, initProgressManager, progressMgr } from './runtime-state.js';
+import { getCachedSessionMode } from './commands/index.js';
 import { createSqliteConversationStorage } from './conversation-storage.js';
 import { newSession } from './wizards/new-session.js';
 import { applyCommandsAndMenu } from './commands-registry.js';
 import { isKeyboardActionText, keyboardActionToCommand } from './keyboard-actions.js';
 import { logger } from '../util/logger.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { suggestionAck } from './suggestions.js';
+import { enterWizard, exitWizard, isWizardActive, deferUntilWizardExits } from './wizard-state.js';
+import { DashboardLoop } from './dashboard.js';
 
 /**
  * Outside-middleware context flavor. Adds `ctx.conversation` (enter/exit/active
@@ -39,6 +63,12 @@ export interface BotDeps {
   manager: SessionManager;
   broker: ApprovalBroker;
   policy: PolicyEngine;
+  /**
+   * Adapter registry (plan P1.1). The wizard reads `registry.list()` to
+   * render the agent picker dynamically. Required so adding a new built-in
+   * adapter never touches the wizard or router again.
+   */
+  registry: AgentRegistry;
 }
 
 export interface StartedBot {
@@ -73,6 +103,30 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     return n;
   };
 
+  // Phase E — initialize the process-wide ProgressManager singleton.
+  // Bound to `bot.api` for sendMessage/editMessageText/deleteMessage and a
+  // mode resolver that prefers the cached per-session mode (set by the
+  // dispatch handler at turn start) and falls back to the chat default. The
+  // resolver is sync — no SQLite hit on the hot path (cache is populated on
+  // every dispatch).
+  initProgressManager({
+    api: {
+      sendMessage: (chatId, text, extra) =>
+        bot.api.sendMessage(chatId, text, extra as never),
+      editMessageText: (chatId, msgId, text) =>
+        bot.api.editMessageText(chatId, msgId, text),
+      deleteMessage: (chatId, msgId) => bot.api.deleteMessage(chatId, msgId),
+    },
+    modeResolver: (sessionId, chatId) => {
+      const cached = getCachedSessionMode(sessionId);
+      if (cached) return cached;
+      // Fallback: chat default; never block on session-level lookup since
+      // that requires a SQLite round-trip per event.
+      const chatDefault = deps.store.getChatDefaultMode(chatId);
+      return resolveMode(undefined, chatDefault);
+    },
+  });
+
   // Approval prompter — broker -> Telegram. Extracted to a factory so tests
   // can exercise the auto-switch/flush/strip behavior with real broker + store
   // + manager and a mock notifier (see tests/auto-switch.test.ts).
@@ -99,13 +153,56 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     }),
   );
 
+  // ---- Wizard-state reconciliation middleware (plan P0.6) -------------------
+  // Mirror the chat's wizard-active state into the global `wizardState`
+  // singleton so the approval prompter — which runs outside any ctx — can
+  // decide whether to defer auto-switch.
+  //
+  // We deliberately do NOT use the plugin's `onEnter`/`onExit` hooks: per
+  // @grammyjs/conversations 2.x docs (plugin.d.ts §ConversationOptions.onExit),
+  // `onExit` is only fired when a conversation is left via the explicit
+  // `conversation.halt()` or `ctx.conversation.exit()` calls. It does NOT
+  // fire when a conversation function returns or throws normally — which is
+  // exactly how our `/new` wizard finishes its happy path. Relying on the
+  // hook would leak `chatId` into `wizardState.active` forever and break all
+  // subsequent auto-switches for the chat.
+  //
+  // Instead, after every update is processed we compare `ctx.conversation
+  // .active()` against the registry and reconcile. This works for ALL exit
+  // paths (return / throw / halt / exit) since the conversations storage
+  // adapter mirrors the truth deterministically post-await.
+  bot.use(async (ctx, next) => {
+    const chatId = ctx.chat?.id;
+    await next();
+    if (typeof chatId !== 'number') return;
+    try {
+      const active = ctx.conversation.active();
+      const anyActive = Object.values(active).some((n) => n > 0);
+      if (anyActive) {
+        if (!isWizardActive(chatId)) {
+          enterWizard(chatId);
+          logger.debug({ chatId }, 'wizard entered (reconciled)');
+        }
+      } else if (isWizardActive(chatId)) {
+        await exitWizard(chatId);
+        logger.debug({ chatId }, 'wizard exited (reconciled)');
+      }
+    } catch (err) {
+      logger.warn({ err: String(err), chatId }, 'wizard-state reconcile failed');
+    }
+  });
+
   // Curry deps into the wizard so it stays a pure async function (easier to
   // unit-test). The plugin requires the identifier explicitly when the wrapped
   // function is anonymous — we pass 'newSession' as the second arg.
   bot.use(
     createConversation(
       (conversation: Conversation, ctx: Context) =>
-        newSession(conversation, ctx, { store: deps.store, manager: deps.manager }),
+        newSession(conversation, ctx, {
+          store: deps.store,
+          manager: deps.manager,
+          registry: deps.registry,
+        }),
       'newSession',
     ),
   );
@@ -311,6 +408,23 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     deps.manager.interrupt(id);
     deps.store.updateSession(id, { status: 'closed' });
     deps.manager.discardBuffer(id);
+    // Phase C.4/C.3 — drop in-memory state tied to this session so a
+    // long-running daemon doesn't accumulate collapse entries / diff
+    // payloads for sessions the user has dismissed. Senior-review
+    // (Opus 4.7) [P3]: also wipe the per-session verbosity-mode cache
+    // (lives in commands/index.ts; routed through the exported helper).
+    toolCollapseMgr.clearSession(id);
+    diffCache.clearSession(id);
+    // Phase D — drop summary cache + summarize mutex for this session.
+    summaryCache.clearSession(id);
+    discardSummarizeMutex(id);
+    invalidateSessionModeCache(id);
+    // Phase E — drop the rolling progress message state (sync, no Telegram
+    // call; the message on the user's chat stays where it last was). The
+    // dispatch handler's `done` / `error` branches already cover the
+    // happy-path finalize — this clear() is just for explicit user-driven
+    // close.
+    progressMgr?.clear(id);
     const st = deps.store.getChatState(chatId);
     if (st.active_session_id === id) {
       deps.store.setActiveSession(chatId, null);
@@ -372,26 +486,580 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     }
   };
 
-  // T3 placeholders — buttons rendered on the wizard success message. The real
-  // handlers (list / logs) live in T3 scope; for now we just ack so the
-  // buttons are not dead clicks. See plan §5.1 step 5.
-  // TODO(T3): wire session:list-trigger and session:logs-trigger to real
-  // handlers that render `/sessions` and `/status logs` respectively.
+  // T3 carry-over (plan P0.1 / P0.2): wizard success-message buttons that
+  // used to be ack-only stubs now dispatch real list / logs renders.
+  //
+  // P0.1 — `[🔀 Switch khác]` on the wizard success message. We render the
+  // same `/sessions` payload (buildSessionList) as a NEW reply so the wizard
+  // success bubble keeps its history intact — editing the wizard message
+  // would erase the "session created OK" record.
   const t3SessionListTrigger = async (
     ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
   ): Promise<void> => {
-    await ctx.answerCallbackQuery({ text: 'Dùng /sessions' });
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const rows = deps.store.listSessions(chatId);
+    const activeId = deps.store.getChatState(chatId).active_session_id;
+    const items: SessionListItem[] = rows.map((r) => ({
+      id: r.id,
+      label: r.label,
+      agent: r.agent,
+      updatedAt: r.updated_at,
+      status: r.status,
+    }));
+    const payload = buildSessionList(items, activeId);
+    await ctx.reply(payload.text, {
+      reply_markup: payload.reply_markup,
+      ...(payload.parse_mode ? { parse_mode: payload.parse_mode } : {}),
+    });
   };
+  // P0.2 — `[📋 Tail logs]` on the wizard success message. Payload is the
+  // session id whose logs to tail; the handler does the same work as
+  // `/status logs 30` scoped to that session.
   const t3SessionLogsTrigger = async (
     ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
   ): Promise<void> => {
-    await ctx.answerCallbackQuery({ text: 'Dùng /status logs' });
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    const sessionId = payload;
+    const row = deps.store.getSession(sessionId);
+    if (!row || row.chat_id !== chatId) {
+      await ctx.answerCallbackQuery({ text: 'session not found' });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const tools = deps.store.tailToolLog(sessionId, 30);
+    if (tools.length === 0) {
+      await ctx.reply(`[${row.label}] no tool logs yet`);
+      return;
+    }
+    const txt = tools
+      .map(
+        (r) =>
+          `${new Date(r.created_at).toISOString().slice(11, 19)} ${r.tool_name} ${r.decision ?? ''} ${(r.input_preview ?? '').slice(0, 60)}`,
+      )
+      .join('\n');
+    await ctx.reply('```\n' + scrubSecrets(txt) + '\n```', { parse_mode: 'Markdown' });
+  };
+
+  // P0.4 — `[📌 Forever]` 2-step confirm flow.
+  //
+  // Step 1: user taps `[📌 Forever]` on an approval prompt. We pivot the
+  // SAME message to a "are you sure?" body + 2-button keyboard. The original
+  // 4 approval buttons are saved off the request so we can restore them on
+  // cancel.
+  const apvForeverInit = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const requestId = payload;
+    const req = deps.broker.get(requestId);
+    if (!req) {
+      await ctx.answerCallbackQuery({ text: 'expired' });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    const text =
+      `⚠️ *Ghi vĩnh viễn quyền?*\n` +
+      `Tool: \`${req.toolName}\`\n` +
+      `Args: \`${req.inputPreview}\`\n` +
+      `Rule sẽ apply cho mọi session sau (kể cả sau restart).`;
+    try {
+      await ctx.editMessageText(scrubSecrets(text), {
+        parse_mode: 'Markdown',
+        reply_markup: approvalForeverConfirmKeyboard(requestId),
+      });
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'apv:forever-init editMessageText failed');
+    }
+  };
+
+  // Step 2a: user taps `✅ Xác nhận` — persist rule + resolve as allow_always.
+  const apvForeverConfirm = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const requestId = payload;
+    const req = deps.broker.get(requestId);
+    if (!req) {
+      await ctx.answerCallbackQuery({ text: 'expired' });
+      return;
+    }
+    let pattern: string;
+    try {
+      // Persist atomically (tmpfile + rename inside policy.appendRule).
+      deps.policy.appendRule(req.toolName, req.input, 'allow_always');
+      // Surface the canonical pattern that ended up in policy.yaml so the
+      // user can find + edit it later.
+      pattern = PolicyEngine.buildPattern(req.toolName, req.input);
+    } catch (err) {
+      logger.error({ err: String(err), requestId }, 'apv:forever-confirm appendRule failed');
+      await ctx.answerCallbackQuery({
+        text: '⚠️ Lỗi ghi policy — thử lại sau',
+        show_alert: true,
+      });
+      return;
+    }
+    // Resolve the in-flight approval as allow_always so the agent doesn't
+    // block. The session-scoped allow_always behavior is the same as if the
+    // user had tapped 🌟 — the persistence is a separate side-effect.
+    deps.broker.resolve(requestId, 'allow_always');
+    deps.store.resolveApproval(requestId, 'allow_always');
+    await ctx.answerCallbackQuery({ text: 'forever ✓' });
+    try {
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+    } catch {
+      /* message too old to edit — ignore */
+    }
+    // The persisted pattern may contain backticks (e.g. shell command with
+    // `` ` ``). Wrap inside a triple-backtick block — Telegram's legacy
+    // Markdown allows literal backticks inside a fenced code block.
+    await ctx.reply(
+      `📌 Đã thêm quyền vĩnh viễn:\n\`\`\`\n${pattern}\n\`\`\`\n` +
+        `Sửa tại \`~/.telecode/policy.yaml\` nếu cần.`,
+      { parse_mode: 'Markdown' },
+    );
+  };
+
+  // Step 2b: user taps `❌ Hủy` — restore the original 4-button keyboard so
+  // they can pick a different decision. No write happened on init, so this
+  // is purely a UI rollback.
+  const apvForeverCancel = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const requestId = payload;
+    const req = deps.broker.get(requestId);
+    if (!req) {
+      await ctx.answerCallbackQuery({ text: 'expired' });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: 'hủy' });
+    const text = scrubSecrets(
+      `🛡 *Approval needed*\n` +
+        `Session: \`${req.sessionLabel}\`\n` +
+        `Tool: \`${req.toolName}\`\n` +
+        `Input: \`${req.inputPreview}\``,
+    );
+    try {
+      await ctx.editMessageText(text, {
+        parse_mode: 'Markdown',
+        reply_markup: approvalKeyboard(requestId),
+      });
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'apv:forever-cancel editMessageText failed');
+    }
+  };
+
+  // P0.3 — suggestion buttons (stubs that turn user taps into reply hints).
+  // The buttons themselves are appended by callers via the existing
+  // extraButtons hook on reply-builders / notifier. Each callback action
+  // returns a human-readable hint (Vietnamese) via `suggestionAck`.
+  const suggestHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+    action: string,
+  ): Promise<void> => {
+    // payload = "<sessionId>" or "<sessionId>:<path>" for view-file. We don't
+    // need the path here (the ack already tells the user how to proceed).
+    void payload;
+    await ctx.answerCallbackQuery();
+    await ctx.reply(suggestionAck(action));
+  };
+
+  // Phase B (plan §B.3) — verbosity-mode callbacks.
+  //
+  // `mode:set:<name>`         → set per-session override (active session in
+  //                             current chat) + invalidate cache so the next
+  //                             dispatched event respects the new mode.
+  // `settings:mode:<name>`    → set chat-level default + invalidate every
+  //                             cached session in the chat (broad invalidate
+  //                             matches the broad blast-radius of a chat
+  //                             default change).
+  //
+  // Both handlers re-render the original picker with the new "●" marker so
+  // the user sees instant feedback without scrolling — much friendlier than
+  // a popup ack alone, especially on mobile where the toast is small.
+  const modeSetSessionHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const name = payload;
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    if (!isVerbosityMode(name)) {
+      await ctx.answerCallbackQuery({ text: 'invalid mode' });
+      return;
+    }
+    const st = deps.store.getChatState(chatId);
+    if (!st.active_session_id) {
+      await ctx.answerCallbackQuery({ text: 'no active session', show_alert: true });
+      return;
+    }
+    const row = deps.store.getSession(st.active_session_id);
+    if (!row) {
+      await ctx.answerCallbackQuery({ text: 'session vanished', show_alert: true });
+      return;
+    }
+    deps.store.setSessionMode(row.id, name);
+    invalidateSessionModeCache(row.id);
+    const meta = MODE_METADATA[name];
+    await ctx.answerCallbackQuery({ text: `${meta.icon} ${meta.displayName}` });
+    try {
+      await ctx.editMessageReplyMarkup({
+        reply_markup: verbosityModeKeyboard('mode:set', name),
+      });
+    } catch (err) {
+      const description = (err as { description?: string }).description ?? '';
+      if (!/message is not modified/i.test(description)) {
+        logger.warn({ err: String(err) }, 'mode:set re-render failed');
+      }
+    }
+  };
+
+  const settingsModeHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const name = payload;
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    if (!isVerbosityMode(name)) {
+      await ctx.answerCallbackQuery({ text: 'invalid mode' });
+      return;
+    }
+    deps.store.setChatDefaultMode(chatId, name);
+    invalidateChatModeCache(chatId, deps.store);
+    const meta = MODE_METADATA[name];
+    await ctx.answerCallbackQuery({ text: `${meta.icon} default → ${meta.displayName}` });
+    // Re-render the picker so the highlighted button reflects the new default.
+    // Resolve the now-effective mode for picker highlighting — session
+    // override on the active session (if any) still beats the chat default,
+    // matching the on-screen narrative.
+    const st = deps.store.getChatState(chatId);
+    let highlight = name;
+    if (st.active_session_id) {
+      const sessionMode = deps.store.getSessionMode(st.active_session_id);
+      highlight = resolveMode(sessionMode, name);
+    }
+    try {
+      await ctx.editMessageReplyMarkup({
+        reply_markup: verbosityModeKeyboard('settings:mode', highlight),
+      });
+    } catch (err) {
+      const description = (err as { description?: string }).description ?? '';
+      if (!/message is not modified/i.test(description)) {
+        logger.warn({ err: String(err) }, 'settings:mode re-render failed');
+      }
+    }
+  };
+
+  // Phase C.3 — split a long diff body at line boundaries so each part fits
+  // under Telegram's per-message char cap. Lines longer than `max` are
+  // emitted as their own part (no mid-line truncation — diff context is
+  // worthless if a line is chopped). Returns at least one part even for
+  // empty input so callers can iterate without a length check.
+  const splitDiffParts = (body: string, max: number): string[] => {
+    if (body.length <= max) return [body];
+    const lines = body.split('\n');
+    const parts: string[] = [];
+    let buf: string[] = [];
+    let bufLen = 0;
+    for (const line of lines) {
+      const add = (buf.length === 0 ? 0 : 1) + line.length; // \n separator
+      if (bufLen + add > max && buf.length > 0) {
+        parts.push(buf.join('\n'));
+        buf = [];
+        bufLen = 0;
+      }
+      buf.push(line);
+      bufLen += add;
+    }
+    if (buf.length > 0) parts.push(buf.join('\n'));
+    return parts.length > 0 ? parts : [body];
+  };
+
+  // Phase C.3 — `diff:show:<sessionId>:<callId>` callback handler.
+  //
+  // Triggered by the [📜 Show diff] button attached to Edit-family tool_use
+  // messages in thinking/verbose modes. The dispatcher cached the
+  // (old_string, new_string, file_path) trio under the callId at tool_use
+  // time; this handler reads it back, renders a unified-diff block, wraps
+  // it in MarkdownV2 ```diff fence, and replies (no edit — keeps the
+  // original tool message intact). Long diffs split at MAX_DIFF_CHARS to
+  // respect Telegram's 4096-char message limit (we use 3500 to leave room
+  // for the fence + label prefix).
+  const MAX_DIFF_CHARS = 3500;
+  const diffShowHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    // payload shape: "<sessionId>:<callId>" — split on the FIRST colon only
+    // (UUIDs don't contain colons but we're defensive against future formats).
+    const colonIdx = payload.indexOf(':');
+    if (colonIdx < 0) {
+      await ctx.answerCallbackQuery({ text: 'invalid diff key' });
+      return;
+    }
+    const sessionId = payload.slice(0, colonIdx);
+    const callId = payload.slice(colonIdx + 1);
+
+    // Senior-review (Opus 4.7) [P1] — ownership check. With multiple users in
+    // `allowed_user_ids`, user B could theoretically tap a [📜 Show diff]
+    // button that surfaced in user A's chat (callback_data is replayable
+    // until the message is deleted). Refuse if the session doesn't belong to
+    // the current chat. Mirrors the existing chat-id guards on
+    // switch/close/handoff callbacks.
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    const sess = deps.store.getSession(sessionId);
+    if (!sess || sess.chat_id !== chatId) {
+      await ctx.answerCallbackQuery({ text: 'not found', show_alert: false });
+      return;
+    }
+
+    const cached = diffCache.get(sessionId, callId);
+    await ctx.answerCallbackQuery();
+    if (!cached) {
+      // TTL expired (15min default) — friendly message rather than silently
+      // swallowing the tap.
+      try {
+        await ctx.reply('📜 Diff hết cache (TTL 15 phút). Edit lại để xem.');
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'diff:show miss-reply failed');
+      }
+      return;
+    }
+    const block = renderDiffBlock(cached.filePath, cached.old, cached.new);
+    // Split on line boundaries so the diff stays readable when it overflows
+    // Telegram's per-message char cap. Header repeats on continuation parts.
+    const parts = splitDiffParts(block, MAX_DIFF_CHARS);
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      const header = i === 0 ? `📜 \`${escapeMd(cached.filePath)}\`` : `📜 (cont\\.)`;
+      const composed = header + '\n' + codeBlock(part, 'diff');
+      try {
+        await ctx.reply(composed, { parse_mode: 'MarkdownV2' });
+      } catch (err) {
+        // Fallback: plain text if MarkdownV2 trips on something pathological.
+        // Include the file-path header in plain form so context isn't lost.
+        logger.warn({ err: String(err) }, 'diff:show MarkdownV2 send failed — plain fallback');
+        const plainHeader = i === 0 ? `📜 ${cached.filePath}` : `📜 (cont.)`;
+        try {
+          await ctx.reply(`${plainHeader}\n${part}`);
+        } catch (plainErr) {
+          logger.warn({ err: String(plainErr) }, 'diff:show plain fallback failed');
+        }
+      }
+    }
+  };
+
+  // Phase D.3 / D.5 — summary callbacks shared between auto-summarize and
+  // on-demand summarize.
+  //
+  //   summary:ai:<messageId>     — D.3 — fetch full cached preview, run
+  //     summarizeWithSession, edit message with the new summary body.
+  //   summary:full:<messageId>   — D.5 — fetch full cached preview, send as
+  //     code-fenced reply (split if > MAX_FULL_OUTPUT_CHARS).
+  //
+  // Both verify chat ownership via the cached `sessionId` (mirrors the
+  // diff:show security pattern from Phase C senior review [P1]).
+  const MAX_FULL_OUTPUT_CHARS = 3500;
+  const SUMMARIZE_ON_DEMAND_INSTRUCTION =
+    'Tóm tắt output dưới đây trong 1-2 dòng tiếng Việt ngắn gọn, ' +
+    'tập trung vào kết quả chính. Không cần markdown nặng, chỉ summary thuần text.';
+
+  const summaryAiHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    // payload = "<messageId>"
+    const msgId = parseInt(payload, 10);
+    if (!Number.isFinite(msgId)) {
+      await ctx.answerCallbackQuery({ text: 'invalid id' });
+      return;
+    }
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    const cached = summaryCache.get(msgId);
+    if (!cached) {
+      await ctx.answerCallbackQuery({ text: 'cache hết hạn', show_alert: false });
+      try {
+        await ctx.reply('💬 Summary cache hết (TTL 1 giờ). Chạy lại tool để xem lại.');
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'summary:ai miss-reply failed');
+      }
+      return;
+    }
+    // Ownership check — same pattern as diff:show.
+    const sess = deps.store.getSession(cached.sessionId);
+    if (!sess || sess.chat_id !== chatId) {
+      await ctx.answerCallbackQuery({ text: 'not found' });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: '💬 Summarizing…' });
+    // Edit a small "⏳" placeholder so user sees feedback while we wait for
+    // the session mutex + agent reply.
+    const placeholder = `[${sess.label}] ⏳ Summarizing on demand…`;
+    try {
+      await ctx.api.editMessageText(chatId, msgId, placeholder);
+    } catch (err) {
+      logger.warn({ err: String(err), msgId }, 'summary:ai placeholder edit failed');
+    }
+    const summary = await summarizeWithSession({
+      manager: deps.manager,
+      store: deps.store,
+      sessionId: cached.sessionId,
+      content: cached.fullText,
+      instruction: SUMMARIZE_ON_DEMAND_INSTRUCTION,
+      kind: 'on-demand',
+    });
+    const labelPrefix = `[${sess.label}] `;
+    const lineCount = cached.fullText.split('\n').length;
+    if (!summary) {
+      // Fallback: show original truncated preview + keep [💬 AI summary]
+      // button for retry.
+      const truncated = cached.fullText.slice(0, 240);
+      const body =
+        `${labelPrefix}✅ ${cached.toolLabel}\n${truncated}\n` +
+        `(summarize failed — tap to retry)`;
+      try {
+        await ctx.api.editMessageText(chatId, msgId, body, {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: `📜 Full output (${lineCount} lines)`, callback_data: `summary:full:${msgId}` },
+                { text: '💬 AI summary', callback_data: `summary:ai:${msgId}` },
+              ],
+            ],
+          },
+        });
+      } catch (err) {
+        logger.warn({ err: String(err), msgId }, 'summary:ai fallback edit failed');
+      }
+      return;
+    }
+    // Success — render summary + [📜 Full output] + [💬 Re-summarize].
+    const body = `${labelPrefix}✅ ${cached.toolLabel}\n${summary}`;
+    try {
+      await ctx.api.editMessageText(chatId, msgId, body, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: `📜 Full output (${lineCount} lines)`, callback_data: `summary:full:${msgId}` },
+              { text: '💬 Re-summarize', callback_data: `summary:ai:${msgId}` },
+            ],
+          ],
+        },
+      });
+    } catch (err) {
+      logger.warn({ err: String(err), msgId }, 'summary:ai success edit failed');
+    }
+  };
+
+  const summaryFullHandler = async (
+    ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
+    payload: string,
+  ): Promise<void> => {
+    const msgId = parseInt(payload, 10);
+    if (!Number.isFinite(msgId)) {
+      await ctx.answerCallbackQuery({ text: 'invalid id' });
+      return;
+    }
+    const chatId = ctx.chat?.id;
+    if (!chatId) {
+      await ctx.answerCallbackQuery({ text: 'no chat' });
+      return;
+    }
+    const cached = summaryCache.get(msgId);
+    if (!cached) {
+      await ctx.answerCallbackQuery({ text: 'cache hết hạn' });
+      try {
+        await ctx.reply('📜 Full-output cache hết (TTL 1 giờ).');
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'summary:full miss-reply failed');
+      }
+      return;
+    }
+    const sess = deps.store.getSession(cached.sessionId);
+    if (!sess || sess.chat_id !== chatId) {
+      await ctx.answerCallbackQuery({ text: 'not found' });
+      return;
+    }
+    await ctx.answerCallbackQuery();
+    // Detect a sensible language for the fence. Bash/exec output usually has
+    // no useful syntax highlighter; default to plain `code` fence.
+    const fenceLang = cached.toolLabel === 'Bash' ? 'bash' : '';
+    // Split at line boundaries so chunks fit Telegram's 4096-char limit.
+    const lines = cached.fullText.split('\n');
+    const parts: string[] = [];
+    let buf: string[] = [];
+    let bufLen = 0;
+    for (const line of lines) {
+      const add = (buf.length === 0 ? 0 : 1) + line.length;
+      if (bufLen + add > MAX_FULL_OUTPUT_CHARS && buf.length > 0) {
+        parts.push(buf.join('\n'));
+        buf = [];
+        bufLen = 0;
+      }
+      buf.push(line);
+      bufLen += add;
+    }
+    if (buf.length > 0) parts.push(buf.join('\n'));
+    if (parts.length === 0) parts.push(cached.fullText);
+    const labelPrefix = `[${sess.label}] `;
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]!;
+      const header =
+        i === 0
+          ? `${labelPrefix}📜 ${escapeMd(`${cached.toolLabel} · full output`)}`
+          : `${labelPrefix}📜 ${escapeMd(`(cont. ${i + 1}/${parts.length})`)}`;
+      const composed = header + '\n' + codeBlock(part, fenceLang);
+      try {
+        await ctx.reply(composed, { parse_mode: 'MarkdownV2' });
+      } catch (err) {
+        // MarkdownV2 fallback — same pattern as diff:show.
+        logger.warn(
+          { err: String(err) },
+          'summary:full MarkdownV2 send failed — plain fallback',
+        );
+        try {
+          await ctx.reply(`${labelPrefix}📜 ${cached.toolLabel}\n${part}`);
+        } catch (plainErr) {
+          logger.warn({ err: String(plainErr) }, 'summary:full plain fallback failed');
+        }
+      }
+    }
   };
 
   callbackRouter
     .on('apv', 'once', (ctx, payload) => resolveApproval(ctx, payload, 'allow_once'))
     .on('apv', 'always', (ctx, payload) => resolveApproval(ctx, payload, 'allow_always'))
     .on('apv', 'deny', (ctx, payload) => resolveApproval(ctx, payload, 'deny'))
+    // P0.4 — Forever 2-step confirm flow.
+    .on('apv', 'forever-init', apvForeverInit)
+    .on('apv', 'forever-confirm', apvForeverConfirm)
+    .on('apv', 'forever-cancel', apvForeverCancel)
     // New ns used by reply-builders / B1+ inline buttons.
     .on('session', 'switch', switchSessionHandler)
     .on('session', 'close', closeSessionHandler)
@@ -401,7 +1069,22 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     .on('ses', 'switch', switchSessionHandler)
     .on('wizard', 'new-start', wizardNewStartHandler)
     .on('session', 'list-trigger', t3SessionListTrigger)
-    .on('session', 'logs-trigger', t3SessionLogsTrigger);
+    .on('session', 'logs-trigger', t3SessionLogsTrigger)
+    // P0.3 — follow-up suggestions. The router just acks with a hint; the
+    // user follows up via plain-text prompt (no automation behind the scene).
+    .on('suggest', 'continue', (ctx, p) => suggestHandler(ctx, p, 'continue'))
+    .on('suggest', 'run-again', (ctx, p) => suggestHandler(ctx, p, 'run-again'))
+    .on('suggest', 'rollback', (ctx, p) => suggestHandler(ctx, p, 'rollback'))
+    .on('suggest', 'view-file', (ctx, p) => suggestHandler(ctx, p, 'view-file'))
+    .on('suggest', 'summarize', (ctx, p) => suggestHandler(ctx, p, 'summarize'))
+    // Phase B — verbosity mode toggles.
+    .on('mode', 'set', modeSetSessionHandler)
+    .on('settings', 'mode', settingsModeHandler)
+    // Phase C.3 — diff reveal button.
+    .on('diff', 'show', diffShowHandler)
+    // Phase D.3 / D.5 — summary buttons.
+    .on('summary', 'ai', summaryAiHandler)
+    .on('summary', 'full', summaryFullHandler);
 
   // B2: project picker callbacks (`project:cd`, `project:new`, `project:page`).
   // Implementation in src/bot/callbacks/projects.ts so the handlers can be
@@ -468,6 +1151,15 @@ export interface ApprovalPrompterDeps {
   manager: Pick<SessionManager, 'hasBuffered' | 'drainBuffer'>;
   broker: Pick<ApprovalBroker, 'hasPendingFor'>;
   notifierFor: (chatId: number) => ApprovalPrompterNotifier;
+  /**
+   * P0.6 hook — defaults to the global `wizardState` singleton's
+   * `isActive` / `deferUntilWizardExits`. Injected so tests can substitute
+   * a deterministic fake without poking module-level state.
+   */
+  wizardGuard?: {
+    isActive(chatId: number): boolean;
+    deferUntilWizardExits(chatId: number, fn: () => void | Promise<void>): void;
+  };
 }
 
 /**
@@ -500,6 +1192,59 @@ export function createApprovalPrompter(deps: ApprovalPrompterDeps): {
   prompt(req: ApprovalRequest): Promise<void>;
   notifyTimeout(req: ApprovalRequest): Promise<void>;
 } {
+  // Default the wizard guard to the singleton — preserves existing behavior
+  // for tests that don't pass it. Tests can inject a fake to skip OS effects.
+  const guard = deps.wizardGuard ?? {
+    isActive: isWizardActive,
+    deferUntilWizardExits,
+  };
+
+  /**
+   * Effective body of auto-switch. Factored so we can either run it inline
+   * OR defer it to the wizard's onExit hook (plan P0.6).
+   *
+   * `expectedActive` is the active-session id we observed at the moment the
+   * decision to switch was made. When the switch runs deferred, we compare
+   * against the current value — if it changed (e.g. user manually flipped
+   * to a different session while the wizard was open) we abort, respecting
+   * their explicit choice.
+   */
+  const runAutoSwitch = async (
+    req: ApprovalRequest,
+    expectedActive: string | null,
+  ): Promise<void> => {
+    const n = deps.notifierFor(req.chatId);
+    // Re-check at run-time — by the time a deferred switch fires, state may
+    // have changed.
+    const curActive = deps.store.getChatState(req.chatId).active_session_id;
+    if (curActive === req.sessionId) return;
+    // User manually switched mid-defer; don't override.
+    if (curActive !== expectedActive) {
+      logger.info(
+        { sessionId: req.sessionId, chatId: req.chatId, curActive, expectedActive },
+        'deferred auto-switch skipped — user changed active session manually',
+      );
+      return;
+    }
+    // Also skip if another session has stolen focus first-come-first-active.
+    if (deps.broker.hasPendingFor(req.chatId, req.sessionId)) return;
+    deps.store.setActiveSession(req.chatId, req.sessionId);
+    if (deps.manager.hasBuffered(req.sessionId)) {
+      const events = deps.manager.drainBuffer(req.sessionId);
+      const lines = events.map((e) => e.data);
+      const header = `[${req.sessionLabel}] 📥 catch-up (${events.length} events from background):`;
+      const contHeader = `[${req.sessionLabel}] 📥 catch-up (cont.):`;
+      const parts = splitCatchUp(header, contHeader, lines);
+      for (const part of parts) {
+        await n.sendPlain(part, { silent: true });
+      }
+    }
+    await n.sendPlain(
+      `🔔 Đã chuyển sang \`${req.sessionLabel}\` vì cần approval.`,
+      { parse_mode: 'Markdown', silent: true },
+    );
+  };
+
   return {
     async prompt(req: ApprovalRequest): Promise<void> {
       const n = deps.notifierFor(req.chatId);
@@ -519,34 +1264,33 @@ export function createApprovalPrompter(deps: ApprovalPrompterDeps): {
           // to the pending map before invoking us, so we exclude it from the
           // check by passing req.sessionId.
           if (!deps.broker.hasPendingFor(req.chatId, req.sessionId)) {
-            deps.store.setActiveSession(req.chatId, req.sessionId);
-            if (deps.manager.hasBuffered(req.sessionId)) {
-              // Header format matches `flushBufferedAsCatchUp` in commands/index.ts
-              // so users see consistent catch-up wording regardless of trigger
-              // (auto-switch on approval / manual switch / done-error flush).
-              //
-              // Per plan §7 risk register (P2): a 50KB buffer would otherwise
-              // be silently clipped to 3500 chars by Notifier — split first.
-              const events = deps.manager.drainBuffer(req.sessionId);
-              const lines = events.map((e) => e.data);
-              const header = `[${req.sessionLabel}] 📥 catch-up (${events.length} events from background):`;
-              const contHeader = `[${req.sessionLabel}] 📥 catch-up (cont.):`;
-              const parts = splitCatchUp(header, contHeader, lines);
-              for (const part of parts) {
-                await n.sendPlain(part, { silent: true });
-              }
+            // P0.6: if a wizard owns the chat's input, defer the switch
+            // until the wizard exits so we don't hijack its text step.
+            // Snapshot the "expected active" at deferral time so when the
+            // queued callback fires we can detect if the user manually
+            // switched while the wizard was open — in which case we MUST
+            // respect their choice and skip the auto-switch entirely.
+            if (guard.isActive(req.chatId)) {
+              const activeAtDeferral = curActive;
+              logger.info(
+                { sessionId: req.sessionId, chatId: req.chatId },
+                'auto-switch deferred — wizard active',
+              );
+              guard.deferUntilWizardExits(req.chatId, () =>
+                runAutoSwitch(req, activeAtDeferral),
+              );
+            } else {
+              await runAutoSwitch(req, curActive);
             }
-            await n.sendPlain(
-              `🔔 Đã chuyển sang \`${req.sessionLabel}\` vì cần approval.`,
-              { parse_mode: 'Markdown', silent: true },
-            );
           }
         }
 
         const sessions: SessionListItem[] = deps.store.listSessions(req.chatId).map((s) => ({
           id: s.id,
           label: s.label,
-          agent: s.agent as 'claude' | 'kiro',
+          // Plan P1.1: agent is now open-set (string). Reply-builders accept
+          // any kind and look the badge up via registry metadata.
+          agent: s.agent,
           updatedAt: s.updated_at,
           status: s.status,
         }));

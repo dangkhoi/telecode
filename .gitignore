@@ -1,8 +1,32 @@
 node_modules/
 dist/
 *.log
+
+# Env / secrets
 .env
-.env.local
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+
+# OS / editor
 .DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+
+# Tooling local state
+.claude/
 coverage/
 .vitest-cache/
+
+# Runtime state (in case anyone runs daemon from repo dir)
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.db
+*.lock
+*.pid

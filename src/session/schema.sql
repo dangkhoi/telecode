@@ -18,7 +18,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   updated_at      INTEGER NOT NULL,
   last_message    TEXT,
   transcript_tail TEXT DEFAULT '',             -- newline-joined preview
-  handoff_context TEXT                          -- /handoff summary; injected once into next prompt then cleared
+  handoff_context TEXT,                         -- /handoff summary; injected once into next prompt then cleared
+  -- Phase B: per-session verbosity override (null = fall back to chat default
+  -- and then the baked-in 'summary'). Stored as TEXT to avoid coupling the
+  -- DB schema to the TS enum file.
+  verbosity_mode  TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_chat_label
   ON sessions(chat_id, label) WHERE status != 'closed';
@@ -50,6 +54,14 @@ CREATE TABLE IF NOT EXISTS chat_state (
   chat_id           INTEGER PRIMARY KEY,
   active_session_id TEXT,
   active_project_id INTEGER
+);
+
+-- Phase B (plan §B.2) — per-chat verbosity defaults + v1.1 migration-message
+-- bookkeeping. Default 'summary' matches the on-the-go persona that's the
+-- majority of v1.1 use; users opt back into firehose via `/settings mode verbose`.
+CREATE TABLE IF NOT EXISTS chat_settings (
+  chat_id       INTEGER PRIMARY KEY,
+  default_mode  TEXT NOT NULL DEFAULT 'summary'
 );
 
 -- Persisted state for the @grammyjs/conversations plugin (v0.7 wizards).

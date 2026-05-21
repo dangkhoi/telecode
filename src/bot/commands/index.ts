@@ -1,14 +1,36 @@
 import type { Bot } from 'grammy';
 import { execa } from 'execa';
 import { existsSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
-import { InputFile } from 'grammy';
+import os from 'node:os';
+import path, { basename, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { InputFile, InlineKeyboard } from 'grammy';
+import { buildSuggestions } from '../suggestions.js';
+import { renderToolUse, friendlyToolLabel, extractToolItem } from '../tool-render.js';
+import { PendingTools } from '../pending-tools.js';
+import { toolCollapseMgr, progressMgr } from '../runtime-state.js';
+import { renderStatusEvent, type AgentEventStatus } from '../progress.js';
+import { diffCache } from '../diff-cache.js';
+import { summaryCache } from '../summary-cache.js';
+import { maybeWrapCodeBlock, detectCodeBlock } from '../code-fence.js';
+import { escapeMd } from '../markdown.js';
+import { summarizeWithSession, discardSummarizeMutex } from '../../agents/summarize.js';
 import type { TelecodeConfig } from '../../config.js';
 import type { SessionStore, SessionRow, AgentKind } from '../../session/store.js';
 import type { SessionManager } from '../../session/manager.js';
 import type { ApprovalBroker } from '../../approval/broker.js';
 import type { PolicyEngine } from '../../approval/policy.js';
+import type { AgentRegistry } from '../../agents/registry.js';
 import type { Notifier } from '../notifier.js';
+import {
+  MODE_METADATA,
+  VERBOSITY_MODES,
+  isVerbosityMode,
+  resolveMode,
+  shouldEmit,
+  type VerbosityMode,
+} from '../../session/verbosity.js';
+import { verbosityModeKeyboard } from '../keyboards.js';
 import { expandHome } from '../../util/paths.js';
 import { scrubSecrets } from '../../util/scrub.js';
 import { sessionPickKeyboard } from '../keyboards.js';
@@ -20,6 +42,8 @@ import {
   type SessionListItem,
   type ProjectListItem,
 } from '../reply-builders.js';
+import { DashboardLoop, type DashboardEditor } from '../dashboard.js';
+import { wizardState } from '../wizard-state.js';
 import { logger } from '../../util/logger.js';
 
 export interface CommandDeps {
@@ -28,7 +52,258 @@ export interface CommandDeps {
   manager: SessionManager;
   broker: ApprovalBroker;
   policy: PolicyEngine;
+  /**
+   * Adapter registry (plan P1.1). Used by `/session new` to validate the
+   * `<agent>` arg against the live set of registered adapters instead of the
+   * old hardcoded `claude | kiro` check.
+   */
+  registry: AgentRegistry;
   notifierFor: (chatId: number) => Notifier;
+}
+
+/**
+ * Phase B (v1.1) — per-session resolved-mode cache shared across the module
+ * so:
+ *   - the dispatch handler doesn't re-hit SQLite on every event (one read at
+ *     dispatch start; cached value drives `shouldEmit` for the rest of the
+ *     turn);
+ *   - the `/mode` and `/settings` callbacks can invalidate the cache so the
+ *     next event respects the new preference without restarting the session.
+ *
+ * Key = session id (sessions are 1:1 with adapter turns; chat-level changes
+ * invalidate every entry for that chat via {@link invalidateChatModeCache}).
+ *
+ * Exported for tests + the router callbacks that mutate preferences.
+ */
+const sessionModeCache = new Map<string, VerbosityMode>();
+
+export function getCachedSessionMode(sessionId: string): VerbosityMode | undefined {
+  return sessionModeCache.get(sessionId);
+}
+
+export function setCachedSessionMode(sessionId: string, mode: VerbosityMode): void {
+  sessionModeCache.set(sessionId, mode);
+}
+
+export function invalidateSessionModeCache(sessionId: string): void {
+  sessionModeCache.delete(sessionId);
+}
+
+/**
+ * Invalidate every cached entry for sessions belonging to `chatId`. Used by
+ * `/settings mode <name>` so the new chat default takes effect immediately
+ * across all running dispatches in the same chat (per plan §B.4 race rule).
+ *
+ * We require a {@link SessionStore} so we can resolve session→chat without
+ * keeping a redundant chat-id map alongside the cache (mode cache is small;
+ * iterating sessions is cheap and avoids a second source of truth).
+ */
+export function invalidateChatModeCache(chatId: number, store: SessionStore): void {
+  for (const id of Array.from(sessionModeCache.keys())) {
+    const row = store.getSession(id);
+    if (row && row.chat_id === chatId) sessionModeCache.delete(id);
+  }
+}
+
+/**
+ * Phase D.2 — char threshold beyond which a `tool_result.preview` triggers
+ * auto-summarize. Configurable via `TELECODE_AUTO_SUMMARIZE_THRESHOLD` env
+ * var so power users can tune cost vs verbosity without a redeploy.
+ *
+ * Default 500: short enough to catch real long-output cases (test runs,
+ * file dumps, grep results) without firing on tiny "ok" / 5-line responses
+ * that don't need an AI pass to be readable.
+ */
+function autoSummarizeThreshold(): number {
+  const raw = process.env.TELECODE_AUTO_SUMMARIZE_THRESHOLD;
+  if (!raw) return 500;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) return 500;
+  return n;
+}
+
+/**
+ * Phase D.2 — instruction injected at the head of the auto-summarize prompt
+ * for long `tool_result` previews. Vietnamese to match the user's locale
+ * (plan §13 lists multi-language as out of scope for v1.1).
+ */
+const AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION =
+  'Tóm tắt output dưới đây trong 1-2 dòng tiếng Việt ngắn gọn, ' +
+  'tập trung vào kết quả chính (pass/fail, số lượng, lỗi cụ thể). ' +
+  'Không cần giải thích, không markdown nặng — chỉ summary thuần text.';
+
+/**
+ * Phase D.4 — instruction for auto done-summary. Asks the agent to summarize
+ * what it just did across the entire turn. 1-2 câu giữ ngắn để fit phone glance.
+ */
+const AUTO_DONE_SUMMARIZE_INSTRUCTION =
+  'Tóm tắt công việc vừa làm trong 1-2 câu tiếng Việt, ngắn gọn. ' +
+  'Tập trung vào: đã làm gì xong, file/feature/test nào đã đụng, ' +
+  'kết quả cuối (pass/fail/blocked). Không giải thích, không markdown — chỉ summary.';
+
+/**
+ * Phase D.2 helper — render a byte count as a compact human-readable hint
+ * ("450B", "1.2KB", "12KB", "1.5MB"). Used in the "⏳ Summarizing N output…"
+ * placeholder so the user knows roughly how much content is being condensed.
+ *
+ * Exported for tests.
+ */
+export function formatBytesShort(n: number): string {
+  if (n < 1024) return `${n}B`;
+  if (n < 1024 * 1024) {
+    const kb = n / 1024;
+    return kb >= 10 ? `${Math.round(kb)}KB` : `${kb.toFixed(1)}KB`;
+  }
+  const mb = n / (1024 * 1024);
+  return mb >= 10 ? `${Math.round(mb)}MB` : `${mb.toFixed(1)}MB`;
+}
+
+/**
+ * Best-effort extraction of a file path from a tool_use input. Mirrors the
+ * heuristics in `renderInputForMatch` (src/approval/policy.ts) but returns
+ * `null` when the tool isn't path-shaped — avoids tagging suggestions like
+ * [Xem file] when there's nothing meaningful to view.
+ *
+ * Exported for unit-testing — the production caller is the plain-text
+ * dispatcher's tool_use branch below.
+ */
+export function extractFilePath(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const o = input as Record<string, unknown>;
+  if (typeof o.file_path === 'string' && o.file_path.length > 0) return o.file_path;
+  if (typeof o.path === 'string' && o.path.length > 0) return o.path;
+  const ops = (o as { operations?: unknown }).operations;
+  if (Array.isArray(ops) && ops.length > 0) {
+    const first = ops[0] as Record<string, unknown> | undefined;
+    if (first && typeof first.path === 'string') return first.path;
+  }
+  return null;
+}
+
+/**
+ * Result of a platform-gated screen capture (plan P1.3).
+ *
+ *   ok=true        → file written to disk; size is checked separately by the
+ *                    caller to surface "empty image / permission missing"
+ *                    hints consistently across OSes.
+ *   ok=false       → no file produced. `message` is user-facing (Vietnamese
+ *                    optional) and includes the install hint for Linux when
+ *                    no screenshot tool is available.
+ */
+export interface CaptureResult {
+  ok: boolean;
+  message: string;
+  parseMode?: 'Markdown';
+}
+
+/**
+ * Capture the screen to `outPath` using the right tool for the host OS.
+ *
+ *   darwin → `screencapture -x` (silent, no shutter sound).
+ *   linux  → first available of `grim` (Wayland) → `gnome-screenshot -f` →
+ *            `scrot`. Probed via `--version` so we don't waste time spawning
+ *            a tool that will exit 127. If none are available, returns a
+ *            helpful `apt install gnome-screenshot` hint.
+ *   win32  → PowerShell snippet using System.Drawing.Bitmap +
+ *            Screen.PrimaryScreen.Bounds. Saves directly to PNG.
+ *
+ * Exported for unit tests — the production caller is the `/screenshot`
+ * command above.
+ */
+export async function captureScreen(
+  outPath: string,
+  // Injection points for unit tests — defaults wire through the real execa.
+  exec: typeof execa = execa,
+  platform: NodeJS.Platform = process.platform,
+): Promise<CaptureResult> {
+  if (platform === 'darwin') {
+    const r = await exec('screencapture', ['-x', outPath], { timeout: 10_000, reject: false });
+    if (r.exitCode !== 0) {
+      return {
+        ok: false,
+        message:
+          '📸 screencapture failed.\n' +
+          'Most often this means *Screen Recording* permission is missing.\n' +
+          'System Settings → Privacy & Security → Screen & System Audio Recording → enable the binary running the daemon (Terminal / node / launchd) → restart daemon.',
+        parseMode: 'Markdown',
+      };
+    }
+    return { ok: true, message: '' };
+  }
+
+  if (platform === 'linux') {
+    // Probe tools in priority order. We use `--version` (universally supported,
+    // exits 0 quickly) instead of `--help` to keep timing tight.
+    const candidates = [
+      { tool: 'grim', args: [outPath] },
+      { tool: 'gnome-screenshot', args: ['-f', outPath] },
+      { tool: 'scrot', args: [outPath] },
+    ];
+    for (const c of candidates) {
+      try {
+        const probe = await exec(c.tool, ['--version'], { timeout: 3_000, reject: false });
+        if (probe.exitCode !== 0) continue;
+      } catch {
+        continue;
+      }
+      const r = await exec(c.tool, c.args, { timeout: 10_000, reject: false });
+      if (r.exitCode === 0) {
+        return { ok: true, message: '' };
+      }
+      // First available tool failed — surface that specific error instead of
+      // silently falling through; tool-specific failure modes (Wayland w/o
+      // permission, scrot DISPLAY missing) are clearer to debug than "no
+      // tool found".
+      return {
+        ok: false,
+        message: `📸 ${c.tool} exit ${r.exitCode ?? '?'} — chạy thử thủ công để xem stderr.`,
+      };
+    }
+    return {
+      ok: false,
+      message:
+        '📸 Không tìm thấy công cụ chụp màn hình.\n' +
+        'Linux cần một trong các tool sau:\n' +
+        '  • `grim` (Wayland)\n' +
+        '  • `gnome-screenshot` (`sudo apt install gnome-screenshot`)\n' +
+        '  • `scrot` (`sudo apt install scrot`)',
+      parseMode: 'Markdown',
+    };
+  }
+
+  if (platform === 'win32') {
+    // PowerShell snippet — uses System.Drawing.Bitmap directly so we don't
+    // depend on screen-capture freeware. The output path is single-quoted to
+    // survive backslashes; we double any literal single quote inside it (PS
+    // escape rule). Single backslashes in paths are fine inside single quotes.
+    const safe = outPath.replace(/'/g, "''");
+    const cmd = [
+      "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;",
+      "$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds;",
+      "$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height;",
+      "$g = [System.Drawing.Graphics]::FromImage($bmp);",
+      "$g.CopyFromScreen($b.X, $b.Y, 0, 0, $bmp.Size);",
+      `$bmp.Save('${safe}', [System.Drawing.Imaging.ImageFormat]::Png);`,
+      "$g.Dispose(); $bmp.Dispose();",
+    ].join(' ');
+    const r = await exec(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', cmd],
+      { timeout: 10_000, reject: false },
+    );
+    if (r.exitCode !== 0) {
+      return {
+        ok: false,
+        message: `📸 PowerShell capture exit ${r.exitCode ?? '?'} — kiểm tra session khả năng truy cập desktop.`,
+      };
+    }
+    return { ok: true, message: '' };
+  }
+
+  return {
+    ok: false,
+    message: `📸 Platform '${platform}' chưa được hỗ trợ cho /screenshot.`,
+  };
 }
 
 // Loosely-typed ctx so callers from Bot<any> (with conversation flavor) pass
@@ -198,7 +473,13 @@ function projectPathOf(session: SessionRow, store: SessionStore, fallback: strin
 // outside flavor while still using the bare Context APIs inside.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
-  const { store, manager, policy, config, notifierFor } = deps;
+  const { store, manager, policy, config, notifierFor, broker } = deps;
+
+  // Per-chat dashboard registry (plan P0.5). Only one /dashboard message per
+  // chat — re-running /dashboard while one is live no-ops with a hint. The
+  // map is kept private to this scope; cleanup happens automatically when
+  // the loop stops (manual / deleted / idle).
+  const dashboards = new Map<number, DashboardLoop>();
 
   bot.command('start', async (ctx) => {
     const chatId = ctx.chat!.id;
@@ -253,11 +534,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const sub = (args[0] ?? '').toLowerCase();
     switch (sub) {
       case 'new': {
-        const agent = (args[1] as AgentKind) || config.defaults.agent;
+        const agent: AgentKind = args[1] || config.defaults.agent;
         const label = args[2];
         const pathArg = args[3];
         if (!label) return ctx.reply('Usage: /session new <agent> <label> [path]');
-        if (agent !== 'claude' && agent !== 'kiro') return ctx.reply('agent must be claude or kiro');
+        // Plan P1.1: validate against the live registry instead of hardcoded
+        // 'claude | kiro'. Gives users a helpful list of valid kinds.
+        if (!deps.registry.has(agent)) {
+          const known = deps.registry.kinds().join(', ') || '(none registered)';
+          return ctx.reply(`agent '${agent}' chưa được đăng ký. Available: ${known}`);
+        }
         if (store.findSessionByLabel(chatId, label)) return ctx.reply(`session "${label}" already exists`);
 
         let projectId: number | null = null;
@@ -318,6 +604,20 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         // v0.8 P2: drop the per-session output buffer so a long-lived daemon
         // doesn't accumulate buffers for sessions the user has dismissed.
         manager.discardBuffer(target.id);
+        // Phase C.4/C.3 — drop collapse + diff state for this session
+        // (mirrors the inline [🗑] button path in router.ts).
+        toolCollapseMgr.clearSession(target.id);
+        diffCache.clearSession(target.id);
+        // Phase D — drop summary cache + summarize mutex for this session.
+        summaryCache.clearSession(target.id);
+        discardSummarizeMutex(target.id);
+        // Senior-review (Opus 4.7) [P3] — also evict the per-session mode
+        // cache so a long-lived daemon doesn't accumulate stale entries
+        // tied to closed sessions.
+        invalidateSessionModeCache(target.id);
+        // Phase E — drop the rolling progress message state (sync, no
+        // Telegram call).
+        progressMgr?.clear(target.id);
         const st = store.getChatState(chatId);
         if (st.active_session_id === target.id) store.setActiveSession(chatId, null);
         await ctx.reply(`🗑 closed [${target.label}]`);
@@ -375,6 +675,113 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     } else {
       await ctx.reply(result.message);
     }
+  });
+
+  // ----- /mode (Phase B / plan §B.3) — per-session verbosity toggle -----
+  //
+  // No-arg form: show the current effective mode (session override or chat
+  // default), the resolution chain (so power users understand fallbacks), and
+  // a 4-button inline keyboard for one-tap switching.
+  //
+  // /mode <name>: validate against VERBOSITY_MODES, persist via
+  // store.setSessionMode. Invalid names get the canonical list as a hint.
+  bot.command('mode', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply(
+        'Chưa có session active — /new tạo session rồi mới đổi mode được.',
+      );
+      return;
+    }
+    const arg = (ctx.match || '').trim().toLowerCase();
+    if (arg) {
+      if (!isVerbosityMode(arg)) {
+        const known = VERBOSITY_MODES.join(' | ');
+        await ctx.reply(
+          `❓ Mode '${arg}' không hợp lệ. Chọn: ${known}`,
+        );
+        return;
+      }
+      store.setSessionMode(cur.id, arg);
+      const meta = MODE_METADATA[arg];
+      await ctx.reply(
+        `${meta.icon} [${cur.label}] mode → *${meta.displayName}* (${meta.description})`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+    // No-arg → show status + 4-button picker.
+    const sessionMode = store.getSessionMode(cur.id);
+    const chatDefault = store.getChatDefaultMode(chatId);
+    const effective = resolveMode(sessionMode, chatDefault);
+    const meta = MODE_METADATA[effective];
+    const sourceLabel = sessionMode
+      ? 'session override'
+      : `chat default → ${MODE_METADATA[chatDefault].displayName}`;
+    const lines = [
+      `*Mode hiện tại của [${cur.label}]:* ${meta.icon} ${meta.displayName}`,
+      `_${meta.description}_`,
+      ``,
+      `Source: ${sourceLabel}`,
+      `Tap để đổi mode (chỉ áp dụng cho session này):`,
+    ];
+    await ctx.reply(lines.join('\n'), {
+      parse_mode: 'Markdown',
+      reply_markup: verbosityModeKeyboard('mode:set', effective),
+    });
+  });
+
+  // ----- /settings (Phase B / plan §B.3) — chat-level defaults -----
+  //
+  // Today: only `mode` is exposed (default for new sessions in this chat).
+  // Future fields go here too (theme, language, summary cost cap, …). We
+  // keep the surface minimal — no-arg = pretty status + picker; subcommand
+  // `mode <name>` flips the default without UI roundtrip.
+  bot.command('settings', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const args = (ctx.match || '').trim().split(/\s+/).filter(Boolean);
+    const sub = (args[0] ?? '').toLowerCase();
+    if (sub === 'mode') {
+      const name = (args[1] ?? '').toLowerCase();
+      if (!name) {
+        await ctx.reply('Usage: /settings mode <summary|normal|thinking|verbose>');
+        return;
+      }
+      if (!isVerbosityMode(name)) {
+        const known = VERBOSITY_MODES.join(' | ');
+        await ctx.reply(`❓ Mode '${name}' không hợp lệ. Chọn: ${known}`);
+        return;
+      }
+      store.setChatDefaultMode(chatId, name);
+      const meta = MODE_METADATA[name];
+      await ctx.reply(
+        `${meta.icon} Chat default → *${meta.displayName}* (${meta.description})\n` +
+          `Áp dụng cho session mới + session chưa set override.`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+    if (sub && sub !== 'mode') {
+      await ctx.reply(
+        'Usage: /settings | /settings mode <summary|normal|thinking|verbose>',
+      );
+      return;
+    }
+    // No-arg → show chat defaults + picker.
+    const chatDefault = store.getChatDefaultMode(chatId);
+    const meta = MODE_METADATA[chatDefault];
+    const lines = [
+      `*Chat settings*`,
+      ``,
+      `*Default mode:* ${meta.icon} ${meta.displayName} — _${meta.description}_`,
+      ``,
+      `Tap để đổi default cho cả chat (session mới sẽ dùng):`,
+    ];
+    await ctx.reply(lines.join('\n'), {
+      parse_mode: 'Markdown',
+      reply_markup: verbosityModeKeyboard('settings:mode', chatDefault),
+    });
   });
 
   // ----- /projects — inline picker with pagination -----
@@ -466,6 +873,109 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     await ctx.reply(lines.join('\n'));
   });
 
+  // ----- /dashboard (plan P0.5) — live status dashboard ------------------
+  // Single editable message refreshed every 2s with daemon state. Stops on:
+  //   - `/dashboard stop`        (or the bare command while one is running)
+  //   - message deleted          (editor returns `deleted`)
+  //   - 5 min idle               (no user messages observed)
+  bot.command('dashboard', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match || '').trim().toLowerCase();
+
+    const existing = dashboards.get(chatId);
+    if (arg === 'stop') {
+      if (!existing) {
+        await ctx.reply('Không có dashboard nào đang chạy.');
+        return;
+      }
+      await existing.stop('manual');
+      dashboards.delete(chatId);
+      await ctx.reply('🛑 Đã tắt dashboard.');
+      return;
+    }
+    if (existing?.isRunning()) {
+      await ctx.reply('Dashboard đã chạy — gõ `/dashboard stop` để tắt trước khi mở mới.', {
+        parse_mode: 'Markdown',
+      });
+      return;
+    }
+    // Lightweight editor that wraps bot.api. editMessage errors are decoded
+    // into the union surface that DashboardLoop expects.
+    const editor: DashboardEditor = {
+      async sendInitial(text) {
+        const msg = await ctx.reply(text, { parse_mode: 'Markdown' });
+        return msg.message_id;
+      },
+      async editMessage(text) {
+        const messageId = (ctx as unknown as { _dashboardMsgId?: number })._dashboardMsgId;
+        if (!messageId) return { ok: false, reason: 'error' };
+        try {
+          await ctx.api.editMessageText(chatId, messageId, text, { parse_mode: 'Markdown' });
+          return { ok: true };
+        } catch (err) {
+          const description = (err as { description?: string }).description ?? '';
+          // Telegram returns 400 "message to edit not found" once the user
+          // deletes the message; treat as a stop signal.
+          if (/message to edit not found|message can't be edited/i.test(description)) {
+            return { ok: false, reason: 'deleted' as const };
+          }
+          if (/Too Many Requests|retry after/i.test(description)) {
+            return { ok: false, reason: 'throttled' as const };
+          }
+          // Suppress "message is not modified" 400s — render same content
+          // back-to-back is fine.
+          if (/message is not modified/i.test(description)) {
+            return { ok: true };
+          }
+          logger.warn({ err: String(err) }, 'dashboard editMessageText failed');
+          return { ok: false, reason: 'error' as const, err };
+        }
+      },
+    };
+    const loop = new DashboardLoop({
+      store,
+      manager: {
+        hasBuffered: (id) => manager.hasBuffered(id),
+        bufferBytesFor: (id) => manager.bufferBytesFor(id),
+      },
+      broker: {
+        hasPendingFor: (cid, ex) => broker.hasPendingFor(cid, ex),
+        countPendingFor: (cid) => broker.countPendingFor(cid),
+      },
+      activeWizardsFor: (cid) => (wizardState.isActive(cid) ? 1 : 0),
+      editor: {
+        async sendInitial(text) {
+          const id = await editor.sendInitial(text);
+          (ctx as unknown as { _dashboardMsgId?: number })._dashboardMsgId = id;
+          return id;
+        },
+        editMessage: editor.editMessage.bind(editor),
+      },
+      chatId,
+    });
+    dashboards.set(chatId, loop);
+    try {
+      await loop.start((reason) => {
+        dashboards.delete(chatId);
+        if (reason === 'idle') {
+          void ctx.reply('💤 Dashboard auto-tắt sau 5 phút idle.').catch(() => undefined);
+        } else if (reason === 'deleted') {
+          // Message gone — no follow-up reply (would only spam).
+        }
+      });
+    } catch (err) {
+      // sendInitial failed (e.g. Telegram 4xx). Drop the registry entry so a
+      // retry can create a fresh loop, then surface a short reply.
+      dashboards.delete(chatId);
+      logger.warn({ err: String(err), chatId }, 'dashboard start failed');
+      try {
+        await ctx.reply('⚠️ Không mở được dashboard — thử lại sau.');
+      } catch {
+        /* best-effort */
+      }
+    }
+  });
+
   bot.command('allow', async (ctx) => {
     const pat = ctx.match.trim();
     if (!pat) return ctx.reply('Usage: /allow <pattern>');
@@ -480,12 +990,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   });
 
   bot.command('screenshot', async (ctx) => {
-    const tmp = `/tmp/telecode-screen-${Date.now()}.png`;
+    // Plan P1.3: platform-gated capture. Output path uses `os.tmpdir()` so
+    // Windows resolves it to `%TEMP%`, Linux/macOS to `/tmp` (or `$TMPDIR` on
+    // macOS) — never the hardcoded POSIX `/tmp` literal.
+    const tmp = path.join(os.tmpdir(), `telecode-screen-${Date.now()}.png`);
     try {
-      const r = await execa('screencapture', ['-x', tmp], { timeout: 10_000, reject: false });
-      // macOS screencapture exits 0 even when Screen Recording permission is
-      // missing — it just writes a black image (or fails to write at all).
-      // Surface a clearer hint when the file is missing or suspiciously tiny.
+      const r = await captureScreen(tmp);
+      if (!r.ok) {
+        await ctx.reply(r.message, r.parseMode ? { parse_mode: r.parseMode } : {});
+        return;
+      }
+      // Re-check the produced file via the same heuristic the old macOS branch
+      // used — even successful capture tools can produce an empty/0-byte file
+      // when permissions are partially granted.
       const { statSync } = await import('node:fs');
       let size = 0;
       try {
@@ -493,18 +1010,20 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       } catch {
         size = 0;
       }
-      if (r.exitCode !== 0 || size < 1024) {
+      if (size < 1024) {
         await ctx.reply(
-          '📸 screencapture failed or returned empty image.\n' +
-            'Most often this means *Screen Recording* permission is missing.\n' +
-            'System Settings → Privacy & Security → Screen & System Audio Recording → enable the binary running the daemon (Terminal / node / launchd) → restart daemon.',
+          process.platform === 'darwin'
+            ? '📸 screencapture failed or returned empty image.\n' +
+                'Most often this means *Screen Recording* permission is missing.\n' +
+                'System Settings → Privacy & Security → Screen & System Audio Recording → enable the binary running the daemon (Terminal / node / launchd) → restart daemon.'
+            : '📸 capture returned empty image — check daemon permissions or X server access.',
           { parse_mode: 'Markdown' },
         );
         return;
       }
       await ctx.replyWithPhoto(new InputFile(tmp));
     } catch (err) {
-      await ctx.reply(`screencapture error: ${String(err).slice(0, 200)}`);
+      await ctx.reply(`screenshot error: ${String(err).slice(0, 200)}`);
     }
   });
 
@@ -513,6 +1032,10 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const text = ctx.message.text;
     if (!text || text.startsWith('/')) return;
     const chatId = ctx.chat!.id;
+    // P0.5: any user message resets the dashboard's idle clock so an active
+    // viewer doesn't get auto-stopped while they're actively chatting.
+    const dashLoop = dashboards.get(chatId);
+    if (dashLoop) dashLoop.markUserActivity();
     const cur = activeSession(ctx, store);
     if (!cur) {
       await ctx.reply('no active session — /session new <agent> <label> [path]');
@@ -542,6 +1065,83 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
     store.appendTranscript(cur.id, `> ${text.slice(0, 200)}`);
     await ctx.reply(`[${cur.label}] dispatching…`);
+
+    // Phase B — resolve the effective verbosity mode ONCE per dispatch turn
+    // and cache it (per plan §B.4 — avoid hitting SQLite per event). The
+    // /mode + /settings callbacks invalidate this cache so subsequent events
+    // pick up the new preference. Lifetime: until the next /mode change OR
+    // until the next dispatch starts (we resolve afresh each turn).
+    const sessionMode = store.getSessionMode(cur.id);
+    const chatDefault = store.getChatDefaultMode(chatId);
+    const effectiveMode = resolveMode(sessionMode, chatDefault);
+    setCachedSessionMode(cur.id, effectiveMode);
+
+    // Phase E — per-dispatch first-text flag. The progress message updates
+    // to "⏳ Generating response…" only on the FIRST text chunk of a turn —
+    // subsequent chunks are throttled out (no progress churn while the
+    // streamer is mid-flight). Reset per dispatch.
+    let progressTextSeen = false;
+
+    // Phase A.5 — per-dispatch pending-tool tracker. Suggestion keyboards are
+    // now attached when the matching tool_result arrives (Phase A.2 branch
+    // below), NOT when the tool_use is announced — the user has more useful
+    // context once the result is in. Adapters that don't emit tool_result
+    // (currently Claude — fix deferred) get a 2-second fallback retrofit.
+    //
+    // Payload shape carried per pending entry: the suggestion-row builder
+    // inputs plus the original message text. We rebuild the row at resolve
+    // time because resolve carries the success bit (suggestion content can
+    // depend on exit code — fs_write success vs failure path).
+    interface PendingPayload {
+      filePath: string | null;
+      /**
+       * Current text body of the tool_use announcement (excluding the
+       * session-label prefix). Mutated by the C.4 collapse path via
+       * {@link PendingTools.updateLatestPayload} as bursts grow so the
+       * result-merge path uses the LATEST collapsed text instead of the
+       * very first ToolName line.
+       */
+      line: string;
+      /**
+       * Phase C.3 — diff-cache key allocated for Edit-family tool_use events
+       * when the resolved mode is `thinking` / `verbose`. Carried through so
+       * the result-merge path can re-attach the `[📜 Show diff]` button on
+       * the merged message alongside the suggestion row. `null` when no diff
+       * was cached (most tools / summary+normal modes).
+       */
+      diffCallId: string | null;
+    }
+    const pending = new PendingTools<PendingPayload>({
+      deferMs: 2_000,
+      onTimeout: (entry) => {
+        // Adapter never emitted tool_result. Retrofit the suggestion row so
+        // the v1.0 affordance still appears — preserves backward UX.
+        //
+        // Senior-review (Opus 4.7): `messageId` should always be non-null
+        // here (the race-safe `addPending` only starts the defer timer AFTER
+        // the send resolved). Defensive guard anyway — silently no-op when
+        // the send failed and we never got an id.
+        if (entry.messageId == null) return;
+        const row = buildSuggestions({
+          toolName: entry.toolName,
+          exitCode: 0,
+          filePath: entry.payload.filePath,
+          sessionId: cur.id,
+        });
+        // Phase C.3 — also retrofit the [📜 Show diff] button when the
+        // pending entry has a cached diff. The suggestion row + the diff
+        // button live as two separate rows on the inline keyboard.
+        if (row.length === 0 && entry.payload.diffCallId == null) return;
+        const kb = new InlineKeyboard();
+        if (row.length > 0) kb.add(...row);
+        if (entry.payload.diffCallId != null) {
+          if (row.length > 0) kb.row();
+          kb.text('📜 Show diff', `diff:show:${cur.id}:${entry.payload.diffCallId}`);
+        }
+        void notifier.editReplyMarkup(entry.messageId, kb);
+      },
+    });
+
     // Fire-and-forget, await inside dispatch.
     //
     // v0.8 per-session gating (plan §2 behavior matrix):
@@ -571,12 +1171,112 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
           const activeId = store.getChatState(chatId).active_session_id;
           const isActive = cur.id === activeId;
 
+          // Phase B — mode filter (plan §B.4). Cached lookup so /mode change
+          // during a turn is honored on the very next event. Fall back to the
+          // dispatch-start resolved value if the cache was invalidated
+          // mid-turn (defensive — see invalidateSessionModeCache).
+          //
+          // approval/error/done events ALWAYS leak through (handled inside
+          // shouldEmit by returning true for those variants). The early
+          // return below suppresses everything else when the active mode
+          // rejects it — keeps the rest of this handler unchanged.
+          const currentMode =
+            getCachedSessionMode(cur.id) ?? effectiveMode;
+
+          // Phase E — rolling progress message. Runs ONLY for active sessions
+          // (a backgrounded session's events buffer up and replay on switch;
+          // showing progress for a session the user isn't watching is
+          // confusing). Mode awareness lives inside the manager — verbose
+          // mode is a no-op there. We do all progress work BEFORE the
+          // shouldEmit filter so the `status` events (suppressed in
+          // non-verbose modes) still drive the indicator.
+          if (isActive && progressMgr) {
+            // Senior-review (Opus 4.7) [P1] — render the friendly progress
+            // text from the event FIRST, then use it as either:
+            //   (a) the bootstrap text on start() if no state exists yet, OR
+            //   (b) the argument to update() if state already exists.
+            //
+            // Without this, the first event's text was lost: dispatch calls
+            // `void start(...'⏳ Starting…')` and immediately `void update(text)`,
+            // but `update()` reads `this.states.get()` BEFORE awaiting the
+            // mutex and early-returns when state isn't yet populated by the
+            // async `sendMessage()` inside `start()`. The first event's
+            // meaningful text (e.g. "Codex thinking…") never made it to the
+            // user — they saw "⏳ Starting…" pinned for the 1500ms throttle
+            // window. Computing the text up front lets us seed the bootstrap
+            // message directly so the first event is honored.
+            const progressText: string | null = (() => {
+              if (e.type === 'status') {
+                return renderStatusEvent(e as AgentEventStatus);
+              }
+              if (e.type === 'tool_use') {
+                return `⏳ Running ${friendlyToolLabel(e.tool)}…`;
+              }
+              if (e.type === 'text') {
+                if (progressTextSeen) return null;
+                progressTextSeen = true;
+                return '⏳ Generating response…';
+              }
+              return null;
+            })();
+
+            if (e.type === 'done') {
+              // Delete the progress message — Phase D done-summary card
+              // takes over the user-visible "what just happened" surface.
+              void progressMgr.finalize(cur.id);
+            } else if (e.type === 'error') {
+              // Tombstone with the error head so a quick glance shows the
+              // failure mode (truncated to 60 chars — long stack traces
+              // would push the message off-screen on mobile).
+              const head = e.error.slice(0, 60).replace(/\n/g, ' ');
+              void progressMgr.finalize(cur.id, '❌ ' + head);
+            } else if (!progressMgr.has(cur.id)) {
+              // First event of the turn → bootstrap. We treat ANY event as
+              // the trigger so the message appears as fast as possible (the
+              // adapter may emit a `status` long before its first `text`).
+              // Use the friendly text computed above when available, or fall
+              // back to the generic "Starting…" placeholder.
+              void progressMgr.start(cur.id, chatId, progressText ?? '⏳ Starting…');
+            } else if (progressText !== null) {
+              void progressMgr.update(cur.id, progressText);
+            }
+          }
+
+          if (!shouldEmit(e, currentMode)) {
+            return;
+          }
+
           if (e.type === 'text') {
             if (isActive) {
-              notifier.appendStream(streamKey, e.text, {
-                prefix: labelPrefix,
-                silent: true,
-              });
+              // Phase C.2 — auto code-fence detection. When the chunk looks
+              // like structured content (JSON / diff / shell / stack trace
+              // / indented monospace), close the running stream first so
+              // any in-flight prose finalizes, then send the wrapped block
+              // as a SEPARATE MarkdownV2 message. Plain prose continues to
+              // flow through `appendStream` so debounce + edit-rotation
+              // still apply to ongoing narration.
+              //
+              // The detection itself never throws; `maybeWrapCodeBlock`
+              // returns the original text on miss. We trust the heuristic
+              // but still hard-fallback to plain text inside the notifier
+              // if Telegram rejects the MarkdownV2 envelope.
+              const detection = detectCodeBlock(e.text);
+              if (detection) {
+                const wrapped = maybeWrapCodeBlock(e.text);
+                const composed = labelPrefix
+                  ? escapeMd(labelPrefix) + '\n' + wrapped
+                  : wrapped;
+                // Drain any pending stream first so chunk order stays right.
+                void (async () => {
+                  await notifier.closeStream(streamKey);
+                  await notifier.sendMarkdownV2(composed, { silent: true });
+                })();
+              } else {
+                notifier.appendStream(streamKey, e.text, {
+                  prefix: labelPrefix,
+                  silent: true,
+                });
+              }
             } else {
               manager.appendBuffer(cur.id, {
                 type: 'text',
@@ -586,21 +1286,350 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             }
             store.appendTranscript(cur.id, e.text.split('\n').slice(-1)[0] ?? '');
           } else if (e.type === 'tool_use') {
-            const line = `🔧 ${e.tool} — ${scrubSecrets(
-              JSON.stringify(e.input).slice(0, 200),
-            )}`;
+            // Phase A.4 — friendly render replaces v1.0's raw-JSON dump.
+            // Phase A.5 — suggestion keyboard deferred until tool_result OR
+            // 2s fallback timer fires (see `pending.onTimeout` above).
+            // Phase C.3 — for Edit-family tools in thinking/verbose modes
+            // we also stash the diff payload in the per-session cache so
+            // the result-merge path can render a `[📜 Show diff]` button.
+            // Phase C.4 — bursts of identical tool_use events within 5s
+            // are folded into a single editable message via the
+            // {@link ToolCollapseManager} singleton.
+            const friendly = renderToolUse(e.tool, e.input, { projectCwd: projPath });
+            const scrubbedFriendly = scrubSecrets(friendly);
+            // Background-session fallback line (used when not active — no
+            // collapse logic for buffered events since the user won't see
+            // them streamed; the catch-up will render them sequentially).
+            const fallbackLine = `🔧 ${scrubbedFriendly}`;
             if (isActive) {
-              void notifier.sendPlain(`${labelPrefix}${line}`, { silent: true });
+              const filePath = extractFilePath(e.input);
+              const friendlyTool = friendlyToolLabel(e.tool);
+              const item = extractToolItem(scrubbedFriendly, friendlyTool);
+
+              // Phase C.3 — populate diff cache for Edit-family tools when
+              // the user opts into thinking/verbose mode (no cost otherwise).
+              // The callId is minted here per event; the result-merge path
+              // and the `diff:show:<sessionId>:<callId>` router callback
+              // both consume it.
+              let diffCallId: string | null = null;
+              const editLike =
+                e.tool === 'Edit' ||
+                e.tool === 'fs_write' ||
+                e.tool === 'apply_patch' ||
+                e.tool === 'NotebookEdit';
+              if (
+                editLike &&
+                (currentMode === 'thinking' || currentMode === 'verbose')
+              ) {
+                const o = (e.input ?? {}) as Record<string, unknown>;
+                const oldStr =
+                  typeof o.old_string === 'string'
+                    ? o.old_string
+                    : typeof o.oldString === 'string'
+                      ? o.oldString
+                      : null;
+                const newStr =
+                  typeof o.new_string === 'string'
+                    ? o.new_string
+                    : typeof o.newString === 'string'
+                      ? o.newString
+                      : null;
+                if (oldStr !== null && newStr !== null && oldStr !== newStr) {
+                  diffCallId = randomUUID();
+                  diffCache.set(cur.id, diffCallId, oldStr, newStr, filePath ?? '?');
+                }
+              }
+
+              // Phase C.4 — burst collapse. Pure helper returns "what to do"
+              // (send-new vs edit-existing); we drive notifier accordingly.
+              const collapse = toolCollapseMgr.handle(
+                cur.id,
+                friendlyTool,
+                item,
+                labelPrefix,
+              );
+
+              if (collapse.action === 'edit') {
+                // Within-window burst: edit the existing collapse message
+                // in place. We ALSO enqueue an additional pending entry
+                // sharing the same messageId — without this, adapters that
+                // emit one tool_result per tool_use in a burst (Codex,
+                // Cursor) would resolve only the first pending entry and
+                // orphan-send the remaining N-1 results as separate
+                // messages, defeating the collapse UX. Each extra pending
+                // entry points at the same `collapse.msgId`, so every
+                // matching tool_result edits the SAME collapsed message.
+                // Senior-review (Opus 4.7) [P1] — refresh EVERY entry's
+                // stored line via {@link PendingTools.updateAllPayloads}.
+                // Refreshing only the most recent would leave the oldest
+                // entries holding stale "first send" text, which the LAST
+                // tool_result (LIFO consume reaches the oldest) would then
+                // render as a stale "×1 · a" instead of the final
+                // collapsed form.
+                const newLine = collapse.formattedText.startsWith(labelPrefix)
+                  ? collapse.formattedText.slice(labelPrefix.length)
+                  : collapse.formattedText;
+                pending.updateAllPayloads(e.tool, (p) => ({ ...p, line: newLine }));
+                pending.addPending(
+                  e.tool,
+                  { filePath: extractFilePath(e.input), line: newLine, diffCallId },
+                  Promise.resolve(collapse.msgId),
+                );
+                void notifier.editPlain(collapse.msgId, collapse.formattedText);
+              } else {
+                // Fresh send. Attach the diff button NOW if applicable —
+                // user can tap immediately, even before tool_result arrives.
+                const replyMarkup = diffCallId
+                  ? new InlineKeyboard().text(
+                      '📜 Show diff',
+                      `diff:show:${cur.id}:${diffCallId}`,
+                    )
+                  : undefined;
+                // Senior-review (Opus 4.7) [P1] — race-safe registration. We
+                // enqueue the pending entry SYNCHRONOUSLY (with a
+                // not-yet-resolved messageId) so a fast `tool_result` that
+                // arrives before `sendPlain` resolves still matches and merges
+                // into the same message instead of orphaning a separate one.
+                const sendOpts: { silent: true; reply_markup?: unknown } = {
+                  silent: true,
+                };
+                if (replyMarkup) sendOpts.reply_markup = replyMarkup;
+                const sendPromise = notifier.sendPlain(
+                  collapse.formattedText,
+                  sendOpts,
+                );
+                const lineWithoutPrefix = collapse.formattedText.startsWith(labelPrefix)
+                  ? collapse.formattedText.slice(labelPrefix.length)
+                  : collapse.formattedText;
+                pending.addPending(
+                  e.tool,
+                  { filePath, line: lineWithoutPrefix, diffCallId },
+                  sendPromise,
+                );
+                // Record the message id back to the collapse manager so the
+                // NEXT burst within window can edit this message.
+                void sendPromise.then((id) => {
+                  toolCollapseMgr.recordSent(collapse.key, id);
+                });
+              }
             } else {
               manager.appendBuffer(cur.id, {
                 type: 'tool_use',
-                data: line,
+                data: fallbackLine,
+                createdAt: Date.now(),
+              });
+            }
+          } else if (e.type === 'tool_result') {
+            // Phase A.2 — surface tool_result events that v1.0 silently
+            // dropped. Render compact ✅/❌ marker + small preview. Active
+            // sessions: edit the original tool_use message in place AND
+            // attach the suggestion keyboard now that we know the outcome.
+            // Background sessions: buffer a one-liner so /session switch
+            // catch-up still surfaces it.
+            const icon = e.ok ? '✅' : '❌';
+            const label = e.ok ? 'ok' : 'failed';
+            // Phase D.2/D.3/D.5 — full preview text is needed both for
+            // auto-summarize (D.2, when length > threshold + mode != verbose)
+            // and on-demand viewing (D.3 [💬 AI summary], D.5 [📜 Full
+            // output]). The truncated 240-char `preview` is what we DISPLAY;
+            // the full event.preview is what we CACHE so buttons can fetch
+            // the un-trimmed content later.
+            const fullPreview = e.preview ?? '';
+            const truncated = fullPreview ? scrubSecrets(fullPreview.slice(0, 240)) : '';
+            const preview = truncated ? `\n${truncated}` : '';
+            // Senior-review (Opus 4.7) [P1] — use canonical friendly tool
+            // label so a `codex.exec` tool_result reads `✅ Bash ok` (matching
+            // the `🔧 Bash · ls` use header) instead of the raw adapter id.
+            const friendlyTool = friendlyToolLabel(e.tool);
+            const friendly = `${icon} ${friendlyTool} ${label}${preview}`;
+
+            // Phase D.2 — auto-summarize gate. Fires only when:
+            //   - Active session (background gets a single buffered line, no
+            //     room to send placeholder + summary edit cleanly).
+            //   - Mode != verbose (verbose users want raw transcript).
+            //   - Full preview char-count exceeds the configurable threshold
+            //     (default 500). Short outputs are already readable.
+            //   - Session has a sdk_session_id (no resume token → summarize
+            //     would have no context, falls through to original render).
+            const autoSummarize =
+              isActive &&
+              currentMode !== 'verbose' &&
+              fullPreview.length > autoSummarizeThreshold() &&
+              !!cur.sdk_session_id;
+            if (isActive) {
+              const entry = pending.resolve(e.tool);
+              if (entry) {
+                const row = buildSuggestions({
+                  toolName: e.tool,
+                  exitCode: e.ok ? 0 : 1,
+                  filePath: entry.payload.filePath,
+                  sessionId: cur.id,
+                });
+                // Build the merged message body. Two flavours:
+                //   - Normal flow: `🔧 Bash · ls\n✅ Bash ok\n{truncated preview}`
+                //   - D.2 auto-summarize flow: replace the result body with a
+                //     `⏳ Summarizing 1.2KB output…` placeholder that gets
+                //     edited again once summarizeWithSession resolves.
+                const sizeHint = formatBytesShort(fullPreview.length);
+                const placeholderBody =
+                  `${labelPrefix}${entry.payload.line}\n` +
+                  `${icon} ${friendlyTool} ${label}\n` +
+                  `⏳ Summarizing ${sizeHint} output…`;
+                const mergedBody = `${labelPrefix}${entry.payload.line}\n${friendly}`;
+                const initialText = autoSummarize ? placeholderBody : mergedBody;
+
+                // Phase D.3 — pre-decide whether the [💬 AI summary] button
+                // should appear on the NON-auto-summarize path. We only
+                // attach it when:
+                //   - We have full preview text to cache (otherwise the
+                //     button would have nothing to summarize).
+                //   - Session has a resume id (the agent needs context).
+                //   - We're NOT auto-summarizing (D.2 owns the keyboard in
+                //     that branch — different buttons).
+                const hasAiSummaryButton =
+                  fullPreview.length > 0 && !!cur.sdk_session_id && !autoSummarize;
+
+                // Edit the tool_use message in place. Real reply_markup
+                // assembly happens AFTER we resolve `entry.messageReady` so
+                // the [💬 AI summary] callback can encode the actual
+                // messageId (Telegram callback_data is immutable per
+                // message — can't be retrofitted later).
+                void (async () => {
+                  const msgId = await entry.messageReady;
+                  if (msgId == null) {
+                    await notifier.sendPlain(`${labelPrefix}${friendly}`, { silent: true });
+                    return;
+                  }
+                  // Compose final keyboard for the initial edit.
+                  let finalKb: InlineKeyboard | undefined;
+                  if (row.length > 0 || entry.payload.diffCallId != null || hasAiSummaryButton) {
+                    finalKb = new InlineKeyboard();
+                    if (row.length > 0) finalKb.add(...row);
+                    if (entry.payload.diffCallId != null) {
+                      if (row.length > 0) finalKb.row();
+                      finalKb.text(
+                        '📜 Show diff',
+                        `diff:show:${cur.id}:${entry.payload.diffCallId}`,
+                      );
+                    }
+                    if (hasAiSummaryButton) {
+                      if (row.length > 0 || entry.payload.diffCallId != null) finalKb.row();
+                      finalKb.text('💬 AI summary', `summary:ai:${msgId}`);
+                      summaryCache.set(msgId, fullPreview, friendlyTool, cur.id);
+                    }
+                  }
+                  await notifier.editPlain(
+                    msgId,
+                    initialText,
+                    finalKb ? { reply_markup: finalKb } : undefined,
+                  );
+
+                  // Phase D.2 — async auto-summarize. Fires AFTER the
+                  // placeholder lands. summarizeWithSession blocks on the
+                  // session-busy mutex (it WILL wait for the current
+                  // dispatch to finish — that's OK; the user already sees
+                  // the "⏳ Summarizing…" placeholder while waiting). On
+                  // success, edit the placeholder into the final summary
+                  // block with [📜 Full output] + [💬 Re-summarize]
+                  // buttons. On failure/timeout, fall back to the regular
+                  // truncated preview so the user is never stranded.
+                  if (autoSummarize) {
+                    // Pre-cache so a fast button tap doesn't race a missing
+                    // entry (the [📜 Full output] callback uses this).
+                    summaryCache.set(msgId, fullPreview, friendlyTool, cur.id);
+                    void (async () => {
+                      const summary = await summarizeWithSession({
+                        manager,
+                        store,
+                        sessionId: cur.id,
+                        content: fullPreview,
+                        instruction: AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION,
+                        kind: 'auto-tool-result',
+                      });
+                      const lineCount = fullPreview.split('\n').length;
+                      const fallbackKb = new InlineKeyboard();
+                      let fallbackHasRow = false;
+                      if (row.length > 0) {
+                        fallbackKb.add(...row);
+                        fallbackHasRow = true;
+                      }
+                      if (entry.payload.diffCallId != null) {
+                        if (fallbackHasRow) fallbackKb.row();
+                        fallbackKb.text(
+                          '📜 Show diff',
+                          `diff:show:${cur.id}:${entry.payload.diffCallId}`,
+                        );
+                        fallbackHasRow = true;
+                      }
+                      if (!summary) {
+                        // Fallback: replace placeholder with the original
+                        // truncated preview so the user sees SOMETHING.
+                        // Keep [💬 AI summary] so they can retry manually.
+                        if (fallbackHasRow) fallbackKb.row();
+                        fallbackKb.text('💬 AI summary', `summary:ai:${msgId}`);
+                        await notifier.editPlain(msgId, mergedBody, {
+                          reply_markup: fallbackKb,
+                        });
+                        return;
+                      }
+                      // Success path — render the summary with full-output
+                      // + re-summarize buttons.
+                      const summarizedBody =
+                        `${labelPrefix}${entry.payload.line}\n` +
+                        `${icon} ${friendlyTool} ${label}\n${summary}`;
+                      if (fallbackHasRow) fallbackKb.row();
+                      fallbackKb.text(
+                        `📜 Full output (${lineCount} lines)`,
+                        `summary:full:${msgId}`,
+                      );
+                      fallbackKb.text('💬 Re-summarize', `summary:ai:${msgId}`);
+                      await notifier.editPlain(msgId, summarizedBody, {
+                        reply_markup: fallbackKb,
+                      });
+                    })();
+                  }
+                })();
+              } else {
+                // No pending tool_use to merge with (race / orphan event /
+                // tool_use never reached us). Send the result as a fresh
+                // message so the user still sees the outcome.
+                const orphanKb = new InlineKeyboard();
+                let hasOrphanButton = false;
+                if (fullPreview.length > 0 && !!cur.sdk_session_id) {
+                  // Pre-send so we can wire the real messageId into the
+                  // button callback_data.
+                  hasOrphanButton = true;
+                }
+                if (hasOrphanButton) {
+                  // Send first to get the id, then edit to add the button.
+                  void (async () => {
+                    const orphanMsgId = await notifier.sendPlain(
+                      `${labelPrefix}${friendly}`,
+                      { silent: true },
+                    );
+                    if (orphanMsgId == null) return;
+                    summaryCache.set(orphanMsgId, fullPreview, friendlyTool, cur.id);
+                    orphanKb.text('💬 AI summary', `summary:ai:${orphanMsgId}`);
+                    await notifier.editReplyMarkup(orphanMsgId, orphanKb);
+                  })();
+                } else {
+                  void notifier.sendPlain(`${labelPrefix}${friendly}`, { silent: true });
+                }
+              }
+            } else {
+              manager.appendBuffer(cur.id, {
+                type: 'tool_use',
+                data: friendly,
                 createdAt: Date.now(),
               });
             }
           } else if (e.type === 'error') {
             // ALWAYS live — critical event. Notify (not silent).
             // Flush buffered context first so the user sees what led here.
+            // Senior-review (Opus 4.7) [P2] — tear down the pending tracker
+            // too so any in-flight defer timers don't retrofit suggestion
+            // keyboards onto a session that just errored out.
+            pending.clear();
             void (async () => {
               if (!isActive && manager.hasBuffered(cur.id)) {
                 await flushBufferedAsCatchUp(cur, manager, notifier);
@@ -609,16 +1638,93 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             })();
           } else if (e.type === 'done') {
             // ALWAYS live + notify. Close stream + flush buffer first so
-            // catch-up arrives before the ✅ marker.
+            // catch-up arrives before the ✅ marker. Tear down the pending
+            // tracker so orphan defer timers don't fire after the dispatch
+            // window closed.
+            pending.clear();
+            const doneCost = e.totalCostUsd;
+            const doneDurationMs = e.durationMs;
+            const doneResultText = e.result;
             void (async () => {
               if (!isActive && manager.hasBuffered(cur.id)) {
                 await flushBufferedAsCatchUp(cur, manager, notifier);
               }
               await notifier.closeStream(streamKey);
-              const tail = e.result
-                ? `✅ done${e.totalCostUsd ? ` · $${e.totalCostUsd.toFixed(4)}` : ''}`
+
+              // Phase D.4 — auto done-summary. Triggers when mode is summary
+              // or normal AND we have a result/durationMs to format (i.e. the
+              // dispatch ran a real turn, not a 0-event no-op). Verbose mode
+              // skips — power users see the raw transcript already.
+              //
+              // Guard: skip when session.status is `waiting_approval` (an
+              // approval is mid-flight; firing summarize now would pollute
+              // the context window the agent is still using to make the
+              // approval decision). In practice, by the time `done` fires
+              // the broker has resolved everything, but read defensively.
+              const freshSession = store.getSession(cur.id);
+              const approvalInFlight = freshSession?.status === 'waiting_approval';
+              // Use the FRESH session's resume id, not the stale `cur` row
+              // captured at dispatch start. The first turn writes the sdk
+              // session id mid-dispatch — by the time `done` fires the DB has
+              // the new value but `cur.sdk_session_id` is still null. Without
+              // this re-read, the very first done card never gets an
+              // auto-summary even though the agent now has resume context
+              // (Opus 4.7 review [P3]).
+              const enableAutoDoneSummary =
+                (currentMode === 'summary' || currentMode === 'normal') &&
+                !approvalInFlight &&
+                !!(freshSession?.sdk_session_id ?? cur.sdk_session_id);
+
+              // Compose the basic done tail first — fallback if summarize
+              // bails. Duration shown in seconds (rounded) when present.
+              const durSec = typeof doneDurationMs === 'number'
+                ? Math.round(doneDurationMs / 1000)
+                : null;
+              const baselineTail = doneResultText
+                ? `✅ done${doneCost ? ` · $${doneCost.toFixed(4)}` : ''}`
                 : '✅ done';
-              await notifier.sendPlain(`${labelPrefix}${tail}`);
+              const enhancedTail = (() => {
+                const bits: string[] = ['✅ Done'];
+                if (durSec !== null) bits.push(`${durSec}s`);
+                if (typeof doneCost === 'number') bits.push(`$${doneCost.toFixed(4)}`);
+                return bits.join(' · ');
+              })();
+
+              if (!enableAutoDoneSummary) {
+                // Verbose / no-resume / approval-pending → original v1.0 tail.
+                await notifier.sendPlain(`${labelPrefix}${baselineTail}`);
+                return;
+              }
+
+              // Send the done card immediately (so the user gets the ack
+              // even if summarize takes a few seconds), then EDIT IT to
+              // append the summary once the agent replies.
+              const doneMsgId = await notifier.sendPlain(`${labelPrefix}${enhancedTail}`);
+              if (doneMsgId == null) return;
+
+              // Build the summarize input — the most recent transcript tail
+              // gives the agent enough context to summarize what it just did.
+              const summarizePromptContent =
+                freshSession?.transcript_tail ?? doneResultText ?? '';
+              if (summarizePromptContent.length === 0) {
+                // Nothing to summarize — leave the baseline tail in place.
+                return;
+              }
+
+              const summary = await summarizeWithSession({
+                manager,
+                store,
+                sessionId: cur.id,
+                content: summarizePromptContent,
+                instruction: AUTO_DONE_SUMMARIZE_INSTRUCTION,
+                kind: 'auto-done',
+              });
+              if (!summary) {
+                // Timeout / error — keep the baseline tail; no edit needed.
+                return;
+              }
+              const enhancedBody = `${labelPrefix}${enhancedTail}\n${summary}`;
+              await notifier.editPlain(doneMsgId, enhancedBody);
             })();
           } else if (e.type === 'session') {
             // resume id already persisted in adapter
@@ -626,6 +1732,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         },
       })
       .catch((err: unknown) => {
+        pending.clear();
         logger.error({ err: String(err) }, 'dispatch crash');
       });
   });

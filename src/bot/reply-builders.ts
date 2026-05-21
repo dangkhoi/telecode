@@ -1,5 +1,30 @@
 import { Keyboard, InlineKeyboard } from 'grammy';
 import type { InlineKeyboardButton } from 'grammy/types';
+import path from 'node:path';
+import type { AgentKind, AdapterMetadata } from '../agents/types.js';
+
+/**
+ * Adapter metadata lookup used by session list / strip / dashboard rendering
+ * (plan P1.1). Set at boot via {@link configureAdapterMetadata}; tests can
+ * pre-seed it directly. Defaults to an empty list — callers fall back to a
+ * generic '·' badge when an unknown kind appears (defensive only).
+ */
+let ADAPTER_METADATA: ReadonlyArray<AdapterMetadata> = [];
+
+/**
+ * Wire the registry-derived metadata so reply-builders can render
+ * agent-specific badges/labels for ANY registered kind. Should be called once
+ * at boot (after `registerBuiltinAdapters`) and re-called by tests that
+ * register additional adapters mid-suite.
+ */
+export function configureAdapterMetadata(list: ReadonlyArray<AdapterMetadata>): void {
+  ADAPTER_METADATA = list;
+}
+
+/** Look up the badge emoji for a given kind, with a generic fallback. */
+export function badgeFor(kind: AgentKind): string {
+  return ADAPTER_METADATA.find((m) => m.kind === kind)?.badge ?? '·';
+}
 
 /**
  * Common payload returned by reply builders. Handlers spread `reply_markup`
@@ -60,16 +85,15 @@ export function removeKeyboard(): { remove_keyboard: true } {
 export interface SessionListItem {
   id: string;
   label: string;
-  agent: 'claude' | 'kiro';
+  /**
+   * Open-set agent identifier (plan P1.1). The icon is resolved via
+   * `badgeFor(kind)` at render time from the registry-fed metadata.
+   */
+  agent: AgentKind;
   /** unix ms timestamp of last activity (e.g. `SessionRow.updated_at`). */
   updatedAt: number;
   status: string;
 }
-
-const AGENT_ICON: Record<SessionListItem['agent'], string> = {
-  claude: '🤖',
-  kiro: '⚡',
-};
 
 /**
  * Convert a millisecond timestamp into a short human-readable relative time.
@@ -126,7 +150,7 @@ export function buildSessionList(
   const lines: string[] = [`📋 Sessions (${sessions.length}):`];
   for (const s of sessions) {
     const marker = s.id === activeId ? '●' : '  ';
-    const icon = AGENT_ICON[s.agent];
+    const icon = badgeFor(s.agent);
     lines.push(`${marker} ${s.label} · ${icon} · ${relativeTime(s.updatedAt, now)}`);
   }
 
@@ -354,11 +378,23 @@ export interface BuildProjectListOptions {
 
 /**
  * Shorten a filesystem path for display by collapsing the user home segment
- * and keeping only the last 2 path components: `/Users/x/y/z` → `…/y/z`.
+ * and keeping only the last 2 path components: `/Users/x/y/z` → `…/y/z`,
+ * `C:\Users\x\y\z` → `…/y/z`.
+ *
+ * Plan P1.2: split on the platform-native `path.sep` (with a fallback to the
+ * "other" separator so a Windows user who pasted a POSIX path or vice versa
+ * still gets shortened correctly). We always re-join with forward slashes for
+ * the display string — Telegram users find `/y/z` more readable than
+ * `\y\z` regardless of which OS the daemon runs on.
+ *
  * Pure formatting — does not touch the filesystem.
  */
 function shortenPath(p: string): string {
-  const parts = p.split('/').filter(Boolean);
+  // Platform-native split first; on Windows that's '\\'. We OR with the
+  // "other" separator to keep mixed-style paths working (very common when
+  // users paste config paths copied from documentation/URLs).
+  const splitRe = path.sep === '\\' ? /[\\/]/ : /\//;
+  const parts = p.split(splitRe).filter(Boolean);
   if (parts.length <= 2) return p;
   return `…/${parts.slice(-2).join('/')}`;
 }

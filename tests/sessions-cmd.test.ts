@@ -103,6 +103,14 @@ describe('/sessions command (B1)', () => {
       manager,
       broker: {} as ApprovalBroker,
       policy: {} as PolicyEngine,
+      // Plan P1.1: open-set registry stub — `/sessions` doesn't invoke it.
+      registry: {
+        has: () => true,
+        get: () => undefined,
+        require: () => { throw new Error('unused in /sessions tests'); },
+        kinds: () => ['claude'],
+        list: () => [{ kind: 'claude', displayName: 'Claude', badge: '🤖' }],
+      } as never,
       notifierFor: () => ({} as never),
     };
     const { bot, handlers } = makeBotSpy();

@@ -101,4 +101,16 @@ export class ApprovalBroker {
     }
     return false;
   }
+
+  /**
+   * Count of pending approvals for `chatId`. Used by `/dashboard` (plan P0.5)
+   * to surface a live counter — `hasPendingFor` returns boolean only.
+   */
+  countPendingFor(chatId: number): number {
+    let n = 0;
+    for (const p of this.pending.values()) {
+      if (p.request.chatId === chatId) n++;
+    }
+    return n;
+  }
 }

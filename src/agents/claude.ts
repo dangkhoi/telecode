@@ -1,9 +1,20 @@
 import { query, type CanUseTool, type HookCallbackMatcher, type SettingSource } from '@anthropic-ai/claude-agent-sdk';
-import type { AgentAdapter, AgentStartOpts, AgentEvent } from './types.js';
+import type { AgentAdapter, AgentStartOpts, AgentEvent, AdapterMetadata } from './types.js';
 import type { ApprovalBroker } from '../approval/broker.js';
 import type { PolicyEngine } from '../approval/policy.js';
 import type { SessionStore } from '../session/store.js';
 import { logger } from '../util/logger.js';
+
+/**
+ * UI metadata for the Claude adapter (plan P1.1).
+ * Picker / dashboard read this — do NOT inline these strings in callers.
+ */
+export const claudeMetadata: AdapterMetadata = {
+  kind: 'claude',
+  displayName: 'Claude',
+  badge: '🤖',
+  description: 'Anthropic Claude Code via SDK',
+};
 
 export interface ClaudeAdapterOpts {
   broker: ApprovalBroker;
@@ -41,7 +52,11 @@ export class ClaudeAdapter implements AgentAdapter {
           decision: `policy_allow:${decision.matched ?? ''}`,
           duration_ms: null,
         });
-        start.onEvent({ type: 'tool_use', tool: toolName, input });
+        // Phase A.1 — DO NOT emit tool_use here. canUseTool is a policy gate
+        // (approve/deny only). The PreToolUse hook (registered below) fires
+        // AFTER approval and is the canonical announcement point. Emitting in
+        // both places caused every Claude tool call to appear twice in
+        // Telegram (plan v1.1 §1.1 Bug 1).
         return { behavior: 'allow', updatedInput: input as Record<string, unknown> };
       }
       if (decision.decision === 'deny') {

@@ -2,6 +2,7 @@ import {
   existsSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
   watchFile as fsWatchFile,
   unwatchFile as fsUnwatchFile,
@@ -200,6 +201,64 @@ export class PolicyEngine {
     this.appendList('deny', pattern);
   }
 
+  /**
+   * Build a glob-style pattern string `Tool(<args>)` from a tool name + raw
+   * input the way the policy DSL expects. The input is rendered through the
+   * same {@link renderInputForMatch} pipeline used for `decide`, then escaped
+   * by replacing literal `*`/`?` with `\*`/`\?` so an exact-match rule is
+   * emitted. Returns the bare tool name when input unwraps to an empty
+   * string — matches the "Read" / "Bash" plain-form rule shape.
+   *
+   * Exported for {@link appendRule} and for tests that want to verify the
+   * exact pattern that will be persisted.
+   */
+  static buildPattern(toolName: string, input: unknown): string {
+    const rawArg = renderInputForMatch(toolName, input).trim();
+    // `renderInputForMatch` falls back to `JSON.stringify(o)` for inputs that
+    // don't match a known tool-arg shape, producing `"{}"` for an empty
+    // object. Treat that case (and other obvious no-arg shapes) as bare.
+    if (rawArg === '' || rawArg === '{}' || rawArg === 'null' || rawArg === 'undefined') {
+      return toolName;
+    }
+    // Escape glob metacharacters in the arg so we ALWAYS persist a literal
+    // match (UX promise of "Forever" — exact same call, not a wildcard).
+    // The closing paren is not a meta in our glob but must not appear
+    // unescaped inside our `Tool(arg)` syntax; escape it defensively too.
+    const escaped = rawArg
+      .replaceAll('\\', '\\\\')
+      .replaceAll('*', '\\*')
+      .replaceAll('?', '\\?')
+      .replaceAll(')', '\\)');
+    return `${toolName}(${escaped})`;
+  }
+
+  /**
+   * Persist a forever-allow rule for a specific tool + input. Triggered by
+   * the [📌 Forever] approval button (plan P0.4): on user confirmation we
+   * write a rule into `policy.yaml` so the same call will auto-allow on
+   * every future session (even after daemon restart).
+   *
+   * Atomic — writes via tmpfile + rename (inherited from {@link appendList}).
+   *
+   * @param toolName  Tool name as surfaced in the approval prompt (e.g.
+   *                  `"Bash"`, `"fs_write"`).
+   * @param input     The raw tool input the broker received. Pattern is
+   *                  derived via {@link buildPattern}.
+   * @param decision  Only `'allow_always'` is supported today — accepted as
+   *                  parameter so future deny-forever can share the path.
+   */
+  appendRule(
+    toolName: string,
+    input: unknown,
+    decision: 'allow_always',
+  ): void {
+    if (decision !== 'allow_always') {
+      throw new Error(`appendRule: unsupported decision "${String(decision)}"`);
+    }
+    const pattern = PolicyEngine.buildPattern(toolName, input);
+    this.appendList('allow', pattern);
+  }
+
   private appendList(kind: 'allow' | 'deny', pattern: string): void {
     const current: PolicyShape = existsSync(this.path)
       ? (parseYaml(readFileSync(this.path, 'utf8')) as PolicyShape) ?? { allow: [], deny: [] }
@@ -211,7 +270,20 @@ export class PolicyEngine {
     }
     const tmp = `${this.path}.tmp.${process.pid}`;
     writeFileSync(tmp, stringifyYaml(current), { mode: 0o600 });
-    renameSync(tmp, this.path);
+    try {
+      renameSync(tmp, this.path);
+    } catch (err) {
+      // Rename can fail on rare cross-FS scenarios or on Windows when the
+      // target is locked. Clean up the tmp file so the directory doesn't
+      // accumulate stragglers, then rethrow so the caller surfaces the
+      // error (e.g. apvForeverConfirm shows a "lỗi ghi policy" toast).
+      try {
+        unlinkSync(tmp);
+      } catch {
+        /* best-effort cleanup */
+      }
+      throw err;
+    }
     this.load();
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "telecode",
-  "version": "0.8.0",
-  "description": "Telegram bridge for Claude Code & Kiro — vibecode from anywhere",
+  "version": "1.1.0",
+  "description": "Telegram bridge for Claude / Kiro / Codex / Cursor CLI — vibecode from anywhere on macOS, Linux, Windows",
   "type": "module",
   "private": true,
   "engines": {

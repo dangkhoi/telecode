@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { InlineKeyboard, Keyboard } from 'grammy';
 import {
   buildPersistentKeyboard,
@@ -7,9 +7,20 @@ import {
   buildProjectList,
   relativeTime,
   splitCatchUp,
+  configureAdapterMetadata,
   type SessionListItem,
   type ProjectListItem,
 } from '../src/bot/reply-builders.js';
+
+// Plan P1.1: reply-builders read adapter badges from a module-level registry
+// of metadata fed at boot via `configureAdapterMetadata`. Tests must seed it
+// or the badge column renders the '·' fallback.
+beforeAll(() => {
+  configureAdapterMetadata([
+    { kind: 'claude', displayName: 'Claude', badge: '🤖' },
+    { kind: 'kiro', displayName: 'Kiro', badge: '⚡' },
+  ]);
+});
 
 // ----------------------------------------------------------------------------
 // Helpers

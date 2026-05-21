@@ -252,6 +252,14 @@ describe('boot wiring — /start sends persistent keyboard (B4)', () => {
       manager,
       broker: {} as ApprovalBroker,
       policy: {} as PolicyEngine,
+      // Plan P1.1: open-set registry stub — `/start` doesn't invoke it.
+      registry: {
+        has: () => true,
+        get: () => undefined,
+        require: () => { throw new Error('unused in boot-wiring tests'); },
+        kinds: () => ['claude'],
+        list: () => [{ kind: 'claude', displayName: 'Claude', badge: '🤖' }],
+      } as never,
       notifierFor: () => ({} as never),
     };
     const { bot, handlers } = makeBotSpy();

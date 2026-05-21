@@ -97,6 +97,71 @@ export class Notifier {
     }
   }
 
+  /**
+   * Phase C.1 — send a MarkdownV2-formatted message with a graceful fallback
+   * to plain text on parser-rejection (HTTP 400 "can't parse entities").
+   * Telegram's MarkdownV2 is strict; a single un-escaped `.` or `+` makes the
+   * whole send fail. The streaming pipeline's `maybeWrapCodeBlock` is
+   * conservative but never 100% safe against pathological input. If MarkdownV2
+   * fails we strip `parse_mode` and retry with the raw text — the user still
+   * sees the content, just unstyled. Logs a warn so we can spot patterns that
+   * trip the escape helper.
+   *
+   * NOTE: the fallback strips ALL MarkdownV2 markup including code fences —
+   * the goal is "always deliver the content", not "always render code." Most
+   * agents already paste structured snippets verbatim, so the plain render is
+   * still usable.
+   *
+   * 429 is handled by {@link handleSendError} same as `sendPlain`.
+   */
+  async sendMarkdownV2(text: string, extra?: SendPlainExtra): Promise<number | null> {
+    const safe = clip(scrubSecrets(text));
+    const apiOpts = normalizeExtra({ ...(extra ?? {}), parse_mode: 'MarkdownV2' });
+    try {
+      await this.takeToken();
+      const msg = await this.opts.bot.api.sendMessage(
+        this.opts.chatId,
+        safe,
+        apiOpts as never,
+      );
+      return msg.message_id;
+    } catch (err) {
+      const e = err as {
+        error_code?: number;
+        description?: string;
+        parameters?: { retry_after?: number };
+      };
+      // 429 — same backoff as `sendPlain`, but retry the MarkdownV2 path so
+      // the styled rendering survives a transient rate limit.
+      if (e?.error_code === 429 && e.parameters?.retry_after) {
+        const waitMs = e.parameters.retry_after * 1000 + 100;
+        logger.warn({ waitMs }, 'tg 429 on MarkdownV2 send, backing off');
+        await sleep(waitMs);
+        return this.sendMarkdownV2(text, extra);
+      }
+      // 400 with parse-mode complaint — fall back to plain so the content
+      // still lands. We INTENTIONALLY don't re-wrap or sanitise further;
+      // dropping parse_mode is a complete circuit-break.
+      const isParseError =
+        e?.error_code === 400 &&
+        typeof e.description === 'string' &&
+        /can't parse entities|parse_mode|MARKDOWN_PARSE_ERROR/i.test(e.description);
+      if (isParseError) {
+        logger.warn(
+          { description: e.description },
+          'MarkdownV2 parse failed — falling back to plain text',
+        );
+        // Strip parse_mode from extra and retry through the plain path.
+        const plainExtra: SendPlainExtra | undefined = extra ? { ...extra } : undefined;
+        if (plainExtra && 'parse_mode' in plainExtra) delete plainExtra.parse_mode;
+        return this.sendPlain(text, plainExtra);
+      }
+      // Other errors — same as `sendPlain` (log + null).
+      logger.error({ err: String(err) }, 'tg MarkdownV2 send failed');
+      return null;
+    }
+  }
+
   async send(text: string, extra?: SendPlainExtra): Promise<number | null> {
     return this.sendPlain(text, extra);
   }
@@ -223,6 +288,63 @@ export class Notifier {
       await ctx.answerCallbackQuery(text ? { text } : undefined);
     } catch (err) {
       logger.warn({ err: String(err) }, 'answerCallback failed');
+    }
+  }
+
+  /**
+   * Phase A.5 helper — replace the inline keyboard attached to an existing
+   * message. Used to retrofit the follow-up suggestion row once the matching
+   * `tool_result` arrives (or the 2-second defer timer fires for adapters
+   * that don't emit tool_result).
+   *
+   * Silently ignores the "message is not modified" 400 because grammY raises
+   * when the keyboard hasn't changed — harmless in our flow (defer + result
+   * could race for the same message). Logs other errors but never throws —
+   * the caller cannot meaningfully recover.
+   */
+  async editReplyMarkup(messageId: number, replyMarkup?: unknown): Promise<void> {
+    try {
+      await this.takeToken();
+      await this.opts.bot.api.editMessageReplyMarkup(
+        this.opts.chatId,
+        messageId,
+        replyMarkup ? ({ reply_markup: replyMarkup } as never) : undefined,
+      );
+    } catch (err) {
+      const e = err as { description?: string; error_code?: number };
+      if (typeof e?.description === 'string' && /message is not modified/i.test(e.description)) {
+        return;
+      }
+      logger.warn({ err: String(err), messageId }, 'editReplyMarkup failed');
+    }
+  }
+
+  /**
+   * Phase A.5 helper — edit the text of a previously-sent plain message
+   * (e.g. tool_use announcement → upgrade to tool_use + result line). Wraps
+   * grammY's `editMessageText` with the same 429 / not-modified tolerance as
+   * the streaming path. Optionally replaces the reply markup in the same
+   * call (saves one round trip).
+   */
+  async editPlain(
+    messageId: number,
+    text: string,
+    extra?: { reply_markup?: unknown },
+  ): Promise<void> {
+    const safe = clip(scrubSecrets(text));
+    try {
+      await this.takeToken();
+      await this.opts.bot.api.editMessageText(
+        this.opts.chatId,
+        messageId,
+        safe,
+        extra ? (extra as never) : undefined,
+      );
+    } catch (err) {
+      const handled = await this.handleEditError(err);
+      if (!handled) {
+        logger.warn({ err: String(err), messageId }, 'editPlain failed');
+      }
     }
   }
 }
