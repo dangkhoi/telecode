@@ -74,6 +74,15 @@ function makeNotifier(): {
     flush: vi.fn(async () => {}),
     send: sendPlain,
     answerCallback: vi.fn(async () => {}),
+    // v1.2 Bug 1 — done/error branches attach the end-of-turn suggestion
+    // row via editReplyMarkup. The harness used to omit this mock because
+    // the old hot path only used sendPlain, but the new flow MUST be able
+    // to call editReplyMarkup without crashing. No-op mock keeps the
+    // session-gating assertions unchanged (they only check sendPlain).
+    editReplyMarkup: vi.fn(async () => {}),
+    editPlain: vi.fn(async () => {}),
+    editPlainChunked: vi.fn(async () => []),
+    sendChunked: vi.fn(async () => [1]),
   } as unknown as Notifier;
   return { notifier, appendStream, sendPlain, closeStream };
 }

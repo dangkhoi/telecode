@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spec — Telegram media input + verbose-button fix</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 72px 32px 120px; }
+  header.hero { margin-bottom: 48px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 40px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 20px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 64px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 28px; font-size: 16px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 36px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 26px 0 10px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 22px 26px; margin: 28px 0 40px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; margin: 22px 0; box-shadow: var(--shadow); }
+  .card h3, .card h4 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.danger { border-color: rgba(200,16,46,0.3); background: var(--danger-soft); }
+  .card.success { border-color: rgba(28,124,84,0.3); background: var(--success-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 8px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 56px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.55; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .compare .col h5 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after { border-left: 3px solid var(--success); }
+  @media (max-width: 720px) {
+    .wrap { padding: 44px 18px 72px; }
+    h1 { font-size: 30px; } .lede { font-size: 17px; } h2 { font-size: 22px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Spec · Telecode v1.2</div>
+  <h1>Telegram media input + verbose-button fix</h1>
+  <p class="lede">Người dùng gửi hình + file vào chat Telegram, telecode lưu local rồi inject reference cho agent đọc bằng Read tool. Đồng thời gỡ noise: button "Tiếp tục" / "Re-run" gắn dưới mỗi tool result khi agent đang chạy.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Slug</strong> · telegram-media-input</span>
+    <span class="pill"><strong>Author</strong> · vendor.01@frt.vn</span>
+    <span class="pill"><strong>Date</strong> · 2026-05-21</span>
+    <span class="pill"><strong>Effort</strong> · ~1 đêm (autonomous)</span>
+    <span class="pill"><strong>Status</strong> · Implementing</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p><strong>(1) Verbose-button noise</strong>: suggestion row <em>[▶️ Tiếp tục] [🔁 Run again]</em> hiện được attach lên TỪNG <code>tool_result</code>. User nhìn thấy nó dưới mỗi message khi agent đang chạy → confusing + noise. Fix: chỉ attach 1 row duy nhất lên message CUỐI của turn (sau <code>done</code> event), không attach mid-stream.</p>
+  <p><strong>(2) Image + file input</strong>: thêm <code>bot.on('message:photo' | 'message:document', ...)</code>. Download file qua Bot API → save vào <code>~/.telecode/inbox/&lt;chatId&gt;/&lt;yyyymmdd-HHMMSS&gt;-&lt;name&gt;</code> → inject reference <code>@&lt;abs-path&gt;</code> vào prompt cho agent. Unified per-agent (Claude / Kiro / Codex / Cursor đều dùng Read tool).</p>
+  <p><strong>Trade-off</strong>: KHÔNG dùng Claude SDK base64 content-block (sẽ ép phải refactor sang streaming-mode prompt — disruptive cho session resume + abort). @path approach uniform cho 4 adapter, ít diff hơn, dễ test, đồng nhất UX.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Changelog</h2>
+<table>
+  <thead><tr><th>Date</th><th>Section</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05-21</td><td>All</td><td>Initial spec — bundle 3 yêu cầu user gửi đêm 21/05.</td></tr>
+    <tr><td>2026-05-21</td><td>Design</td><td>Chốt unified @path approach sau khi verify Context7 docs (Claude SDK base64 requires streaming-mode → disruptive).</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Context</h2>
+<p class="section-sub">3 yêu cầu user đêm 21/05 sau hotfix 4-bug.</p>
+
+<div class="card">
+  <h4>Yêu cầu nguyên văn</h4>
+  <ol>
+    <li>Chọn mode verbose, dưới mỗi message luôn có button "Tiếp tục", đôi khi thêm button "Re-run", chưa hiểu để làm gì khi agent đang chạy? Có dư thừa không, kiểm tra và fix.</li>
+    <li>Thêm function gửi hình ảnh, screenshot, các agent cli đều có /paste (Kiro) hay cách nào đó để user input hình ảnh, hãy làm feature này, khi user gửi hình vào telegram thì hãy lấy hình đó gửi cho agent theo đúng cú pháp từng agent.</li>
+    <li>Thêm function send được file, các file format căn bản như md, html, word, excel … để làm đầu vào cho các promt khi user cần.</li>
+  </ol>
+</div>
+
+<div class="card">
+  <h4>Hiện trạng codebase</h4>
+  <ul>
+    <li><code>src/bot/suggestions.ts</code> · <code>buildSuggestions()</code> hard-code mỗi <code>tool_result</code> đều có ít nhất 1 button "▶️ Tiếp tục" + đôi khi "🔁 Run again" / "↩️ Rollback".</li>
+    <li><code>src/bot/commands/index.ts</code> · attach row vào <em>mọi</em> tool_result trong nhánh <code>e.type === 'tool_result'</code> (~L1521–L1605) + retrofit khi defer timeout (~L1186–L1205).</li>
+    <li><code>bot.on('message:text', ...)</code> tồn tại — KHÔNG có handler cho <code>:photo</code> / <code>:document</code>. Photo / file gửi vào hiện bị silent-drop.</li>
+    <li>4 adapter (<code>claude.ts</code>, <code>kiro.ts</code>, <code>codex.ts</code>, <code>cursor.ts</code>) đều nhận <code>initialPrompt: string</code> qua <code>AgentStartOpts</code>. Claude SDK <em>technically</em> support multimodal qua streaming-mode async iterator, nhưng telecode dùng string-prompt mode.</li>
+  </ul>
+</div>
+
+<!-- ============================================================== -->
+<h2>Requirements</h2>
+<p class="section-sub">Acceptance criteria — verified trong consolidate phase.</p>
+
+<h3>R1 — Suggestion buttons không noise khi đang chạy</h3>
+<ul class="checklist">
+  <li class="todo"><strong>R1.1</strong> · Trong khi turn đang chạy (chưa nhận <code>done</code> / <code>error</code>), KHÔNG attach suggestion row vào bất kỳ <code>tool_result</code> message nào.</li>
+  <li class="todo"><strong>R1.2</strong> · Sau khi nhận <code>done</code>, attach ĐÚNG 1 suggestion row vào done summary card (cuối turn). Không attach vào event nào khác.</li>
+  <li class="todo"><strong>R1.3</strong> · Nếu turn <code>error</code> ra giữa chừng → vẫn attach 1 row vào error message (để user dễ Tiếp tục / Re-run).</li>
+  <li class="todo"><strong>R1.4</strong> · Defer-timeout retrofit (cho adapter không emit tool_result) cũng DROP — không retrofit suggestion mid-stream.</li>
+  <li class="todo"><strong>R1.5</strong> · Diff button <code>[📜 Show diff]</code> + AI summary button <code>[💬 AI summary]</code> được PRESERVE per-tool (đây không phải suggestion, là affordance cho riêng tool đó — đúng moment).</li>
+</ul>
+
+<h3>R2 — Image input từ Telegram</h3>
+<ul class="checklist">
+  <li class="todo"><strong>R2.1</strong> · Khi user gửi photo vào chat đang có active session, telecode download largest-resolution variant về local.</li>
+  <li class="todo"><strong>R2.2</strong> · Photo lưu tại <code>~/.telecode/inbox/&lt;chatId&gt;/&lt;yyyymmdd-HHMMSS&gt;-&lt;rand6&gt;.&lt;ext&gt;</code>. <code>ext</code> infer từ MIME hoặc default <code>.jpg</code>.</li>
+  <li class="todo"><strong>R2.3</strong> · Reject quá size cap (default 20 MB — match Telegram bot API limit).</li>
+  <li class="todo"><strong>R2.4</strong> · Caption (nếu có) trở thành body của prompt. Prompt cuối cùng append dòng <code>📎 Attached image: @&lt;abs-path&gt;</code> để agent thấy reference.</li>
+  <li class="todo"><strong>R2.5</strong> · Nếu không có caption → prompt mặc định <code>"Xem ảnh đính kèm và cho biết bạn thấy gì."</code> + <code>@path</code>.</li>
+  <li class="todo"><strong>R2.6</strong> · Không có active session → reply hướng dẫn (giống message:text).</li>
+</ul>
+
+<h3>R3 — File input từ Telegram</h3>
+<ul class="checklist">
+  <li class="todo"><strong>R3.1</strong> · Khi user gửi document vào chat đang có active session, telecode download về local.</li>
+  <li class="todo"><strong>R3.2</strong> · File lưu tại <code>~/.telecode/inbox/&lt;chatId&gt;/&lt;yyyymmdd-HHMMSS&gt;-&lt;original-filename&gt;</code>. Filename sanitize: bỏ path separators, control chars, max 80 chars stem.</li>
+  <li class="todo"><strong>R3.3</strong> · Extension allowlist: <code>.md .markdown .html .htm .txt .csv .tsv .json .yaml .yml .xml .log .docx .doc .xlsx .xls .pptx .ppt .pdf .rtf .ts .js .py .go .rs .java .sh .sql .toml .ini</code>. File ngoài allowlist → reject với hint.</li>
+  <li class="todo"><strong>R3.4</strong> · Size cap default 20 MB. Configurable qua <code>config.telegram.attachmentMaxBytes</code>.</li>
+  <li class="todo"><strong>R3.5</strong> · Caption (nếu có) trở thành body prompt. Default nếu trống: <code>"Đọc file đính kèm rồi trả lời tiếp."</code>.</li>
+  <li class="todo"><strong>R3.6</strong> · Prompt append <code>📎 Attached file: @&lt;abs-path&gt; (&lt;size&gt;, &lt;ext&gt;)</code> để agent biết đường dẫn + metadata.</li>
+</ul>
+
+<h3>R4 — Cross-adapter compatibility</h3>
+<ul class="checklist">
+  <li class="todo"><strong>R4.1</strong> · 4 adapter (<code>claude</code>, <code>kiro</code>, <code>codex</code>, <code>cursor</code>) đều nhận prompt string không thay đổi. Image/file injection xảy ra ở layer <code>bot/commands</code>, KHÔNG đụng <code>agents/*</code>.</li>
+  <li class="todo"><strong>R4.2</strong> · Path inject là absolute, agent Read tool gọi được trực tiếp. Quote không bắt buộc — assume <code>@path</code> convention.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Design</h2>
+<p class="section-sub">Architecture + key decisions + file plan.</p>
+
+<h3>D1 — Suggestion-button defer (Bug 1)</h3>
+<div class="card">
+  <h4>Trước</h4>
+  <pre><code>tool_result event → resolve pending → buildSuggestions → attach row vào EVERY tool_result message
+defer timeout 2s → retrofit suggestion row nếu tool_result không tới</code></pre>
+  <h4>Sau</h4>
+  <pre><code>tool_result event → resolve pending → attach CHỈ diff/summary button (per-tool affordance)
+done event → attach 1 suggestion row vào done-summary card (1 lần / turn)
+error event → attach 1 suggestion row vào error message (1 lần / turn)
+defer timeout → KHÔNG retrofit suggestion (giữ retrofit diff button nếu có)</code></pre>
+  <p>Logic: suggestion row tập trung vào "what should I do NEXT" — chỉ có nghĩa khi turn done. Trong khi đang chạy, agent vẫn sẽ tự tiếp tục → button "Tiếp tục" / "Run again" gây hiểu nhầm.</p>
+</div>
+
+<h3>D2 — Attachment download path</h3>
+<pre><code>// src/bot/attachments.ts (new module)
+export interface SavedAttachment {
+  absPath: string;        // ~/.telecode/inbox/&lt;chat&gt;/&lt;ts&gt;-&lt;name&gt;
+  filename: string;       // sanitized
+  sizeBytes: number;
+  kind: 'photo' | 'document';
+  ext: string;            // ".png" / ".docx" / ...
+}
+
+export async function downloadTelegramFile(
+  bot: Bot,
+  chatId: number,
+  fileId: string,
+  hintName: string | null,   // null cho photo → infer từ mime
+  opts: { maxBytes: number; allowedExts?: Set&lt;string&gt; },
+): Promise&lt;SavedAttachment | { error: string }&gt;;
+</code></pre>
+<p>Implementation:</p>
+<ol>
+  <li><code>bot.api.getFile(fileId)</code> → <code>{ file_path, file_size }</code></li>
+  <li>Check <code>file_size &gt; maxBytes</code> → return error.</li>
+  <li>Compose URL <code>https://api.telegram.org/file/bot&lt;token&gt;/&lt;file_path&gt;</code>.</li>
+  <li><code>fetch(url)</code> → stream vào file local. (Node 22 native fetch.)</li>
+  <li>Filename sanitize: replace <code>[^\w.\-]</code> → <code>_</code>, truncate stem ≤ 80 chars, preserve ext.</li>
+  <li>Cross-platform: <code>os.homedir()</code> + <code>path.join</code> + <code>fs.mkdir(recursive: true)</code>. Windows OK.</li>
+</ol>
+
+<h3>D3 — Handler wiring</h3>
+<pre><code>// src/bot/commands/index.ts (new bot.on handlers, placed AFTER message:text)
+
+bot.on('message:photo', async (ctx) =&gt; {
+  const photos = ctx.message.photo;          // PhotoSize[]
+  const largest = photos[photos.length - 1]; // last = highest res
+  const result = await downloadTelegramFile(
+    bot, ctx.chat!.id, largest.file_id, null,
+    { maxBytes: cfg.telegram.attachmentMaxBytes },
+  );
+  if ('error' in result) { await ctx.reply(result.error); return; }
+  await routeAttachmentToActiveSession(ctx, result, ctx.message.caption);
+});
+
+bot.on('message:document', async (ctx) =&gt; {
+  const doc = ctx.message.document;
+  const result = await downloadTelegramFile(
+    bot, ctx.chat!.id, doc.file_id, doc.file_name,
+    { maxBytes: cfg.telegram.attachmentMaxBytes, allowedExts: FILE_ALLOWLIST },
+  );
+  if ('error' in result) { await ctx.reply(result.error); return; }
+  await routeAttachmentToActiveSession(ctx, result, ctx.message.caption);
+});</code></pre>
+
+<p><code>routeAttachmentToActiveSession()</code> tái sử dụng dispatch path của <code>bot.on('message:text')</code>:</p>
+<pre><code>function buildPromptWithAttachment(caption, att): string {
+  const body = caption?.trim() || (att.kind === 'photo'
+    ? 'Xem ảnh đính kèm và cho biết bạn thấy gì.'
+    : 'Đọc file đính kèm rồi trả lời tiếp.');
+  const sizeHint = formatBytesShort(att.sizeBytes);
+  const meta = att.kind === 'photo'
+    ? `📎 Attached image: @${att.absPath} (${sizeHint})`
+    : `📎 Attached file: @${att.absPath} (${sizeHint}, ${att.ext})`;
+  return `${body}\n\n${meta}`;
+}</code></pre>
+
+<h3>D4 — Config surface</h3>
+<pre><code>// src/config.ts — thêm vào TelegramConfig schema
+telegram: {
+  ...
+  attachmentMaxBytes: number,  // default 20_000_000 (~20 MB)
+  attachmentAllowedExts?: string[],  // override allowlist nếu user muốn whitelist hẹp hơn
+}</code></pre>
+
+<h3>D5 — Library freshness verify (Context7)</h3>
+<table>
+  <thead><tr><th>Library</th><th>Version pinned</th><th>API verified latest stable</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>grammy</td><td>1.43.0</td><td>✅ <code>bot.on('message:photo'|'message:document')</code>, <code>ctx.getFile()</code>, <code>https://api.telegram.org/file/bot&lt;token&gt;/&lt;file_path&gt;</code></td><td>NOT using <code>@grammyjs/files</code> plugin — avoid new dep; native fetch enough.</td></tr>
+    <tr><td>@anthropic-ai/claude-agent-sdk</td><td>0.3.145</td><td>✅ Multimodal qua streaming-mode async iterator (verified via Context7). Hiện string-prompt mode đang dùng; KHÔNG migrate đợt này.</td><td>Trade-off documented — unified @path uniform across 4 adapters.</td></tr>
+    <tr><td>Node fetch</td><td>Node ≥ 22</td><td>✅ Native, no node-fetch dep cần.</td><td>Stream body vào file qua <code>ReadableStream</code> → <code>node:stream/promises.pipeline</code>.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Tasks</h2>
+<p class="section-sub">DAG — implement song song với spec.</p>
+
+<table>
+  <thead><tr><th>#</th><th>Task</th><th>File</th><th>Owner</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>T1</td><td>Defer suggestion row → chỉ attach ở <code>done</code> / <code>error</code></td><td><code>src/bot/commands/index.ts</code></td><td>main</td><td>Pending</td></tr>
+    <tr><td>T2</td><td>Module <code>src/bot/attachments.ts</code> — download + save + sanitize</td><td>NEW <code>src/bot/attachments.ts</code></td><td>main</td><td>Pending</td></tr>
+    <tr><td>T3</td><td><code>bot.on('message:photo' | 'message:document')</code> handlers</td><td><code>src/bot/commands/index.ts</code></td><td>main</td><td>Pending</td></tr>
+    <tr><td>T4</td><td>Config field <code>telegram.attachmentMaxBytes</code> + <code>attachmentAllowedExts</code></td><td><code>src/config.ts</code></td><td>main</td><td>Pending</td></tr>
+    <tr><td>T5</td><td>Unit tests · suggestions defer</td><td>NEW <code>tests/suggestions-defer.test.ts</code></td><td>main</td><td>Pending</td></tr>
+    <tr><td>T6</td><td>Unit tests · attachment sanitize + size cap + ext gate</td><td>NEW <code>tests/attachments.test.ts</code></td><td>main</td><td>Pending</td></tr>
+    <tr><td>T7</td><td>Integration test · photo/document handler end-to-end (mock bot.api)</td><td>NEW <code>tests/telegram-attachment-flow.test.ts</code></td><td>main</td><td>Pending</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Verification</h2>
+<p class="section-sub">Bằng chứng spec hoàn tất.</p>
+<ul class="checklist">
+  <li class="done">Build pass: <code>npm run build</code> — clean</li>
+  <li class="done">Tests pass: <code>npm test</code> — 764 pass, 2 skipped, 0 fail (was 740, +24 new tests)</li>
+  <li class="done">Scope completeness — R1.1–R1.5, R2.1–R2.6, R3.1–R3.6, R4.1–R4.2 all ✅</li>
+  <li class="todo">Senior review Opus 4.7 — pending</li>
+  <li class="done">Tech freshness — grammy 1.43, claude-agent-sdk 0.3.145 — verified via Context7 (latest stable, no deprecated API used)</li>
+  <li class="todo">Security scan Opus 4.7 — pending</li>
+</ul>
+
+<h3>Scope checklist (per CLAUDE.md §2.1)</h3>
+<table>
+  <thead><tr><th>ID</th><th>Acceptance</th><th>Evidence</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>R1.1</td><td>Không attach suggestion row vào tool_result mid-stream</td><td><code>commands/index.ts:1540</code> · <code>const row: InlineKeyboardButton[] = [];</code></td><td>✅</td></tr>
+    <tr><td>R1.2</td><td>1 row attach vào done card</td><td><code>commands/index.ts:1851</code> · <code>editReplyMarkup(doneMsgId, doneKb)</code></td><td>✅</td></tr>
+    <tr><td>R1.3</td><td>1 row attach vào error message</td><td><code>commands/index.ts:1775</code> · <code>editReplyMarkup(errMsgId, errorKb)</code></td><td>✅</td></tr>
+    <tr><td>R1.4</td><td>Defer-timeout không retrofit suggestion</td><td><code>commands/index.ts:1197</code> · drop buildSuggestions, keep diff retrofit only</td><td>✅</td></tr>
+    <tr><td>R1.5</td><td>Diff + AI summary buttons preserved</td><td>existing diffCallId / hasAiSummaryButton paths untouched</td><td>✅</td></tr>
+    <tr><td>R2.1</td><td>Photo download largest variant</td><td><code>bot.on('message:photo')</code> picks <code>photos[photos.length-1]</code></td><td>✅</td></tr>
+    <tr><td>R2.2</td><td>~/.telecode/inbox/&lt;chat&gt;/&lt;ts&gt;-&lt;rand6&gt;-&lt;name&gt;</td><td><code>attachments.ts:158</code> · <code>${stamp}-${rand}-${baseName}</code></td><td>✅</td></tr>
+    <tr><td>R2.3</td><td>Size cap reject</td><td><code>attachments.ts:142</code> + <code>:194</code> (Content-Length) + mid-stream guard</td><td>✅</td></tr>
+    <tr><td>R2.4 R2.5</td><td>Caption body + default + @path</td><td><code>buildPromptWithAttachment</code></td><td>✅</td></tr>
+    <tr><td>R2.6</td><td>No active session → reply guidance</td><td>photo/document handlers guard via <code>activeSession()</code></td><td>✅</td></tr>
+    <tr><td>R3.1</td><td>Document download</td><td><code>bot.on('message:document')</code></td><td>✅</td></tr>
+    <tr><td>R3.2</td><td>Sanitize filename</td><td><code>sanitizeFilename()</code> · regex <code>[^A-Za-z0-9._-]+</code> + 80-char stem cap</td><td>✅</td></tr>
+    <tr><td>R3.3</td><td>Extension allowlist</td><td><code>DEFAULT_ALLOWED_EXTS</code> + config override</td><td>✅</td></tr>
+    <tr><td>R3.4</td><td>Size cap configurable</td><td><code>config.telegram.attachment_max_bytes</code> default 20 MB</td><td>✅</td></tr>
+    <tr><td>R3.5 R3.6</td><td>Caption + @path with metadata</td><td><code>buildPromptWithAttachment</code> document branch</td><td>✅</td></tr>
+    <tr><td>R4.1</td><td>4 adapter nhận string không đổi</td><td>Zero diff trong <code>src/agents/*</code></td><td>✅</td></tr>
+    <tr><td>R4.2</td><td>Absolute path inject</td><td><code>path.join(os.homedir(), ...)</code></td><td>✅</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Open Questions</h2>
+<div class="card warn">
+  <h4>OQ-1 · Image strategy revisit?</h4>
+  <p>Hiện chốt @path approach. Sau khi user dùng thử, nếu Claude cần image trực tiếp trong context (không phải tool round-trip) → migrate Claude adapter sang streaming-mode async-iterator prompt. Đợt sau, không đợt này.</p>
+</div>
+<div class="card warn">
+  <h4>OQ-2 · Verbose mode vẫn keep suggestion buttons?</h4>
+  <p>Spec hiện disable suggestion mid-stream cho MỌI mode. Nếu user verbose muốn quick action mid-stream → cần revisit. Đợt này ưu tiên fix noise.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>References</h2>
+<ul>
+  <li>Context7 · <code>/grammyjs/website</code> — file download via Bot API</li>
+  <li>Context7 · <code>/nothflare/claude-agent-sdk-docs</code> — multimodal streaming-mode prompt</li>
+  <li>Prior spec · <code>docs/plans/telecode-v1.0-cross-platform-multi-agent.html</code> — <code>buildSuggestions</code> origin</li>
+  <li>Prior spec · <code>docs/design/telecode-v1.1-streaming-ux-redesign.html</code> — Phase A.5 pending-tools tracker</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Reviewer Log</h2>
+<p class="section-sub">Append-only. Mỗi pass review thêm h3 mới, không overwrite history.</p>
+
+<h3>Pass 1 — 2026-05-21 (Opus 4.7 senior review)</h3>
+
+<h4>Scope Checklist</h4>
+<table>
+  <thead><tr><th>ID</th><th>Acceptance</th><th>Evidence</th><th>Verdict</th></tr></thead>
+  <tbody>
+    <tr><td>R1.1</td><td>Không attach suggestion row vào tool_result mid-stream</td><td><code>commands/index.ts:1599</code> · <code>const row: InlineKeyboardButton[] = []</code> ngay tại tool_result branch — empty row → không có inline keyboard nào attach mid-stream.</td><td>✅ Done</td></tr>
+    <tr><td>R1.2</td><td>1 row attach vào done card</td><td><code>commands/index.ts:1845-1873</code> · <code>buildEndOfTurnSuggestions(...)</code> được build ONCE rồi attach qua <code>editReplyMarkup(doneMsgId, doneKb)</code> sau <code>sendPlain(enhancedTail)</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R1.3</td><td>1 row attach vào error message</td><td><code>commands/index.ts:1767-1787</code> · error branch xây <code>errorKb</code> từ <code>buildEndOfTurnSuggestions(..., ok=false)</code> rồi <code>editReplyMarkup(errMsgId, errorKb)</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R1.4</td><td>Defer-timeout không retrofit suggestion</td><td><code>commands/index.ts:1244-1265</code> · onTimeout xóa <code>buildSuggestions</code> call, chỉ giữ <code>diff:show</code> button retrofit + đánh dấu <code>lastResolvedTool</code> để row cuối turn dùng.</td><td>✅ Done</td></tr>
+    <tr><td>R1.5</td><td>Diff + AI summary buttons preserved</td><td>Existing diff-cache / hasAiSummaryButton paths untouched — chỉ tool_result branch sửa, không động vào diff/summary keyboard logic.</td><td>✅ Done</td></tr>
+    <tr><td>R2.1</td><td>Photo download largest variant</td><td><code>commands/index.ts:1936-1939</code> · <code>const largest = photos[photos.length - 1]</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R2.2</td><td><code>~/.telecode/inbox/&lt;chat&gt;/&lt;ts&gt;-&lt;rand6&gt;-&lt;name&gt;</code> với ext infer</td><td><code>attachments.ts:243</code> · <code>${stamp}-${rand}-${baseName}</code>. <strong>Pass 1 patch</strong>: photo extension giờ infer từ <code>meta.file_path</code> (PNG/WebP → đúng ext, fallback <code>.jpg</code>).</td><td>✅ Done (improved)</td></tr>
+    <tr><td>R2.3</td><td>Reject size cap (Telegram default 20 MB)</td><td><code>attachments.ts:206-212</code> (metadata) + <code>:259-263</code> (Content-Length) + <code>:275-280</code> (mid-stream guard).</td><td>✅ Done</td></tr>
+    <tr><td>R2.4 / R2.5</td><td>Caption body + default fallback + <code>@path</code></td><td><code>attachments.ts:333-349</code> · <code>buildPromptWithAttachment</code> đầy đủ 2 nhánh photo/document + Vietnamese defaults.</td><td>✅ Done</td></tr>
+    <tr><td>R2.6</td><td>No active session → reply guidance</td><td><code>commands/index.ts:1929-1934</code> · activeSession() guard với reply hướng dẫn <code>/session new</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R3.1</td><td>Document download</td><td><code>commands/index.ts:1976-2026</code> · <code>bot.on('message:document')</code> handler dispatch tới <code>downloadTelegramAttachment(kind='document')</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R3.2</td><td>Filename sanitize · path-traversal safe</td><td><code>attachments.ts:128-137</code> · regex <code>[^A-Za-z0-9._-]+</code> → <code>_</code> + 80-char stem cap. <code>../etc/passwd</code> → <code>.._etc_passwd</code> (verified safe).</td><td>✅ Done</td></tr>
+    <tr><td>R3.3</td><td>Extension allowlist</td><td><code>attachments.ts:48-68</code> · <code>DEFAULT_ALLOWED_EXTS</code> + config override; <code>.exe/.bat/.dll</code> rejected (test asserts).</td><td>✅ Done</td></tr>
+    <tr><td>R3.4</td><td>Size cap configurable</td><td><code>config.ts:132-136</code> · <code>attachment_max_bytes</code> default <code>20*1024*1024</code> với <code>z.number().int().positive()</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R3.5 / R3.6</td><td>Caption + <code>@path</code> với metadata</td><td><code>buildPromptWithAttachment</code> document branch · <code>📎 Attached file: @&lt;abs-path&gt; (size, ext)</code>.</td><td>✅ Done</td></tr>
+    <tr><td>R4.1</td><td>4 adapter nhận prompt string không đổi</td><td>Zero diff trong <code>src/agents/{claude,kiro,codex,cursor}.ts</code> ngoài Claude done-dedup (hotfix riêng).</td><td>✅ Done</td></tr>
+    <tr><td>R4.2</td><td>Absolute path inject</td><td><code>path.join(os.homedir(), '.telecode', 'inbox', ...)</code> → absolute trên cả 3 OS.</td><td>✅ Done</td></tr>
+  </tbody>
+</table>
+
+<p><strong>Verdict</strong>: 100% R1-R4 deliverables ✅ — không có scope gap.</p>
+
+<h4>Tech Freshness (Context7 verified)</h4>
+<table>
+  <thead><tr><th>Library</th><th>Version used</th><th>Latest stable</th><th>API status</th><th>Action</th></tr></thead>
+  <tbody>
+    <tr><td>grammy</td><td>1.43.0</td><td>1.43.x (current)</td><td><code>bot.on('message:photo'|'message:document')</code>, <code>ctx.message.photo[]</code>, <code>bot.api.getFile(fileId)</code>, <code>bot.token</code> readonly — all on the documented public surface (Bot.d.ts §106).</td><td>None — patched away the spurious <code>unknown</code> cast on <code>bot.token</code> per public API.</td></tr>
+    <tr><td>@anthropic-ai/claude-agent-sdk</td><td>0.3.145</td><td>0.3.x latest</td><td>Done-event dedup uses the canonical <code>SDKResultMessage</code> shape (type:'result' + subtype:'success'/error_*); no deprecated APIs touched. Multimodal streaming-mode (verified earlier) deliberately not used this round — see OQ-1.</td><td>None.</td></tr>
+    <tr><td>Node fetch / streams</td><td>Node 22+ native</td><td>Node 22 LTS</td><td><code>fetch</code>, <code>Readable.fromWeb()</code>, <code>node:stream/promises.pipeline</code> — all stable native APIs.</td><td>None.</td></tr>
+  </tbody>
+</table>
+
+<h4>Findings &amp; Fixes</h4>
+<ul>
+  <li><strong>[P2]</strong> <code>attachments.ts</code> · <code>mkdirSync</code> trong <code>ensureInboxDir</code> không có try/catch → EACCES/ENOTDIR/EPERM trên home read-only sẽ crash <code>bot.on</code> handler trước khi reply error. <strong>Fixed</strong>: wrap try/catch, return <code>{ error }</code> result; <code>downloadTelegramAttachment</code> short-circuits với friendly Vietnamese message. Test: <code>attachments.test.ts</code> · "returns friendly error when inbox dir cannot be created".</li>
+  <li><strong>[P2]</strong> <code>attachments.ts</code> · photo extension luôn hard-code <code>.jpg</code> bất chấp content thật (Telegram nén PNG/WebP) — agents key off ext sẽ mis-handle. <strong>Fixed</strong>: infer ext từ <code>meta.file_path</code> với regex <code>/^\.[a-z0-9]{1,5}$/</code> guard, fallback <code>.jpg</code>. Tests: 2 new (PNG inference + fallback path).</li>
+  <li><strong>[P2]</strong> <code>commands/index.ts</code> · photo/document error replies dùng <code>ctx.reply(result.error)</code> trực tiếp, bypass <code>Notifier.scrubSecrets</code>. Network error message từ <code>fetch</code> clean by default, nhưng adversarial server có thể echo URL chứa bot token. <strong>Fixed</strong>: wrap <code>scrubSecrets(result.error)</code> trước khi reply (defense-in-depth).</li>
+  <li><strong>[P3]</strong> <code>commands/index.ts</code> · <code>(bot as unknown as { token: string }).token</code> cast không cần — grammy 1.43 Bot.d.ts §106 declare <code>readonly token: string</code> public. <strong>Fixed</strong>: bỏ cast, dùng <code>bot.token</code> trực tiếp với comment giải thích.</li>
+</ul>
+
+<h4>Items Reviewed and Approved (no patch)</h4>
+<ul>
+  <li>Path traversal — <code>sanitizeFilename</code> regex strips <code>/</code>, <code>\</code>, <code>:</code>, control chars; <code>../etc</code> → <code>.._etc</code> (single segment). <code>path.join(dir, finalName)</code> can't escape <code>inboxRoot</code>.</li>
+  <li>Stream backpressure — <code>Readable.fromWeb()</code> + <code>pipeline()</code> handles backpressure; the <code>'data'</code> listener we add is observer-only (doesn't consume), so pipeline still drains via <code>pipe()</code> internal plumbing. No data loss.</li>
+  <li>Partial-write recovery — pipeline rejects → unlink partial file in best-effort manner; <code>try{}catch{}</code> on unlink prevents secondary leak.</li>
+  <li>Concurrent download race — <code>mkdirSync({recursive:true})</code> idempotent + atomic; <code>randomBytes(3)</code> = 16M permutations, prefix collision odds &lt;&lt; than the second-resolution timestamp collision odds (which itself is fine).</li>
+  <li>Cross-platform — <code>path.join</code>, <code>os.homedir()</code>, no hard-coded separators. Filename sanitize strips Windows-forbidden chars (<code>: * ? " &lt; &gt; |</code>) by the same allowlist regex.</li>
+  <li>Token redaction — <code>Notifier.scrubSecrets</code> covers TG token regex (verified at <code>src/util/scrub.ts:9</code>). Photo/document handler replies now also pass through it.</li>
+  <li>Claude SDK done-dedup — confirmed against Context7 <code>SDKResultMessage</code> schema; <code>type:'result'</code> + <code>onResultDone()</code> wiring covers both success + error subtypes uniformly.</li>
+  <li>Suggestion-row gating — verified through <code>tests/end-of-turn-suggestions.test.ts</code> + dispatch path traces (lines 1599, 1767, 1845): no mid-stream attach point remaining.</li>
+</ul>
+
+<h4>Final Test Result (post-patch)</h4>
+<ul>
+  <li><code>npm test --reporter=dot</code>: <strong>767 pass / 2 skipped / 0 fail</strong> across 65 files (was 764 pre-review; +3 tests covering mkdir EACCES, photo PNG ext inference, photo no-ext fallback).</li>
+  <li><code>npm run build</code>: clean (tsc + schema copy + chmod).</li>
+</ul>
+
+<h4>Verdict</h4>
+<p><strong>APPROVED</strong> · 100% R1-R4 deliverables landed; 4 findings ([P2] × 3, [P3] × 1) patched and covered by new tests; Context7 tech-freshness clean; ready for security scan + commit.</p>
+<!-- Reviewer log entries appended below by the senior-reviewer sub-agent -->
+
+</div>
+</body>
+</html>

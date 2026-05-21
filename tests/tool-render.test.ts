@@ -244,3 +244,163 @@ describe('collapsePath — Phase C.5 git-root collapse', () => {
     expect(out.endsWith('rs256/verify.ts')).toBe(true);
   });
 });
+
+describe('renderToolUse — AskUserQuestion (bug fix: question + options must surface)', () => {
+  it('renders header + question + option labels for single-question input', () => {
+    const input = {
+      questions: [
+        {
+          header: 'Auth method',
+          question: 'Which auth do we use?',
+          options: [
+            { label: 'OAuth' },
+            { label: 'API key' },
+            { label: 'SSO' },
+          ],
+        },
+      ],
+    };
+    const out = renderToolUse('AskUserQuestion', input);
+    // Cosmetic fix: canonical "AskUserQuestion · " separator so the dispatch
+    // path's burst-collapse format doesn't duplicate the tool name.
+    expect(out.startsWith('AskUserQuestion · ')).toBe(true);
+    expect(out).toContain('[Auth method]');
+    expect(out).toContain('Which auth do we use?');
+    // Numbered options (1./2./3.) so user can reply "1" / "2" / "3"
+    // instead of typing the full label.
+    expect(out).toContain('1. OAuth');
+    expect(out).toContain('2. API key');
+    expect(out).toContain('3. SSO');
+  });
+
+  it('renders multiple question stanzas separated by blank lines', () => {
+    const input = {
+      questions: [
+        {
+          header: 'A',
+          question: 'Q1?',
+          options: [{ label: 'a1' }, { label: 'a2' }],
+        },
+        {
+          header: 'B',
+          question: 'Q2?',
+          options: [{ label: 'b1' }, { label: 'b2' }],
+        },
+      ],
+    };
+    const out = renderToolUse('AskUserQuestion', input);
+    expect(out).toContain('[A]');
+    expect(out).toContain('[B]');
+    expect(out).toContain('Q1?');
+    expect(out).toContain('Q2?');
+    // Two stanzas separated by blank line
+    expect(out.split('\n\n').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('falls back to bare label when questions is missing/empty/malformed', () => {
+    expect(renderToolUse('AskUserQuestion', {})).toBe('AskUserQuestion');
+    expect(renderToolUse('AskUserQuestion', { questions: [] })).toBe(
+      'AskUserQuestion',
+    );
+    expect(renderToolUse('AskUserQuestion', { questions: 'not an array' })).toBe(
+      'AskUserQuestion',
+    );
+  });
+
+  it('handles missing options gracefully (renders question only)', () => {
+    const out = renderToolUse('AskUserQuestion', {
+      questions: [{ header: 'X', question: 'Q?' }],
+    });
+    expect(out).toContain('[X] Q?');
+    // No numbered options should appear when options array is absent.
+    expect(out).not.toMatch(/\n\s+\d+\./);
+  });
+
+  it('caps body at 800 chars to stay under Telegram per-message limit', () => {
+    const longLabel = 'x'.repeat(50);
+    const input = {
+      questions: [
+        {
+          header: 'big',
+          question: 'pick',
+          options: Array.from({ length: 4 }, () => ({ label: longLabel })),
+        },
+        {
+          header: 'big2',
+          question: 'pick',
+          options: Array.from({ length: 4 }, () => ({ label: longLabel })),
+        },
+      ],
+    };
+    const out = renderToolUse('AskUserQuestion', input);
+    // 800-char cap + "AskUserQuestion\n" prefix (~17) + ellipsis. We just
+    // assert the body portion didn't blow past the cap.
+    const bodyPart = out.replace(/^AskUserQuestion · /, '');
+    expect(bodyPart.length).toBeLessThanOrEqual(800);
+  });
+
+  it('truncates each option label to 40 chars', () => {
+    const huge = 'y'.repeat(100);
+    const out = renderToolUse('AskUserQuestion', {
+      questions: [
+        {
+          header: 'h',
+          question: 'q?',
+          options: [{ label: huge }],
+        },
+      ],
+    });
+    // 40 chars + 1 ellipsis = 41 — verify no full 100-char label survived.
+    expect(out).not.toContain(huge);
+    expect(out).toMatch(/y+…/);
+  });
+
+  it('appends option descriptions (truncated) when present', () => {
+    // Senior-review (Opus 4.7) [P2] — the SDK schema requires `description`
+    // on every option; surfacing it gives the user the agent's intent.
+    const out = renderToolUse('AskUserQuestion', {
+      questions: [
+        {
+          header: 'DB',
+          question: 'Pick a database',
+          options: [
+            { label: 'PostgreSQL', description: 'Relational, ACID compliant' },
+            { label: 'MongoDB', description: 'Document store, flexible schema' },
+          ],
+        },
+      ],
+    });
+    expect(out).toContain('PostgreSQL — Relational, ACID compliant');
+    expect(out).toContain('MongoDB — Document store, flexible schema');
+  });
+
+  it('truncates long descriptions to 60 chars', () => {
+    const longDesc = 'z'.repeat(120);
+    const out = renderToolUse('AskUserQuestion', {
+      questions: [
+        {
+          header: 'h',
+          question: 'q?',
+          options: [{ label: 'Opt', description: longDesc }],
+        },
+      ],
+    });
+    expect(out).not.toContain(longDesc);
+    expect(out).toMatch(/z+…/);
+  });
+
+  it('omits description tail when field is missing or empty', () => {
+    const out = renderToolUse('AskUserQuestion', {
+      questions: [
+        {
+          header: 'h',
+          question: 'q?',
+          options: [{ label: 'Only' }, { label: 'Empty', description: '' }],
+        },
+      ],
+    });
+    // No " — " separator when description is absent / empty.
+    expect(out).not.toMatch(/Only —/);
+    expect(out).not.toMatch(/Empty —/);
+  });
+});

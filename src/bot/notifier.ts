@@ -347,6 +347,70 @@ export class Notifier {
       }
     }
   }
+
+  /**
+   * Bug fix (P1): one-shot send for long messages that respects Telegram's
+   * 4096-char per-message limit by splitting at line boundaries.
+   *
+   * Returns the array of message IDs created (one per chunk). The previous
+   * approach — silently `clip()`-ing past `MAX_MSG_CHARS` with an ellipsis —
+   * dropped real content (long summaries, large diff outputs, multi-line
+   * tool_result previews) without the user noticing.
+   *
+   * Chunking rules:
+   *   - Split on `\n` so logical paragraphs stay intact; long single lines
+   *     are hard-split at the char cap as a last resort.
+   *   - First chunk: text as-is (the caller's prefix / header survives).
+   *   - Subsequent chunks: prepend `↪ (cont. N/M)\n` so the user knows the
+   *     parts belong together.
+   *   - Cap per chunk: {@link MAX_MSG_CHARS} (3500) — leaves margin for the
+   *     continuation header and any Telegram-side overhead.
+   *
+   * Errors mid-stream: log + return the partial list of IDs. We do NOT abort
+   * remaining chunks because the user is more hurt by missing content than
+   * by an extra failed-send retry on a transient 429.
+   */
+  async sendChunked(text: string, extra?: SendPlainExtra): Promise<number[]> {
+    const safe = scrubSecrets(text);
+    const parts = splitForTelegram(safe);
+    const ids: number[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const body = parts.length > 1 && i > 0
+        ? `↪ (cont. ${i + 1}/${parts.length})\n${parts[i]}`
+        : parts[i]!;
+      const id = await this.sendPlain(body, extra);
+      if (id != null) ids.push(id);
+    }
+    return ids;
+  }
+
+  /**
+   * Bug fix (P1): edit the first chunk of a previously-sent message, then
+   * send any overflow as new continuation messages. Used by callers that
+   * built a message ID via `sendPlain` and want to upgrade its body to a
+   * longer value (e.g. auto-done summary appending agent text to the `✅ Done`
+   * card) without losing content past 4096 chars.
+   *
+   * Returns the array of NEW message IDs created (excludes `messageId`
+   * itself). Empty array means everything fit in the edit.
+   */
+  async editPlainChunked(
+    messageId: number,
+    text: string,
+    extra?: { reply_markup?: unknown },
+  ): Promise<number[]> {
+    const safe = scrubSecrets(text);
+    const parts = splitForTelegram(safe);
+    // First part replaces the original message.
+    await this.editPlain(messageId, parts[0]!, extra);
+    const extraIds: number[] = [];
+    for (let i = 1; i < parts.length; i++) {
+      const body = `↪ (cont. ${i + 1}/${parts.length})\n${parts[i]}`;
+      const id = await this.sendPlain(body);
+      if (id != null) extraIds.push(id);
+    }
+    return extraIds;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -356,6 +420,53 @@ function sleep(ms: number): Promise<void> {
 function clip(s: string): string {
   if (s.length <= MAX_MSG_CHARS) return s;
   return s.slice(0, MAX_MSG_CHARS - 1) + '…';
+}
+
+/**
+ * Bug fix (P1): split text into Telegram-safe chunks at line boundaries.
+ *
+ * Returns at least one element (input as-is when it fits in a single chunk).
+ * Lines longer than {@link MAX_MSG_CHARS} are hard-split at the char cap
+ * (rare — happens only with no-line-break blobs like minified JSON in a tool
+ * preview).
+ *
+ * Continuation header `↪ (cont. N/M)\n` is left to the caller — the splitter
+ * reserves headroom (`CHUNK_HEADROOM`) so callers can prepend up to that
+ * many chars without the chunk ever blowing 4096.
+ */
+const CHUNK_HEADROOM = 32;
+const CHUNK_BUDGET = MAX_MSG_CHARS - CHUNK_HEADROOM;
+
+export function splitForTelegram(text: string): string[] {
+  if (text.length <= MAX_MSG_CHARS) return [text];
+  const lines = text.split('\n');
+  const out: string[] = [];
+  let buf: string[] = [];
+  let bufLen = 0;
+  const flush = (): void => {
+    if (buf.length > 0) {
+      out.push(buf.join('\n'));
+      buf = [];
+      bufLen = 0;
+    }
+  };
+  for (const lineRaw of lines) {
+    let line = lineRaw;
+    // Hard-split unusually long single lines.
+    while (line.length > CHUNK_BUDGET) {
+      flush();
+      out.push(line.slice(0, CHUNK_BUDGET));
+      line = line.slice(CHUNK_BUDGET);
+    }
+    const add = (buf.length === 0 ? 0 : 1) + line.length;
+    if (bufLen + add > CHUNK_BUDGET && buf.length > 0) {
+      flush();
+    }
+    buf.push(line);
+    bufLen += (buf.length === 1 ? 0 : 1) + line.length;
+  }
+  flush();
+  return out.length === 0 ? [text] : out;
 }
 
 /**

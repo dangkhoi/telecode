@@ -210,7 +210,7 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
     }
   });
 
-  it('tool_use → tool_result merges into one message via editPlain WITH suggestion row', async () => {
+  it('tool_use → tool_result merges into one message via editPlain (no per-tool suggestion row in v1.2)', async () => {
     const h = await setup();
     try {
       h.ready.emit({ type: 'tool_use', tool: 'Bash', input: { command: 'ls' } });
@@ -226,8 +226,13 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
       expect(text).toContain('🔧 Bash · ls');
       expect(text).toContain('✅ Bash ok');
       expect(text).toContain('a\nb'); // preview included
-      // Suggestion keyboard attached — Bash success row = [Tiếp tục] [Run again].
-      expect((extra as Record<string, unknown>).reply_markup).toBeDefined();
+      // v1.2 Bug 1 — suggestion row no longer attached per-tool; it lives on
+      // the done/error message at end of turn. Without a resume id (Bash + no
+      // sdk_session_id) there is also no AI-summary button. Expect a bare
+      // edit with NO keyboard.
+      const rm =
+        extra == null ? undefined : (extra as Record<string, unknown>).reply_markup;
+      expect(rm).toBeUndefined();
     } finally {
       h.cleanup();
     }
@@ -264,7 +269,7 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
     }
   });
 
-  it('tool_use without matching tool_result: 2s defer fallback retrofits keyboard', async () => {
+  it('tool_use without matching tool_result: 2s defer fallback no longer retrofits suggestion (v1.2 Bug 1)', async () => {
     vi.useFakeTimers();
     try {
       const h = await setup();
@@ -274,13 +279,13 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
         expect(h.sendPlain).toHaveBeenCalledTimes(1);
         expect(h.editReplyMarkup).not.toHaveBeenCalled();
 
-        // Advance past the 2-second defer window.
+        // v1.2 Bug 1 — defer-timeout no longer attaches the suggestion row.
+        // Without a diffCallId (Bash is not Edit-family + summary mode), the
+        // defer timeout has nothing to retrofit and editReplyMarkup must
+        // stay untouched. The suggestion row only appears on done/error.
         await vi.advanceTimersByTimeAsync(2_001);
         await flush();
-        expect(h.editReplyMarkup).toHaveBeenCalledTimes(1);
-        const [msgId, kb] = h.editReplyMarkup.mock.calls[0]!;
-        expect(msgId).toBe(100);
-        expect(kb).toBeDefined();
+        expect(h.editReplyMarkup).not.toHaveBeenCalled();
       } finally {
         h.cleanup();
       }
@@ -360,18 +365,30 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
   });
 
   // Senior-review (Opus 4.7) [P2] — error path tears down pending tracker.
-  it('error event clears pending tracker (no defer fires after error)', async () => {
+  // v1.2 Bug 1 — error path now ALSO attaches one suggestion row to the
+  // error message. We assert: pending-tracker defer DOES NOT fire after
+  // error (the original invariant) AND exactly one editReplyMarkup call
+  // appears, targeting the error message id (not the tool_use message).
+  it('error event clears pending tracker; attaches single suggestion row on error msg', async () => {
     vi.useFakeTimers();
     try {
       const h = await setup();
       try {
+        // tool_use sendPlain returns 100, error sendPlain returns 101.
         h.ready.emit({ type: 'tool_use', tool: 'Bash', input: { command: 'sleep 999' } });
         await flush();
         h.ready.emit({ type: 'error', error: 'boom' });
         await flush();
         await vi.advanceTimersByTimeAsync(5_000);
         await flush();
-        expect(h.editReplyMarkup).not.toHaveBeenCalled();
+        // EXACTLY one editReplyMarkup (the end-of-turn row on the error
+        // message). The defer onTimeout DID NOT also fire — that's still
+        // the v1.0 invariant the test was guarding.
+        expect(h.editReplyMarkup).toHaveBeenCalledTimes(1);
+        const [msgId, kb] = h.editReplyMarkup.mock.calls[0]!;
+        // Error message id, not the tool_use id (100).
+        expect(msgId).not.toBe(100);
+        expect(kb).toBeDefined();
       } finally {
         h.cleanup();
       }
@@ -380,7 +397,7 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
     }
   });
 
-  it('done event clears pending tracker (no orphan defer fires after done)', async () => {
+  it('done event clears pending tracker; attaches single suggestion row on done msg', async () => {
     vi.useFakeTimers();
     try {
       const h = await setup();
@@ -390,11 +407,15 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
         h.ready.emit({ type: 'done' });
         await flush();
 
-        // Advance well past the 2s defer — onTimeout should NOT fire because
-        // done cleared the tracker.
+        // Advance past the 2s defer — onTimeout should NOT fire because
+        // done cleared the tracker. Exactly ONE editReplyMarkup call from
+        // the end-of-turn suggestion row attached to the done message.
         await vi.advanceTimersByTimeAsync(5_000);
         await flush();
-        expect(h.editReplyMarkup).not.toHaveBeenCalled();
+        expect(h.editReplyMarkup).toHaveBeenCalledTimes(1);
+        const [msgId, kb] = h.editReplyMarkup.mock.calls[0]!;
+        expect(msgId).not.toBe(100); // not the tool_use msg
+        expect(kb).toBeDefined();
       } finally {
         h.cleanup();
       }

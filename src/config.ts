@@ -124,6 +124,22 @@ const ConfigSchema = z.object({
   telegram: z.object({
     bot_token: z.string().min(10),
     allowed_user_ids: z.array(z.number().int()).min(1),
+    // v1.2 Feature 2/3 — max bytes accepted for a Telegram photo / document
+    // attachment before the bot refuses with a friendly error. Default 20 MB
+    // matches Telegram Bot API's official upload limit for bots NOT using a
+    // self-hosted Bot API server. Override (lower) to throttle costly
+    // downloads on cellular dev machines.
+    attachment_max_bytes: z
+      .number()
+      .int()
+      .positive()
+      .default(20 * 1024 * 1024),
+    // v1.2 Feature 3 — extension allowlist for `message:document` uploads.
+    // Empty array means "default safe set" baked into src/bot/attachments.ts.
+    // Set this if you want to restrict further (e.g. only `[".md", ".txt"]`)
+    // or expand it for an exotic workflow. Photos (`message:photo`) skip the
+    // allowlist entirely — Telegram already normalizes them to JPEG.
+    attachment_allowed_exts: z.array(z.string()).default([]),
   }),
   daemon: z.object({
     log_dir: z.string(),

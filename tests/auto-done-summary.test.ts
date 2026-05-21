@@ -60,6 +60,17 @@ function makeNotifier(): {
   let nextId = 2000;
   const sendPlain = vi.fn(async () => nextId++);
   const editPlain = vi.fn(async () => {});
+  // editPlainChunked mirrors editPlain in tests (no chunking needed) — the
+  // chunked variant simply edits in place when input fits, and the test
+  // payloads never exceed the per-message limit.
+  const editPlainChunked = vi.fn(async (msgId: number, text: string) => {
+    await editPlain(msgId, text);
+    return [];
+  });
+  const sendChunked = vi.fn(async (text: string) => {
+    const id = await sendPlain(text);
+    return [id];
+  });
   const notifier = {
     appendStream: vi.fn(),
     sendPlain,
@@ -68,6 +79,8 @@ function makeNotifier(): {
     send: sendPlain,
     answerCallback: vi.fn(async () => {}),
     editPlain,
+    editPlainChunked,
+    sendChunked,
     editReplyMarkup: vi.fn(async () => {}),
     sendMarkdownV2: sendPlain,
   } as unknown as Notifier;

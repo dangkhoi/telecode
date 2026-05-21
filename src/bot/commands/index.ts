@@ -5,7 +5,9 @@ import os from 'node:os';
 import path, { basename, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { InputFile, InlineKeyboard } from 'grammy';
+import type { InlineKeyboardButton } from 'grammy/types';
 import { buildSuggestions } from '../suggestions.js';
+import { downloadTelegramAttachment, buildPromptWithAttachment } from '../attachments.js';
 import { renderToolUse, friendlyToolLabel, extractToolItem } from '../tool-render.js';
 import { PendingTools } from '../pending-tools.js';
 import { toolCollapseMgr, progressMgr } from '../runtime-state.js';
@@ -456,6 +458,52 @@ export function executeHandoff(
   };
 }
 
+/**
+ * v1.2 Bug 1 — build the SINGLE end-of-turn suggestion row.
+ *
+ * Behavior change vs v1.0:
+ *   - v1.0 attached `buildSuggestions(...)` row to EVERY `tool_result`
+ *     message, so a long agent turn produced 8 messages × 1 button row
+ *     each = noisy wall of "▶️ Tiếp tục" buttons while the user wasn't
+ *     even able to act (agent was still mid-stream).
+ *   - v1.2 attaches the suggestion row EXACTLY ONCE per turn — on the
+ *     `done` summary card, or on the `error` message if the turn failed.
+ *
+ * Input: the LAST tool that resolved during the turn (or null for
+ *   text-only turns / turns that never invoked a tool).
+ * Output: an `InlineKeyboardButton[]` row to add to the final message via
+ *   `editReplyMarkup`. Empty array means "don't attach a keyboard".
+ *
+ * Fallback path: when `lastResolvedTool` is null, we still emit a default
+ *   row (currently `[▶️ Tiếp tục]`) because the user is most often going to
+ *   want to continue the conversation — that one button is high-value, low
+ *   noise. The `ok` flag is forwarded so the failure-path heuristics
+ *   (currently no different from success in `buildSuggestions`, but kept as
+ *   a hook for future refinement) can shape the row.
+ */
+export function buildEndOfTurnSuggestions(
+  lastResolvedTool: { toolName: string; filePath: string | null; ok: boolean } | null,
+  sessionId: string,
+  ok: boolean,
+): InlineKeyboardButton[] {
+  if (lastResolvedTool == null) {
+    // No tool ever ran (pure text reply). Default to a minimal continuation
+    // affordance. `buildSuggestions` returns `[▶️ Tiếp tục]` for any unknown
+    // tool name → reuse that path so the heuristic stays single-source.
+    return buildSuggestions({
+      toolName: '__no_tool__',
+      exitCode: ok ? 0 : 1,
+      sessionId,
+    });
+  }
+  return buildSuggestions({
+    toolName: lastResolvedTool.toolName,
+    exitCode: lastResolvedTool.ok ? 0 : 1,
+    filePath: lastResolvedTool.filePath,
+    sessionId,
+  });
+}
+
 function projectPathOf(session: SessionRow, store: SessionStore, fallback: string): string {
   if (session.project_id) {
     const p = store.db
@@ -574,16 +622,78 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         break;
       }
       case 'switch': {
+        // Senior-review (Opus 4.7) [P1] scope-completeness — mirror the
+        // inline-button switchSessionHandler in router.ts so the CLI path
+        // gets the same fixes:
+        //   (a) flush outgoing session's debounced stream + buffered events
+        //       before activation switches (no orphan "last reply"),
+        //   (b) chunked preview send so long transcript tails don't get
+        //       silently truncated past 4096 chars,
+        //   (c) catch-up of incoming session's buffered background events.
         const label = args[1];
         if (!label) return ctx.reply('Usage: /session switch <label>');
         const row = store.findSessionByLabel(chatId, label);
         if (!row) return ctx.reply(`unknown: ${label}`);
+        const notifier = notifierFor(chatId);
+        // (a1) Drain the outgoing session's debounced text stream so the last
+        // partial reply lands BEFORE focus moves. closeStream is a no-op if
+        // there's no active stream for the key.
+        const prevActiveId = store.getChatState(chatId).active_session_id;
+        if (prevActiveId && prevActiveId !== row.id) {
+          await notifier.closeStream(`s:${prevActiveId}`);
+          // (a2) Drain any buffered background events the outgoing session
+          // accumulated during a prior background spell (rare but possible
+          // when the user toggles between sessions quickly).
+          if (manager.hasBuffered(prevActiveId)) {
+            const prevRow = store.getSession(prevActiveId);
+            if (prevRow) {
+              const events = manager.drainBuffer(prevActiveId);
+              const lines = events.map((e) => e.data);
+              const header =
+                `[${prevRow.label}] 📤 flushing on session switch (${events.length} pending):`;
+              const contHeader = `[${prevRow.label}] 📤 flushing (cont.):`;
+              const parts = splitCatchUp(header, contHeader, lines);
+              for (const part of parts) {
+                try {
+                  await notifier.sendPlain(part, { silent: true });
+                } catch (err) {
+                  logger.warn(
+                    { err: String(err), sessionId: prevActiveId },
+                    '/session switch outgoing flush failed (continuing)',
+                  );
+                }
+              }
+            }
+          }
+        }
         store.setActiveSession(chatId, row.id);
+        // (b) chunked send so a long transcript_tail isn't truncated.
         const tail = (row.transcript_tail ?? '')
           .split('\n')
           .slice(-config.session_switch_preview_lines)
           .join('\n');
-        await ctx.reply(`📍 [${row.label}]\n${tail || '(no transcript yet)'}`);
+        await notifier.sendChunked(
+          `📍 [${row.label}]\n${tail || '(no transcript yet)'}`,
+        );
+        // (c) catch-up of incoming session's buffered background events.
+        if (manager.hasBuffered(row.id)) {
+          const events = manager.drainBuffer(row.id);
+          const lines = events.map((e) => e.data);
+          const header =
+            `[${row.label}] 📥 catch-up (${events.length} events from background):`;
+          const contHeader = `[${row.label}] 📥 catch-up (cont.):`;
+          const parts = splitCatchUp(header, contHeader, lines);
+          for (const part of parts) {
+            try {
+              await notifier.sendPlain(part, { silent: true });
+            } catch (err) {
+              logger.warn(
+                { err: String(err), sessionId: row.id },
+                '/session switch catch-up flush failed (continuing)',
+              );
+            }
+          }
+        }
         break;
       }
       case 'rename': {
@@ -1027,10 +1137,21 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     }
   });
 
-  // ---- plain text → dispatch ----
-  bot.on('message:text', async (ctx) => {
-    const text = ctx.message.text;
-    if (!text || text.startsWith('/')) return;
+  // ---- shared dispatcher for plain text + attachment captions ----
+  // v1.2 Feature 2/3 — extracted from `bot.on('message:text', ...)` so the
+  // new photo + document handlers can reuse the entire onEvent pipeline
+  // (verbosity routing, suggestion deferral, auto-summarize, etc.) by simply
+  // supplying a synthetic prompt string. The handlers below are now thin
+  // shims: they validate / download / build a prompt, then delegate here.
+  //
+  // `ctx` is loosely typed as `any` because the call sites are different
+  // filter contexts (`message:text` vs `message:photo` vs `message:document`)
+  // and we only read `ctx.chat!.id` + reply via `ctx.reply` — both exist on
+  // every Filter<Context, 'message:*'> shape. Pulling in the heavy generic
+  // Filter type here would force every consumer to import grammy types
+  // unnecessarily.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function dispatchPromptToActiveSession(ctx: any, text: string): Promise<void> {
     const chatId = ctx.chat!.id;
     // P0.5: any user message resets the dashboard's idle clock so an active
     // viewer doesn't get auto-stopped while they're actively chatting.
@@ -1082,6 +1203,15 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     // streamer is mid-flight). Reset per dispatch.
     let progressTextSeen = false;
 
+    // v1.2 Bug 1 — Track the last resolved tool of the turn so the suggestion
+    // row ("▶️ Tiếp tục" / "🔁 Run again" / …) can be attached EXACTLY once
+    // at end-of-turn (done/error), not on every intermediate tool_result.
+    // Prior behavior: every tool_result message got a row, making the chat
+    // look like a wall of buttons while the agent was still mid-stream and
+    // the user couldn't actually "continue" anything — the agent was still
+    // running. See docs/specs/telegram-media-input.html §R1.
+    let lastResolvedTool: { toolName: string; filePath: string | null; ok: boolean } | null = null;
+
     // Phase A.5 — per-dispatch pending-tool tracker. Suggestion keyboards are
     // now attached when the matching tool_result arrives (Phase A.2 branch
     // below), NOT when the tool_use is announced — the user has more useful
@@ -1114,30 +1244,29 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const pending = new PendingTools<PendingPayload>({
       deferMs: 2_000,
       onTimeout: (entry) => {
-        // Adapter never emitted tool_result. Retrofit the suggestion row so
-        // the v1.0 affordance still appears — preserves backward UX.
+        // Adapter never emitted tool_result. v1.2 Bug 1: drop the
+        // suggestion-row retrofit (one row attaches once on done/error).
+        // Keep the diff button retrofit because that's a per-tool affordance
+        // (only meaningful for THIS Edit) — without it the user loses the
+        // "Show diff" action entirely for adapters that don't emit
+        // tool_result. Also remember the pending tool as the "last tool" so
+        // the end-of-turn row reflects what actually happened.
         //
-        // Senior-review (Opus 4.7): `messageId` should always be non-null
-        // here (the race-safe `addPending` only starts the defer timer AFTER
-        // the send resolved). Defensive guard anyway — silently no-op when
-        // the send failed and we never got an id.
+        // `messageId` should always be non-null here (the race-safe
+        // `addPending` only starts the defer timer AFTER the send resolved).
+        // Defensive guard anyway — silently no-op when the send failed and
+        // we never got an id.
         if (entry.messageId == null) return;
-        const row = buildSuggestions({
+        lastResolvedTool = {
           toolName: entry.toolName,
-          exitCode: 0,
           filePath: entry.payload.filePath,
-          sessionId: cur.id,
-        });
-        // Phase C.3 — also retrofit the [📜 Show diff] button when the
-        // pending entry has a cached diff. The suggestion row + the diff
-        // button live as two separate rows on the inline keyboard.
-        if (row.length === 0 && entry.payload.diffCallId == null) return;
-        const kb = new InlineKeyboard();
-        if (row.length > 0) kb.add(...row);
-        if (entry.payload.diffCallId != null) {
-          if (row.length > 0) kb.row();
-          kb.text('📜 Show diff', `diff:show:${cur.id}:${entry.payload.diffCallId}`);
-        }
+          ok: true,
+        };
+        if (entry.payload.diffCallId == null) return;
+        const kb = new InlineKeyboard().text(
+          '📜 Show diff',
+          `diff:show:${cur.id}:${entry.payload.diffCallId}`,
+        );
         void notifier.editReplyMarkup(entry.messageId, kb);
       },
     });
@@ -1459,12 +1588,17 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             if (isActive) {
               const entry = pending.resolve(e.tool);
               if (entry) {
-                const row = buildSuggestions({
+                // v1.2 Bug 1 — remember this as the last resolved tool so
+                // the end-of-turn row reflects it. DO NOT attach the
+                // suggestion row to this per-tool message; downstream
+                // `row.length > 0` branches preserve existing diff +
+                // AI-summary button logic unchanged.
+                lastResolvedTool = {
                   toolName: e.tool,
-                  exitCode: e.ok ? 0 : 1,
                   filePath: entry.payload.filePath,
-                  sessionId: cur.id,
-                });
+                  ok: e.ok,
+                };
+                const row: InlineKeyboardButton[] = [];
                 // Build the merged message body. Two flavours:
                 //   - Normal flow: `🔧 Bash · ls\n✅ Bash ok\n{truncated preview}`
                 //   - D.2 auto-summarize flow: replace the result body with a
@@ -1593,6 +1727,9 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 // No pending tool_use to merge with (race / orphan event /
                 // tool_use never reached us). Send the result as a fresh
                 // message so the user still sees the outcome.
+                // v1.2 Bug 1 — track even orphan results so the end-of-turn
+                // suggestion row picks the right "last tool" heuristics.
+                lastResolvedTool = { toolName: e.tool, filePath: null, ok: e.ok };
                 const orphanKb = new InlineKeyboard();
                 let hasOrphanButton = false;
                 if (fullPreview.length > 0 && !!cur.sdk_session_id) {
@@ -1630,11 +1767,25 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             // too so any in-flight defer timers don't retrofit suggestion
             // keyboards onto a session that just errored out.
             pending.clear();
+            // v1.2 Bug 1 — build the SINGLE suggestion row for this turn.
+            // Falls back to default ("▶️ Tiếp tục") if no tool ever resolved.
+            const errorSuggestionRow = buildEndOfTurnSuggestions(
+              lastResolvedTool,
+              cur.id,
+              /*ok=*/ false,
+            );
+            const errorKb =
+              errorSuggestionRow.length > 0
+                ? new InlineKeyboard().add(...errorSuggestionRow)
+                : undefined;
             void (async () => {
               if (!isActive && manager.hasBuffered(cur.id)) {
                 await flushBufferedAsCatchUp(cur, manager, notifier);
               }
-              await notifier.sendPlain(`${labelPrefix}❌ ${e.error}`);
+              const errMsgId = await notifier.sendPlain(`${labelPrefix}❌ ${e.error}`);
+              if (errMsgId != null && errorKb) {
+                await notifier.editReplyMarkup(errMsgId, errorKb);
+              }
             })();
           } else if (e.type === 'done') {
             // ALWAYS live + notify. Close stream + flush buffer first so
@@ -1690,9 +1841,27 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 return bits.join(' · ');
               })();
 
+              // v1.2 Bug 1 — single end-of-turn suggestion row. Built ONCE
+              // from the last resolved tool of this turn (or default if no
+              // tool ran) and attached to whichever done message we send.
+              const doneSuggestionRow = buildEndOfTurnSuggestions(
+                lastResolvedTool,
+                cur.id,
+                /*ok=*/ true,
+              );
+              const doneKb =
+                doneSuggestionRow.length > 0
+                  ? new InlineKeyboard().add(...doneSuggestionRow)
+                  : undefined;
+
               if (!enableAutoDoneSummary) {
                 // Verbose / no-resume / approval-pending → original v1.0 tail.
-                await notifier.sendPlain(`${labelPrefix}${baselineTail}`);
+                const baselineMsgId = await notifier.sendPlain(
+                  `${labelPrefix}${baselineTail}`,
+                );
+                if (baselineMsgId != null && doneKb) {
+                  await notifier.editReplyMarkup(baselineMsgId, doneKb);
+                }
                 return;
               }
 
@@ -1701,6 +1870,9 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
               // append the summary once the agent replies.
               const doneMsgId = await notifier.sendPlain(`${labelPrefix}${enhancedTail}`);
               if (doneMsgId == null) return;
+              if (doneKb) {
+                await notifier.editReplyMarkup(doneMsgId, doneKb);
+              }
 
               // Build the summarize input — the most recent transcript tail
               // gives the agent enough context to summarize what it just did.
@@ -1724,7 +1896,10 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 return;
               }
               const enhancedBody = `${labelPrefix}${enhancedTail}\n${summary}`;
-              await notifier.editPlain(doneMsgId, enhancedBody);
+              // Bug fix (P1): use editPlainChunked so long summaries (>3500
+              // chars) don't get silently `clip()`-ed by `editPlain`. Overflow
+              // spills into continuation messages with `↪ (cont. N/M)` header.
+              await notifier.editPlainChunked(doneMsgId, enhancedBody);
             })();
           } else if (e.type === 'session') {
             // resume id already persisted in adapter
@@ -1735,6 +1910,128 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         pending.clear();
         logger.error({ err: String(err) }, 'dispatch crash');
       });
+  }
+
+  // ---- plain text → dispatch ----
+  bot.on('message:text', async (ctx) => {
+    const text = ctx.message.text;
+    if (!text || text.startsWith('/')) return;
+    await dispatchPromptToActiveSession(ctx, text);
+  });
+
+  // ---- photo → download + dispatch ----
+  // v1.2 Feature 2 — user gửi photo vào chat, telecode lưu vào
+  // ~/.telecode/inbox/<chatId>/, sau đó dispatch prompt với @path reference
+  // cho agent đọc bằng Read tool. Caption (nếu có) trở thành body prompt;
+  // không có caption → dùng default "Xem ảnh đính kèm và cho biết bạn thấy gì."
+  bot.on('message:photo', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply(
+        '📸 Nhận được ảnh nhưng không có active session — /session new <agent> <label> [path] rồi gửi lại.',
+      );
+      return;
+    }
+    // Telegram delivers a `PhotoSize[]` sorted small → large. Largest is
+    // the highest resolution variant available; pick the last entry.
+    const photos = ctx.message.photo;
+    const largest = photos[photos.length - 1];
+    if (!largest) {
+      await ctx.reply('📸 message:photo nhưng photo[] empty — không tải được.');
+      return;
+    }
+    await ctx.reply(`📥 [${cur.label}] downloading photo…`);
+    const result = await downloadTelegramAttachment(
+      // Senior-review (Opus 4.7) [P3] — grammy exposes `bot.token` as a
+      // public readonly (Bot.d.ts §106), so no `unknown` cast needed. The
+      // earlier comment about "technically private" was wrong; the property
+      // is part of the documented public surface used by the official
+      // `@grammyjs/files` plugin.
+      { token: bot.token, api: bot.api },
+      chatId,
+      largest.file_id,
+      null,
+      'photo',
+      {
+        maxBytes: config.telegram.attachment_max_bytes,
+      },
+    );
+    if ('error' in result) {
+      // Senior-review (Opus 4.7) [P2] — scrub on the bot token before
+      // replying. Network error strings from `fetch` are clean by default,
+      // but a malicious server could echo back the URL (which contains the
+      // token) inside an error body. Defense-in-depth: never trust the
+      // upstream message to be token-free.
+      await ctx.reply(scrubSecrets(result.error));
+      return;
+    }
+    logger.info(
+      { chatId, sessionId: cur.id, path: result.absPath, size: result.sizeBytes },
+      'photo saved',
+    );
+    const caption = ctx.message.caption ?? null;
+    const prompt = buildPromptWithAttachment(caption, result);
+    await dispatchPromptToActiveSession(ctx, prompt);
+  });
+
+  // ---- document → download + dispatch ----
+  // v1.2 Feature 3 — same flow as photo but with extension allowlist (md /
+  // html / docx / xlsx / pdf / …). Agent reads via its own Read tool — no
+  // server-side parsing here (keep dep surface small).
+  bot.on('message:document', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply(
+        '📎 Nhận được file nhưng không có active session — /session new <agent> <label> [path] rồi gửi lại.',
+      );
+      return;
+    }
+    const doc = ctx.message.document;
+    if (!doc) {
+      await ctx.reply('📎 message:document nhưng document object missing — không tải được.');
+      return;
+    }
+    await ctx.reply(`📥 [${cur.label}] downloading ${doc.file_name ?? 'file'}…`);
+    // Build optional allowlist override from config — empty array means
+    // "use default safe set" inside the attachments module.
+    const overrideExts = config.telegram.attachment_allowed_exts;
+    const allowedExts =
+      overrideExts && overrideExts.length > 0
+        ? new Set(overrideExts.map((s) => s.toLowerCase()))
+        : undefined;
+    const result = await downloadTelegramAttachment(
+      // Senior-review (Opus 4.7) [P3] — public readonly per Bot.d.ts §106;
+      // no `unknown` cast needed. Same cleanup as the photo handler above.
+      { token: bot.token, api: bot.api },
+      chatId,
+      doc.file_id,
+      doc.file_name ?? null,
+      'document',
+      {
+        maxBytes: config.telegram.attachment_max_bytes,
+        ...(allowedExts ? { allowedExts } : {}),
+      },
+    );
+    if ('error' in result) {
+      // Same scrub guard as the photo handler — see comment above.
+      await ctx.reply(scrubSecrets(result.error));
+      return;
+    }
+    logger.info(
+      {
+        chatId,
+        sessionId: cur.id,
+        path: result.absPath,
+        size: result.sizeBytes,
+        ext: result.ext,
+      },
+      'document saved',
+    );
+    const caption = ctx.message.caption ?? null;
+    const prompt = buildPromptWithAttachment(caption, result);
+    await dispatchPromptToActiveSession(ctx, prompt);
   });
 }
 

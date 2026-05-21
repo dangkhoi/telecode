@@ -331,6 +331,15 @@ export function renderToolUse(
       const q = pickString(o, 'query', 'q') ?? '?';
       return `WebSearch · ${truncate(q, 80)}`;
     }
+    case 'AskUserQuestion': {
+      // Bug fix (P0): AskUserQuestion's input is a nested {questions: [{...}]}
+      // structure — `pickFirstStringValue` returns null because the top-level
+      // key is an array, so the default branch used to render bare
+      // "AskUserQuestion" with no content. Render the question text + option
+      // labels so the user at least SEES what was asked. Full inline-keyboard
+      // answer routing is a separate feature.
+      return renderAskUserQuestion(o);
+    }
     default: {
       // Fallback: render the first string-valued key, truncated to 60 chars.
       const first = pickFirstStringValue(o);
@@ -340,6 +349,74 @@ export function renderToolUse(
       return toolName;
     }
   }
+}
+
+/**
+ * Render an `AskUserQuestion` tool_use as a multi-line preview:
+ *
+ *   AskUserQuestion · [Auth method] Which auth do we use?
+ *     • OAuth  • API key  • SSO
+ *
+ * For multi-question inputs (SDK allows 1-4), render each on its own
+ * stanza separated by blank lines. Defensive against missing/malformed
+ * fields — the SDK guarantees `questions[*].question` + `header` +
+ * `options[*].label`, but we treat anything unexpected as best-effort
+ * (renders `?` rather than crashing the dispatcher).
+ *
+ * Kept under the 4096-char Telegram message limit by truncating per-option
+ * label to 40 chars and capping total output at 800 chars. Users can ask
+ * the agent to repeat / clarify if rendering ever needs more room.
+ */
+function renderAskUserQuestion(o: Record<string, unknown>): string {
+  const qsRaw = o.questions;
+  if (!Array.isArray(qsRaw) || qsRaw.length === 0) {
+    return 'AskUserQuestion';
+  }
+  const stanzas: string[] = [];
+  for (const qRaw of qsRaw) {
+    if (!isRecord(qRaw)) continue;
+    const header = typeof qRaw.header === 'string' ? qRaw.header.trim() : '';
+    const question = typeof qRaw.question === 'string' ? qRaw.question.trim() : '?';
+    const optsRaw = qRaw.options;
+    const labels: string[] = [];
+    if (Array.isArray(optsRaw)) {
+      for (const opt of optsRaw) {
+        if (isRecord(opt) && typeof opt.label === 'string' && opt.label.length > 0) {
+          // Senior-review (Opus 4.7) [P2] — SDK schema declares `description`
+          // as a required field on every option. Surfacing it (truncated)
+          // gives the user the context the agent intended; without it,
+          // "PostgreSQL" / "MongoDB" reads as bare choices with no help text.
+          // Keep the same 40-char cap on labels; append a short description
+          // tail when available so the rendered line stays compact.
+          const label = truncate(opt.label.trim(), 40);
+          const descRaw =
+            typeof opt.description === 'string' ? opt.description.trim() : '';
+          const descPart = descRaw ? ` — ${truncate(descRaw, 60)}` : '';
+          labels.push(`${label}${descPart}`);
+        }
+      }
+    }
+    const headerPart = header ? `[${header}] ` : '';
+    // Numbered options (1. / 2. / …) instead of bullets so the user can
+    // reply with just "1" / "2" / "3" on Telegram — far less typing than
+    // copy-pasting an option label. Order matches the SDK input array.
+    const optsLine =
+      labels.length > 0
+        ? `\n  ${labels.map((l, i) => `${i + 1}. ${l}`).join('\n  ')}`
+        : '';
+    stanzas.push(`${headerPart}${question}${optsLine}`);
+  }
+  if (stanzas.length === 0) return 'AskUserQuestion';
+  const body = stanzas.join('\n\n');
+  // Cap at 800 chars so a pathologically long set of options doesn't blow
+  // past Telegram's per-message limit when this gets concatenated with the
+  // "🔧 " prefix + session label.
+  const capped = body.length > 800 ? body.slice(0, 799) + '…' : body;
+  // Cosmetic fix: use the canonical "ToolName · {item}" separator (same as
+  // Read/Edit/Bash/etc.) so the dispatch path's burst-collapse format
+  // (`🔧 {toolName} · {item}`) doesn't render "AskUserQuestion · AskUserQuestion"
+  // when extractToolItem can't strip a "\n"-separated prefix.
+  return `AskUserQuestion · ${capped}`;
 }
 
 /* ────────────────────────── small helpers ────────────────────────── */

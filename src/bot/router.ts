@@ -348,16 +348,63 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       await ctx.answerCallbackQuery({ text: 'not found' });
       return;
     }
+    // Bug fix (P1): before activating the incoming session, flush the
+    // OUTGOING session's pending output so the user doesn't lose the tail of
+    // its last reply. Two sources:
+    //   (1) Notifier's debounced text stream (active sessions stream via
+    //       `appendStream`, debounce window may still be open when the user
+    //       taps switch). `closeStream` drains the timer + sends the pending
+    //       buffer as a normal Telegram message.
+    //   (2) SessionManager's per-session background buffer — populated only
+    //       while the session is NOT active, but a fast back-and-forth toggle
+    //       can leave events buffered from an earlier background spell that
+    //       were never drained. Senior-review (Opus 4.7) [P2]: previously the
+    //       outgoing flush only covered (2); (1) is the more common path on
+    //       a recently-active session, so add closeStream as well.
+    const prevActiveId = deps.store.getChatState(chatId).active_session_id;
+    if (prevActiveId && prevActiveId !== id) {
+      // (1) drain the debounced text stream — safe no-op if no stream exists.
+      await notifierFor(chatId).closeStream(`s:${prevActiveId}`);
+      // (2) drain any leftover background-buffer events.
+      if (deps.manager.hasBuffered(prevActiveId)) {
+        const prevRow = deps.store.getSession(prevActiveId);
+        if (prevRow) {
+          const events = deps.manager.drainBuffer(prevActiveId);
+          const lines = events.map((e) => e.data);
+          const header = `[${prevRow.label}] 📤 flushing on session switch (${events.length} pending):`;
+          const contHeader = `[${prevRow.label}] 📤 flushing (cont.):`;
+          const parts = splitCatchUp(header, contHeader, lines);
+          for (const part of parts) {
+            try {
+              await ctx.reply(part, { disable_notification: true });
+            } catch (err) {
+              // Bug fix (P1): do NOT break — log and continue so partial
+              // delivery failure doesn't drop remaining content silently.
+              logger.warn(
+                { err: String(err), sessionId: prevActiveId },
+                'switch outgoing flush failed (continuing)',
+              );
+            }
+          }
+        }
+      }
+    }
+
     deps.store.setActiveSession(chatId, id);
     await ctx.answerCallbackQuery({ text: `→ ${row.label}` });
-    await ctx.reply(
-      `📍 [${row.label}]\n${
-        row.transcript_tail
-          .split('\n')
-          .slice(-deps.config.session_switch_preview_lines)
-          .join('\n') || '(no transcript yet)'
-      }`,
-    );
+    // Bug fix (P1): use chunked send so a long transcript_tail (or a long
+    // last-assistant message stored at its tail) isn't silently truncated by
+    // grammY's implicit 4096-char limit. We still respect
+    // `session_switch_preview_lines` as a soft cap — within a chunk, split
+    // at line boundaries; if still over the per-message limit, spill into
+    // continuation messages so the user sees the FULL tail (not just an
+    // ellipsis).
+    const tail =
+      row.transcript_tail
+        .split('\n')
+        .slice(-deps.config.session_switch_preview_lines)
+        .join('\n') || '(no transcript yet)';
+    await notifierFor(chatId).sendChunked(`📍 [${row.label}]\n${tail}`);
 
     // v0.8 (plan §3.5): on manual switch, flush the incoming session's RAM
     // buffer so the user catches up on the output produced while it was
@@ -379,8 +426,12 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
         try {
           await ctx.reply(part, { disable_notification: true });
         } catch (err) {
-          logger.warn({ err: String(err), sessionId: id }, 'switch catch-up flush failed');
-          break;
+          // Bug fix (P1): do NOT break — log and continue so transient
+          // 429s on one part don't truncate the remaining catch-up content.
+          logger.warn(
+            { err: String(err), sessionId: id },
+            'switch catch-up flush failed (continuing)',
+          );
         }
       }
     }

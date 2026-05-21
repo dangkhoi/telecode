@@ -152,17 +152,38 @@ export class ClaudeAdapter implements AgentAdapter {
         } as never,
       });
 
+      // Bug fix (P0): claude SDK fires a synthetic `result` message at end of
+      // turn (handled in {@link handleMessage}, emits `done` event with cost +
+      // duration). If we ALSO emit a fallback `done` after the for-await loop
+      // exits, every turn produces TWO `done` events → downstream listeners
+      // (auto-done summarize in `bot/commands/index.ts`) fire twice → 2× token
+      // cost + flicker as the second summary `editPlain`s over the first.
+      //
+      // Track whether the `result` message already emitted `done`; only fire
+      // the fallback if it didn't (abort mid-stream, SDK error that bypasses
+      // the result message, or any future SDK quirk where the iterator ends
+      // without sending `result`).
+      let resultDoneFired = false;
       for await (const message of q as AsyncIterable<unknown>) {
         if (start.abortSignal.aborted) break;
-        await this.handleMessage(message, start, (id) => {
-          if (id && id !== sdkSessionId) {
-            sdkSessionId = id;
-            store.updateSession(start.sessionId, { sdk_session_id: id });
-            start.onEvent({ type: 'session', sdkSessionId: id });
-          }
-        });
+        await this.handleMessage(
+          message,
+          start,
+          (id) => {
+            if (id && id !== sdkSessionId) {
+              sdkSessionId = id;
+              store.updateSession(start.sessionId, { sdk_session_id: id });
+              start.onEvent({ type: 'session', sdkSessionId: id });
+            }
+          },
+          () => {
+            resultDoneFired = true;
+          },
+        );
       }
-      start.onEvent({ type: 'done' });
+      if (!resultDoneFired) {
+        start.onEvent({ type: 'done' });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       start.onEvent({ type: 'error', error: msg });
@@ -176,6 +197,7 @@ export class ClaudeAdapter implements AgentAdapter {
     message: unknown,
     start: AgentStartOpts,
     captureSession: (id: string | null | undefined) => void,
+    onResultDone: () => void,
   ): Promise<void> {
     const m = message as {
       type?: string;
@@ -201,6 +223,7 @@ export class ClaudeAdapter implements AgentAdapter {
         totalCostUsd: m.total_cost_usd,
         result: m.result,
       });
+      onResultDone();
     }
   }
 }
