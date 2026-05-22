@@ -46,6 +46,11 @@ export interface SessionRow {
    * {@link SessionStore.getSessionMode}.
    */
   verbosity_mode: string | null;
+  /**
+   * Per-session model override. `null` → use adapter default from config.
+   * Set via `/model <name>`.
+   */
+  model: string | null;
 }
 
 export interface ToolLogRow {
@@ -96,6 +101,51 @@ export class SessionStore {
     if (!colNames.has('verbosity_mode')) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN verbosity_mode TEXT`);
     }
+    if (!colNames.has('model')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN model TEXT`);
+    }
+    // v1.2 — persist last usage so /status survives daemon restart.
+    if (!colNames.has('last_input_tokens')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN last_input_tokens INTEGER`);
+    }
+    if (!colNames.has('last_output_tokens')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN last_output_tokens INTEGER`);
+    }
+    if (!colNames.has('last_context_window')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN last_context_window INTEGER`);
+    }
+    if (!colNames.has('last_model')) {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN last_model TEXT`);
+    }
+
+    // v1.2 D6 — FTS5 search index + backfill existing sessions.
+    this.db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
+        session_id UNINDEXED,
+        label,
+        transcript,
+        tokenize='unicode61'
+      );
+    `);
+    const unindexed = this.db.prepare(
+      `SELECT id, label, transcript_tail FROM sessions WHERE id NOT IN (SELECT session_id FROM session_fts)`,
+    ).all() as { id: string; label: string; transcript_tail: string | null }[];
+    for (const row of unindexed) {
+      this.db.prepare(`INSERT INTO session_fts(session_id, label, transcript) VALUES (?, ?, ?)`).run(row.id, row.label, row.transcript_tail ?? '');
+    }
+
+    // v1.2 D2 — quiet hours columns on chat_settings.
+    const csCols = this.db.prepare(`PRAGMA table_info(chat_settings)`).all() as { name: string }[];
+    const csColNames = new Set(csCols.map((c) => c.name));
+    if (!csColNames.has('quiet_start')) {
+      this.db.exec(`ALTER TABLE chat_settings ADD COLUMN quiet_start INTEGER`);
+    }
+    if (!csColNames.has('quiet_end')) {
+      this.db.exec(`ALTER TABLE chat_settings ADD COLUMN quiet_end INTEGER`);
+    }
+    if (!csColNames.has('quiet_tz')) {
+      this.db.exec(`ALTER TABLE chat_settings ADD COLUMN quiet_tz TEXT`);
+    }
   }
 
   // ---------- Projects ----------
@@ -122,7 +172,7 @@ export class SessionStore {
   }
 
   // ---------- Sessions ----------
-  createSession(row: Omit<SessionRow, 'created_at' | 'updated_at' | 'transcript_tail' | 'last_message' | 'handoff_context' | 'verbosity_mode'> & {
+  createSession(row: Omit<SessionRow, 'created_at' | 'updated_at' | 'transcript_tail' | 'last_message' | 'handoff_context' | 'verbosity_mode' | 'model'> & {
     transcript_tail?: string;
     last_message?: string | null;
   }): SessionRow {
@@ -161,7 +211,7 @@ export class SessionStore {
       : `SELECT * FROM sessions WHERE chat_id = ? AND status != 'closed' ORDER BY updated_at DESC`;
     return this.db.prepare(sql).all(chatId) as SessionRow[];
   }
-  updateSession(id: string, patch: Partial<Pick<SessionRow, 'status' | 'sdk_session_id' | 'last_message' | 'transcript_tail' | 'label' | 'project_id' | 'handoff_context' | 'verbosity_mode'>>): void {
+  updateSession(id: string, patch: Partial<Pick<SessionRow, 'status' | 'sdk_session_id' | 'last_message' | 'transcript_tail' | 'label' | 'project_id' | 'handoff_context' | 'verbosity_mode' | 'model'>>): void {
     const fields: string[] = [];
     const vals: unknown[] = [];
     for (const [k, v] of Object.entries(patch)) {
@@ -180,6 +230,7 @@ export class SessionStore {
     lines.push(line);
     const tail = lines.slice(-maxLines).join('\n');
     this.updateSession(id, { transcript_tail: tail, last_message: line });
+    this.updateSearchIndex(id, row.label, tail);
   }
   markRunningAsInterrupted(): SessionRow[] {
     const rows = this.db
@@ -199,6 +250,11 @@ export class SessionStore {
          VALUES (?,?,?,?,?,?)`,
       )
       .run(row.session_id, row.tool_name, row.input_preview, row.decision, row.duration_ms, Date.now());
+  }
+  getToolLog(sessionId: string): ToolLogRow[] {
+    return this.db
+      .prepare(`SELECT * FROM tool_log WHERE session_id = ? ORDER BY id`)
+      .all(sessionId) as ToolLogRow[];
   }
   tailToolLog(sessionId: string, n: number): ToolLogRow[] {
     const rows = this.db
@@ -275,6 +331,29 @@ export class SessionStore {
   }
 
   /**
+   * Set or clear the per-session model override. Used by `/model <name>`.
+   */
+  setSessionModel(sessionId: string, model: string | null): void {
+    this.db.prepare('UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?').run(model, Date.now(), sessionId);
+  }
+
+  /** Persist last usage snapshot so /status survives daemon restart. */
+  setSessionUsage(sessionId: string, usage: { inputTokens: number; outputTokens: number; contextWindow: number; model: string }): void {
+    this.db.prepare(
+      'UPDATE sessions SET last_input_tokens = ?, last_output_tokens = ?, last_context_window = ?, last_model = ?, updated_at = ? WHERE id = ?',
+    ).run(usage.inputTokens, usage.outputTokens, usage.contextWindow, usage.model, Date.now(), sessionId);
+  }
+
+  /** Load persisted usage (returns null if never set). */
+  getSessionUsage(sessionId: string): { inputTokens: number; outputTokens: number; contextWindow: number; model: string } | null {
+    const row = this.db.prepare(
+      'SELECT last_input_tokens, last_output_tokens, last_context_window, last_model FROM sessions WHERE id = ?',
+    ).get(sessionId) as { last_input_tokens: number | null; last_output_tokens: number | null; last_context_window: number | null; last_model: string | null } | undefined;
+    if (!row || row.last_input_tokens == null) return null;
+    return { inputTokens: row.last_input_tokens, outputTokens: row.last_output_tokens ?? 0, contextWindow: row.last_context_window ?? 0, model: row.last_model ?? '' };
+  }
+
+  /**
    * Return the per-chat default mode, or {@link DEFAULT_VERBOSITY_MODE}
    * (which is `'summary'`) when the chat has no row yet. The fall-back is
    * applied here so callers can treat the return as non-null.
@@ -316,6 +395,178 @@ export class SessionStore {
       .prepare(`SELECT 1 AS one FROM chat_settings WHERE chat_id = ?`)
       .get(chatId) as { one: number } | undefined;
     return row != null;
+  }
+
+  // ---------- Cost tracking (v1.2 D3) ----------
+  logCost(sessionId: string, chatId: number, agent: string, inputTokens: number, outputTokens: number, costUsd: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO cost_log (session_id,chat_id,agent,input_tokens,output_tokens,cost_usd,created_at)
+         VALUES (?,?,?,?,?,?,?)`,
+      )
+      .run(sessionId, chatId, agent, inputTokens, outputTokens, costUsd, Date.now());
+  }
+
+  getCostBySession(sessionId: string): { total_cost: number; input_tokens: number; output_tokens: number } {
+    const row = this.db
+      .prepare(`SELECT COALESCE(SUM(cost_usd),0) AS total_cost, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens FROM cost_log WHERE session_id = ?`)
+      .get(sessionId) as { total_cost: number; input_tokens: number; output_tokens: number };
+    return row;
+  }
+
+  getCostByChat(chatId: number, sinceDaysAgo?: number): { total_cost: number; input_tokens: number; output_tokens: number } {
+    const cutoff = sinceDaysAgo != null ? Date.now() - sinceDaysAgo * 86_400_000 : 0;
+    const row = this.db
+      .prepare(`SELECT COALESCE(SUM(cost_usd),0) AS total_cost, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens FROM cost_log WHERE chat_id = ? AND created_at >= ?`)
+      .get(chatId, cutoff) as { total_cost: number; input_tokens: number; output_tokens: number };
+    return row;
+  }
+
+  getCostBreakdown(chatId: number, sinceDaysAgo?: number): { agent: string; total_cost: number; input_tokens: number; output_tokens: number }[] {
+    const cutoff = sinceDaysAgo != null ? Date.now() - sinceDaysAgo * 86_400_000 : 0;
+    return this.db
+      .prepare(`SELECT agent, COALESCE(SUM(cost_usd),0) AS total_cost, COALESCE(SUM(input_tokens),0) AS input_tokens, COALESCE(SUM(output_tokens),0) AS output_tokens FROM cost_log WHERE chat_id = ? AND created_at >= ? GROUP BY agent`)
+      .all(chatId, cutoff) as { agent: string; total_cost: number; input_tokens: number; output_tokens: number }[];
+  }
+
+  // ---------- Templates (v1.2 D4) ----------
+  saveTemplate(chatId: number, name: string, agent: string, prompt: string, projectId?: number | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO templates (chat_id,name,agent,prompt,project_id,created_at)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(chat_id,name) DO UPDATE SET agent=excluded.agent, prompt=excluded.prompt, project_id=excluded.project_id, created_at=excluded.created_at`,
+      )
+      .run(chatId, name, agent, prompt, projectId ?? null, Date.now());
+  }
+
+  listTemplates(chatId: number): { id: number; name: string; agent: string; prompt: string; project_id: number | null; created_at: number }[] {
+    return this.db
+      .prepare(`SELECT id, name, agent, prompt, project_id, created_at FROM templates WHERE chat_id = ? ORDER BY name`)
+      .all(chatId) as { id: number; name: string; agent: string; prompt: string; project_id: number | null; created_at: number }[];
+  }
+
+  getTemplate(chatId: number, name: string): { id: number; name: string; agent: string; prompt: string; project_id: number | null; created_at: number } | undefined {
+    return this.db
+      .prepare(`SELECT id, name, agent, prompt, project_id, created_at FROM templates WHERE chat_id = ? AND name = ?`)
+      .get(chatId, name) as { id: number; name: string; agent: string; prompt: string; project_id: number | null; created_at: number } | undefined;
+  }
+
+  deleteTemplate(chatId: number, name: string): boolean {
+    const res = this.db.prepare(`DELETE FROM templates WHERE chat_id = ? AND name = ?`).run(chatId, name);
+    return res.changes > 0;
+  }
+
+  // ---------- Schedules (v1.2 D5) ----------
+  createSchedule(chatId: number, name: string, cron: string, agent: string, prompt: string, projectId?: number | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO schedules (chat_id,name,cron,agent,prompt,project_id,enabled,created_at)
+         VALUES (?,?,?,?,?,?,1,?)`,
+      )
+      .run(chatId, name, cron, agent, prompt, projectId ?? null, Date.now());
+  }
+
+  listSchedules(chatId: number): { id: number; name: string; cron: string; agent: string; prompt: string; project_id: number | null; enabled: number; last_run_at: number | null; created_at: number }[] {
+    return this.db
+      .prepare(`SELECT id, name, cron, agent, prompt, project_id, enabled, last_run_at, created_at FROM schedules WHERE chat_id = ? ORDER BY name`)
+      .all(chatId) as { id: number; name: string; cron: string; agent: string; prompt: string; project_id: number | null; enabled: number; last_run_at: number | null; created_at: number }[];
+  }
+
+  getSchedule(chatId: number, name: string): { id: number; chat_id: number; name: string; cron: string; agent: string; prompt: string; project_id: number | null; enabled: number; last_run_at: number | null; created_at: number } | undefined {
+    return this.db
+      .prepare(`SELECT * FROM schedules WHERE chat_id = ? AND name = ?`)
+      .get(chatId, name) as { id: number; chat_id: number; name: string; cron: string; agent: string; prompt: string; project_id: number | null; enabled: number; last_run_at: number | null; created_at: number } | undefined;
+  }
+
+  deleteSchedule(chatId: number, name: string): boolean {
+    const res = this.db.prepare(`DELETE FROM schedules WHERE chat_id = ? AND name = ?`).run(chatId, name);
+    return res.changes > 0;
+  }
+
+  toggleSchedule(chatId: number, name: string, enabled: boolean): void {
+    this.db.prepare(`UPDATE schedules SET enabled = ? WHERE chat_id = ? AND name = ?`).run(enabled ? 1 : 0, chatId, name);
+  }
+
+  updateScheduleLastRun(id: number): void {
+    this.db.prepare(`UPDATE schedules SET last_run_at = ? WHERE id = ?`).run(Date.now(), id);
+  }
+
+  getEnabledSchedules(): { id: number; chat_id: number; name: string; cron: string; agent: string; prompt: string; project_id: number | null; enabled: number; last_run_at: number | null; created_at: number }[] {
+    return this.db
+      .prepare(`SELECT * FROM schedules WHERE enabled = 1`)
+      .all() as { id: number; chat_id: number; name: string; cron: string; agent: string; prompt: string; project_id: number | null; enabled: number; last_run_at: number | null; created_at: number }[];
+  }
+
+  // ---------- Quiet Hours (v1.2 D2) ----------
+  setQuietHours(chatId: number, startMinute: number, endMinute: number, tz = 'Asia/Ho_Chi_Minh'): void {
+    this.db
+      .prepare(
+        `INSERT INTO chat_settings (chat_id, default_mode, quiet_start, quiet_end, quiet_tz)
+         VALUES (?, 'summary', ?, ?, ?)
+         ON CONFLICT(chat_id) DO UPDATE SET quiet_start = excluded.quiet_start, quiet_end = excluded.quiet_end, quiet_tz = excluded.quiet_tz`,
+      )
+      .run(chatId, startMinute, endMinute, tz);
+  }
+
+  clearQuietHours(chatId: number): void {
+    const row = this.db.prepare(`SELECT 1 FROM chat_settings WHERE chat_id = ?`).get(chatId);
+    if (row) {
+      this.db.prepare(`UPDATE chat_settings SET quiet_start = NULL, quiet_end = NULL, quiet_tz = NULL WHERE chat_id = ?`).run(chatId);
+    }
+  }
+
+  getQuietHours(chatId: number): { start: number; end: number; tz: string } | null {
+    const row = this.db
+      .prepare(`SELECT quiet_start, quiet_end, quiet_tz FROM chat_settings WHERE chat_id = ?`)
+      .get(chatId) as { quiet_start: number | null; quiet_end: number | null; quiet_tz: string | null } | undefined;
+    if (!row || row.quiet_start == null || row.quiet_end == null) return null;
+    return { start: row.quiet_start, end: row.quiet_end, tz: row.quiet_tz ?? 'Asia/Ho_Chi_Minh' };
+  }
+
+  isQuietNow(chatId: number): boolean {
+    const qh = this.getQuietHours(chatId);
+    if (!qh) return false;
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: qh.tz,
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).formatToParts(now);
+    const hour = parseInt(parts.find((p) => p.type === 'hour')!.value, 10);
+    const minute = parseInt(parts.find((p) => p.type === 'minute')!.value, 10);
+    const currentMinute = hour * 60 + minute;
+
+    if (qh.start <= qh.end) {
+      return currentMinute >= qh.start && currentMinute < qh.end;
+    }
+    // Overnight range (e.g. 22:00-08:00)
+    return currentMinute >= qh.start || currentMinute < qh.end;
+  }
+
+  // ---------- Session search (v1.2 D6) ----------
+  updateSearchIndex(sessionId: string, label: string, transcript: string): void {
+    this.db.prepare(`DELETE FROM session_fts WHERE session_id = ?`).run(sessionId);
+    this.db.prepare(`INSERT INTO session_fts(session_id, label, transcript) VALUES (?, ?, ?)`).run(sessionId, label, transcript);
+  }
+
+  searchSessions(chatId: number, query: string, limit = 5): Array<{ sessionId: string; label: string; snippet: string; rank: number }> {
+    return this.db.prepare(
+      `SELECT f.session_id AS sessionId, f.label, snippet(session_fts, 2, '»', '«', '…', 30) AS snippet, f.rank
+       FROM session_fts f
+       JOIN sessions s ON s.id = f.session_id
+       WHERE session_fts MATCH ? AND s.chat_id = ?
+       ORDER BY f.rank
+       LIMIT ?`,
+    ).all(query, chatId, limit) as Array<{ sessionId: string; label: string; snippet: string; rank: number }>;
+  }
+
+  getRecentSessions(chatId: number, days: number): SessionRow[] {
+    const cutoff = Date.now() - days * 86_400_000;
+    return this.db.prepare(
+      `SELECT * FROM sessions WHERE chat_id = ? AND created_at >= ? ORDER BY created_at DESC`,
+    ).all(chatId, cutoff) as SessionRow[];
   }
 
   close(): void {

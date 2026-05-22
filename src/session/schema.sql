@@ -61,7 +61,10 @@ CREATE TABLE IF NOT EXISTS chat_state (
 -- majority of v1.1 use; users opt back into firehose via `/settings mode verbose`.
 CREATE TABLE IF NOT EXISTS chat_settings (
   chat_id       INTEGER PRIMARY KEY,
-  default_mode  TEXT NOT NULL DEFAULT 'summary'
+  default_mode  TEXT NOT NULL DEFAULT 'summary',
+  quiet_start   INTEGER,  -- minute-of-day (0-1439) when quiet hours begin, NULL = disabled
+  quiet_end     INTEGER,  -- minute-of-day (0-1439) when quiet hours end
+  quiet_tz      TEXT      -- IANA timezone string, default 'Asia/Ho_Chi_Minh'
 );
 
 -- Persisted state for the @grammyjs/conversations plugin (v0.7 wizards).
@@ -71,4 +74,53 @@ CREATE TABLE IF NOT EXISTS conversation_state (
   key        TEXT PRIMARY KEY,
   data       TEXT NOT NULL,
   updated_at INTEGER NOT NULL
+);
+
+-- v1.2 D3: Cost tracking per session
+CREATE TABLE IF NOT EXISTS cost_log (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id  TEXT NOT NULL,
+  chat_id     INTEGER NOT NULL,
+  agent       TEXT NOT NULL,
+  input_tokens  INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  cost_usd    REAL NOT NULL DEFAULT 0,
+  created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cost_log_session ON cost_log(session_id);
+CREATE INDEX IF NOT EXISTS idx_cost_log_chat ON cost_log(chat_id);
+
+-- v1.2 D4: Session templates
+CREATE TABLE IF NOT EXISTS templates (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id     INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  agent       TEXT NOT NULL,
+  prompt      TEXT NOT NULL,
+  project_id  INTEGER,
+  created_at  INTEGER NOT NULL,
+  UNIQUE(chat_id, name)
+);
+
+-- v1.2 D5: Scheduled tasks
+CREATE TABLE IF NOT EXISTS schedules (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  chat_id     INTEGER NOT NULL,
+  name        TEXT NOT NULL,
+  cron        TEXT NOT NULL,
+  agent       TEXT NOT NULL,
+  prompt      TEXT NOT NULL,
+  project_id  INTEGER,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  last_run_at INTEGER,
+  created_at  INTEGER NOT NULL,
+  UNIQUE(chat_id, name)
+);
+
+-- v1.2 D6: Full-text search on session transcripts
+CREATE VIRTUAL TABLE IF NOT EXISTS session_fts USING fts5(
+  session_id UNINDEXED,
+  label,
+  transcript,
+  tokenize='unicode61'
 );

@@ -8,6 +8,7 @@ import {
   unwatchFile as fsUnwatchFile,
 } from 'node:fs';
 import { homedir } from 'node:os';
+import path from 'node:path';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 import { POLICY_PATH } from '../util/paths.js';
 import { logger } from '../util/logger.js';
@@ -51,10 +52,11 @@ function globToRegex(glob: string): RegExp {
 }
 
 function expandPatternHome(pattern: string): string {
-  // Expand a leading `~` or `~/` inside a glob pattern body to the user's home dir.
+  // Expand a leading `~` or `~/` (or `~\` on Windows) inside a glob pattern body to the user's home dir.
   // Without this, deny rules like `Edit(~/.ssh/**)` silently no-op because Claude
   // passes absolute file paths (e.g. /Users/foo/.ssh/id_rsa).
   if (pattern.startsWith('~/')) return homedir() + pattern.slice(1);
+  if (pattern.startsWith('~\\')) return homedir() + path.sep + pattern.slice(2);
   if (pattern === '~') return homedir();
   return pattern;
 }

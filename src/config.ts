@@ -121,6 +121,13 @@ const overlays = {
  *      friendly error at boot time ("did you forget to register 'foo'?").
  */
 const ConfigSchema = z.object({
+  auto_verify: z.object({
+    enabled: z.boolean().default(false),
+    command: z.string().default('pnpm test'),
+    max_retries: z.number().int().min(0).max(10).default(3),
+    // Only auto-verify sessions that match these agents (empty = all)
+    agents: z.array(z.string()).default([]),
+  }).default({ enabled: false, command: 'pnpm test', max_retries: 3, agents: [] }),
   telegram: z.object({
     bot_token: z.string().min(10),
     allowed_user_ids: z.array(z.number().int()).min(1),
@@ -141,11 +148,19 @@ const ConfigSchema = z.object({
     // allowlist entirely — Telegram already normalizes them to JPEG.
     attachment_allowed_exts: z.array(z.string()).default([]),
   }),
+  voice: z
+    .object({
+      openai_api_key: z.string().optional(),
+      model: z.string().default('whisper-1'),
+    })
+    .default({ model: 'whisper-1' }),
   daemon: z.object({
     log_dir: z.string(),
     approval_timeout_sec: z.number().int().positive().default(300),
     /** Loopback port for the Kiro preToolUse hook server. 0 = ephemeral (recommended). */
     kiro_hook_port: z.number().int().min(0).max(65535).default(0),
+    /** Loopback port for the session timeline HTTP server. 0 = ephemeral. */
+    timeline_port: z.number().int().min(0).max(65535).default(0),
     workspace_scan: z
       .object({
         roots: z.array(z.string()).default([]),

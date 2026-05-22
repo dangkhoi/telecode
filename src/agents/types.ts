@@ -20,6 +20,7 @@ export type AgentEvent =
   | { type: 'session'; sdkSessionId: string }
   | { type: 'status'; status: string }
   | { type: 'error'; error: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; contextWindow?: number; model?: string }
   | { type: 'done'; durationMs?: number; totalCostUsd?: number; result?: string };
 
 export interface AgentStartOpts {
@@ -31,6 +32,7 @@ export interface AgentStartOpts {
   initialPrompt: string;
   onEvent: (e: AgentEvent) => void;
   abortSignal: AbortSignal;
+  model?: string | null;
 }
 
 export interface AgentAdapter {

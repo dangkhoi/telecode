@@ -147,6 +147,7 @@ export class ClaudeAdapter implements AgentAdapter {
           hooks: hooks as never,
           settingSources: this.opts.settingSources,
           permissionMode: 'default',
+          ...(start.model ? { model: start.model } : {}),
           ...(start.resumeId ? { resume: start.resumeId } : {}),
           abortController: ac,
         } as never,
@@ -207,6 +208,8 @@ export class ClaudeAdapter implements AgentAdapter {
       result?: string;
       total_cost_usd?: number;
       duration_ms?: number;
+      usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
+      modelUsage?: Record<string, { inputTokens: number; outputTokens: number; contextWindow: number; maxOutputTokens: number; costUSD: number }>;
     };
     if (m.session_id) captureSession(m.session_id);
 
@@ -217,6 +220,21 @@ export class ClaudeAdapter implements AgentAdapter {
         }
       }
     } else if (m.type === 'result') {
+      // Emit usage event before done if available
+      if (m.usage || m.modelUsage) {
+        const modelKeys = m.modelUsage ? Object.keys(m.modelUsage) : [];
+        const primaryModel = modelKeys[0];
+        const mu = primaryModel ? m.modelUsage![primaryModel] : undefined;
+        start.onEvent({
+          type: 'usage',
+          inputTokens: m.usage?.input_tokens ?? mu?.inputTokens ?? 0,
+          outputTokens: m.usage?.output_tokens ?? mu?.outputTokens ?? 0,
+          cacheReadTokens: m.usage?.cache_read_input_tokens ?? undefined,
+          cacheCreationTokens: m.usage?.cache_creation_input_tokens ?? undefined,
+          contextWindow: mu?.contextWindow,
+          model: primaryModel,
+        });
+      }
       start.onEvent({
         type: 'done',
         durationMs: m.duration_ms,

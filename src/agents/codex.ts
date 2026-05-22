@@ -660,7 +660,7 @@ export class CodexAdapter implements AgentAdapter {
           writableRoots: [start.cwd],
           networkAccess: true,
         },
-        model: this.opts.model,
+        model: start.model ?? this.opts.model,
         effort: this.opts.effort,
       });
       // Per Codex 0.75 docs the response is `result: { turn: { id, status,

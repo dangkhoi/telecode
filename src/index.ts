@@ -197,6 +197,11 @@ async function main(): Promise<void> {
 
   const started = await startBot({ config, store, manager, broker, policy, registry });
 
+  // v1.2 D9 — Timeline HTTP server (loopback only).
+  const { startTimelineServer } = await import('./bot/timeline.js');
+  const timeline = await startTimelineServer({ store, port: config.daemon.timeline_port });
+  (globalThis as any).__telecode_timeline_port = timeline.port;
+
   // Phase B (plan §B.5) — first-boot of v1.1 announcement per allowed chat.
   //
   // Detection rule: chat has NO row in `chat_settings` yet. This is the
@@ -261,6 +266,7 @@ async function main(): Promise<void> {
     logger.info({ sig }, 'shutdown');
     clearInterval(pruneTimer);
     policy.stop();
+    timeline.server.close();
     await kiroHookServer.stop();
     await started.stop();
     store.close();

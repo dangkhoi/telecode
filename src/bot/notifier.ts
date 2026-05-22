@@ -18,6 +18,11 @@ export interface NotifierOpts {
    * 700 → 3000 to reduce spam now that streams are silent (plan R2).
    */
   debounceMs?: number;
+  /**
+   * v1.2 D2 — quiet hours hook. When provided and returns true, all
+   * sendPlain/sendMarkdownV2 calls automatically set disable_notification.
+   */
+  isQuiet?: () => boolean;
 }
 
 interface Stream {
@@ -84,6 +89,14 @@ export class Notifier {
     this.debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   }
 
+  /** v1.2 D2 — merge quiet-hours silent flag into extra opts. */
+  private applyQuiet(extra?: SendPlainExtra): SendPlainExtra | undefined {
+    if (this.opts.isQuiet?.()) {
+      return { ...(extra ?? {}), silent: true };
+    }
+    return extra;
+  }
+
   private async takeToken(): Promise<void> {
     while (true) {
       const now = Date.now();
@@ -101,7 +114,8 @@ export class Notifier {
 
   async sendPlain(text: string, extra?: SendPlainExtra): Promise<number | null> {
     const safe = clip(scrubSecrets(text));
-    const apiOpts = normalizeExtra(extra);
+    const merged = this.applyQuiet(extra);
+    const apiOpts = normalizeExtra(merged);
     try {
       await this.takeToken();
       const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, safe, apiOpts as never);
@@ -130,7 +144,8 @@ export class Notifier {
    */
   async sendMarkdownV2(text: string, extra?: SendPlainExtra): Promise<number | null> {
     const safe = clip(scrubSecrets(text));
-    const apiOpts = normalizeExtra({ ...(extra ?? {}), parse_mode: 'MarkdownV2' });
+    const merged = this.applyQuiet(extra);
+    const apiOpts = normalizeExtra({ ...(merged ?? {}), parse_mode: 'MarkdownV2' });
     try {
       await this.takeToken();
       const msg = await this.opts.bot.api.sendMessage(

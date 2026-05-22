@@ -12,9 +12,12 @@ import {
 } from '../src/bot/keyboard-actions.js';
 
 describe('commands-registry: COMMANDS', () => {
-  it('exports exactly 13 entries', () => {
+  it('exports exactly 24 entries', () => {
     // Phase B (v1.1) added /mode + /settings (was 11 in v1.0).
-    expect(COMMANDS).toHaveLength(13);
+    // v1.2 D3/D4 added /cost + /template.
+    // v1.2 D1/D2/D5/D6/D7/D8/D10/D11 added /send + /notify + /schedule + /history + /context + /timeline + /chain + /verify.
+    // Per-session model override added /model.
+    expect(COMMANDS).toHaveLength(24);
   });
 
   it('each entry has non-empty command + description', () => {
@@ -46,6 +49,21 @@ describe('commands-registry: COMMANDS', () => {
       // Phase B (v1.1) — verbosity controls.
       'mode',
       'settings',
+      // v1.2 D3/D4 — cost tracking + templates.
+      'cost',
+      'template',
+      // Per-session model override.
+      'model',
+      // v1.2 D2/D5/D6/D7/D8/D10/D11 — quiet hours + schedule + history + pinned context + chain + timeline + verify.
+      'notify',
+      'schedule',
+      'history',
+      'context',
+      'chain',
+      'verify',
+      'timeline',
+      // v1.2 D1 — outbound file sharing.
+      'send',
       'stop',
       'screenshot',
       'help',

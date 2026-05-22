@@ -35,13 +35,14 @@
  *     because Telegram normalizes them to JPEG/PNG and emits no filename.
  */
 
-import { createWriteStream, mkdirSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
+import { InputFile } from 'grammy';
 import { logger } from '../util/logger.js';
 
 /** Default file extension allowlist when config omits `attachment_allowed_exts`. */
@@ -381,4 +382,76 @@ export function formatBytes(n: number): string {
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+// ---------------------------------------------------------------------------
+// v1.2 D1 — Outbound file sharing (send local file → Telegram)
+// ---------------------------------------------------------------------------
+
+/** Minimal bot interface for sending files — decoupled from full Bot<C>. */
+export interface MinimalBotForSend {
+  api: {
+    sendDocument: (chatId: number, document: InputFile, other?: Record<string, unknown>) => Promise<unknown>;
+    sendPhoto: (chatId: number, photo: InputFile, other?: Record<string, unknown>) => Promise<unknown>;
+  };
+}
+
+export interface SendFileOpts {
+  chatId: number;
+  filePath: string;
+  caption?: string;
+  replyToMessageId?: number;
+}
+
+export interface SendFileResult {
+  success: boolean;
+  error?: string;
+}
+
+const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp']);
+const MAX_SEND_BYTES = 50 * 1024 * 1024; // 50 MB Telegram limit
+
+/**
+ * Send a local file to a Telegram chat. Auto-detects sendPhoto (images) vs
+ * sendDocument (everything else). Checks existence + size before sending.
+ */
+export async function sendFileToChat(
+  bot: MinimalBotForSend,
+  opts: SendFileOpts,
+): Promise<SendFileResult> {
+  const { chatId, filePath, caption, replyToMessageId } = opts;
+
+  if (!existsSync(filePath)) {
+    return { success: false, error: `File không tồn tại: ${filePath}` };
+  }
+
+  let size: number;
+  try {
+    const st = await stat(filePath);
+    size = st.size;
+  } catch (err) {
+    return { success: false, error: `Không đọc được file: ${String(err).slice(0, 120)}` };
+  }
+
+  if (size > MAX_SEND_BYTES) {
+    return { success: false, error: `File quá lớn: ${formatBytes(size)} (giới hạn 50 MB).` };
+  }
+
+  const ext = path.extname(filePath).toLowerCase();
+  const isImage = IMAGE_EXTS.has(ext);
+  const file = new InputFile(filePath);
+  const other: Record<string, unknown> = {};
+  if (caption) other.caption = caption;
+  if (replyToMessageId) other.reply_to_message_id = replyToMessageId;
+
+  try {
+    if (isImage) {
+      await bot.api.sendPhoto(chatId, file, other);
+    } else {
+      await bot.api.sendDocument(chatId, file, other);
+    }
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: `Gửi file thất bại: ${String(err).slice(0, 160)}` };
+  }
 }

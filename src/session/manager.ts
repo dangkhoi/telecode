@@ -159,6 +159,7 @@ export class SessionManager {
       sessionLabel: string;
       chatId: number;
       resumeId: string | null;
+      model?: string | null;
       /** v1.4 (perf-pass §C1) — priority; defaults to 'user'. */
       kind?: DispatchKind;
     },
@@ -207,6 +208,7 @@ export class SessionManager {
           cwd: opts.cwd,
           resumeId: opts.resumeId,
           initialPrompt: opts.prompt,
+          model: opts.model,
           onEvent: (e) => {
             if (e.type === 'text' && tFirstText === null) tFirstText = Date.now();
             try {

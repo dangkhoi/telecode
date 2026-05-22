@@ -14,6 +14,8 @@ export function expandHome(p: string): string {
   if (!p) return p;
   if (p === '~') return homedir();
   if (p.startsWith('~/')) return path.resolve(homedir(), p.slice(2));
+  // Windows users may write `~\foo` in config — handle backslash separator too.
+  if (p.startsWith('~\\')) return path.resolve(homedir(), p.slice(2));
   return p;
 }
 

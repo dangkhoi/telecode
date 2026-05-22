@@ -238,7 +238,8 @@ export class KiroAdapter implements AgentAdapter {
 
       const args = ['chat', '--no-interactive', '--agent', this.opts.agent];
       if (start.resumeId) args.push('--resume-id', start.resumeId);
-      if (this.opts.model) args.push('--model', this.opts.model);
+      const model = start.model ?? this.opts.model;
+      if (model) args.push('--model', model);
       // `--trust-all-tools` would bypass kiro-cli's built-in confirmation
       // prompts, BUT the custom agent's preToolUse hook (managed by Telecode)
       // is still invoked for every tool call and can block via exit code 2.
@@ -344,7 +345,10 @@ export class KiroAdapter implements AgentAdapter {
               // correct vs harmful (block immediate retry after auth
               // fix)?").
               const okExit = !list.failed && (list.exitCode ?? 0) === 0;
-              const m = stripAnsi(String(list.stdout ?? '')).match(SESSION_ID_RE);
+              // kiro-cli ≥2.3 writes --list-sessions output to STDERR (not
+              // stdout). Check both streams for robustness.
+              const combined = String(list.stdout ?? '') + String(list.stderr ?? '');
+              const m = stripAnsi(combined).match(SESSION_ID_RE);
               const extracted = m?.[1] ?? null;
               if (okExit) {
                 writeKiroSessionsCache(start.cwd, extracted, Date.now());
@@ -369,6 +373,23 @@ export class KiroAdapter implements AgentAdapter {
         logger.warn({ err: String(err) }, 'kiro --list-sessions failed (non-fatal)');
       }
 
+      // Emit estimated usage so /status can show context window info.
+      // kiro-cli --no-interactive doesn't output token counts; estimate from
+      // char lengths (~4 chars/token) and known model context windows.
+      const effectiveModel = model ?? 'auto';
+      const inputChars = start.initialPrompt.length;
+      const outputChars = buf.length;
+      const estInput = Math.round(inputChars / 4);
+      const estOutput = Math.round(outputChars / 4);
+      const ctxWindow = resolveContextWindow(effectiveModel);
+      start.onEvent({
+        type: 'usage',
+        inputTokens: estInput,
+        outputTokens: estOutput,
+        contextWindow: ctxWindow,
+        model: effectiveModel,
+      });
+
       start.onEvent({
         type: 'done',
         result: buf.slice(-200).trim() || undefined,
@@ -379,4 +400,15 @@ export class KiroAdapter implements AgentAdapter {
       start.onEvent({ type: 'error', error: msg });
     }
   }
+}
+
+/** Map known model name fragments to context window sizes (tokens). */
+function resolveContextWindow(model: string): number {
+  const m = model.toLowerCase();
+  if (m.includes('opus')) return 200_000;
+  if (m.includes('haiku')) return 200_000;
+  if (m.includes('sonnet')) return 200_000;
+  // Default for kiro-cli auto/unknown models — 200K is the standard
+  // Anthropic context window as of 2025.
+  return 200_000;
 }

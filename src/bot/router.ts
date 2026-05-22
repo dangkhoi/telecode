@@ -97,7 +97,12 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
   const notifierFor = (chatId: number): Notifier => {
     let n = notifierByChat.get(chatId);
     if (!n) {
-      n = new Notifier({ bot, chatId, debounceMs: deps.config.notifier.debounce_ms });
+      n = new Notifier({
+        bot,
+        chatId,
+        debounceMs: deps.config.notifier.debounce_ms,
+        isQuiet: () => deps.store.isQuietNow(chatId),
+      });
       notifierByChat.set(chatId, n);
     }
     return n;
@@ -1131,6 +1136,16 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     // Phase B — verbosity mode toggles.
     .on('mode', 'set', modeSetSessionHandler)
     .on('settings', 'mode', settingsModeHandler)
+    // Model picker callback.
+    .on('model', 'set', async (ctx, payload) => {
+      const chatId = ctx.chat?.id;
+      if (!chatId) { await ctx.answerCallbackQuery({ text: 'no chat' }); return; }
+      const st = deps.store.getChatState(chatId);
+      if (!st.active_session_id) { await ctx.answerCallbackQuery({ text: 'no active session', show_alert: true }); return; }
+      deps.store.setSessionModel(st.active_session_id, payload);
+      await ctx.answerCallbackQuery({ text: `✓ ${payload}` });
+      try { await ctx.editMessageText(`Model đổi thành: ${payload}`); } catch { /* ignore */ }
+    })
     // Phase C.3 — diff reveal button.
     .on('diff', 'show', diffShowHandler)
     // Phase D.3 / D.5 — summary buttons.

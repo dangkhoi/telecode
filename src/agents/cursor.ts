@@ -670,6 +670,7 @@ export class CursorAdapter implements AgentAdapter {
       const promptRes = await request<{ stopReason?: string }>('session/prompt', {
         sessionId,
         prompt: [{ type: 'text', text: start.initialPrompt }],
+        ...(start.model ? { model: start.model } : {}),
       });
       inPrompt = false;
 

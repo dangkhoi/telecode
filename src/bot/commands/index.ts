@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { InputFile, InlineKeyboard } from 'grammy';
 import type { InlineKeyboardButton } from 'grammy/types';
 import { buildSuggestions } from '../suggestions.js';
-import { downloadTelegramAttachment, buildPromptWithAttachment } from '../attachments.js';
+import { downloadTelegramAttachment, buildPromptWithAttachment, sendFileToChat } from '../attachments.js';
 import { renderToolUse, friendlyToolLabel, extractToolItem } from '../tool-render.js';
 import { PendingTools } from '../pending-tools.js';
 import { toolCollapseMgr, progressMgr } from '../runtime-state.js';
@@ -46,6 +46,8 @@ import {
 } from '../reply-builders.js';
 import { DashboardLoop, type DashboardEditor } from '../dashboard.js';
 import { wizardState } from '../wizard-state.js';
+import { loadPinnedContext, hasPinnedContext, pinnedContextPath, clearPinnedContext } from '../pinned-context.js';
+import { runVerifyCommand, shouldAutoVerify, buildRetryPrompt } from '../auto-verify.js';
 import { logger } from '../../util/logger.js';
 
 export interface CommandDeps {
@@ -544,6 +546,12 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   // the loop stops (manual / deleted / idle).
   const dashboards = new Map<number, DashboardLoop>();
 
+  // v1.2 D11 — auto-verify retry count per session
+  const verifyRetryCount = new Map<string, number>();
+
+  // Context window usage tracking per session (Feature 1: context %)
+  const sessionUsage = new Map<string, { inputTokens: number; outputTokens: number; contextWindow: number; model: string }>();
+
   bot.command('start', async (ctx) => {
     const chatId = ctx.chat!.id;
     const sessions = store.listSessions(chatId);
@@ -994,8 +1002,44 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         lines.push('Last tools:');
         for (const t of tools) lines.push(`  - ${t.tool_name} ${t.decision ?? ''}`);
       }
+      const usage = sessionUsage.get(cur.id) ?? store.getSessionUsage(cur.id);
+      if (usage && usage.contextWindow > 0) {
+        const pct = Math.round((usage.inputTokens / usage.contextWindow) * 100);
+        const usedK = Math.round(usage.inputTokens / 1000);
+        const maxK = usage.contextWindow >= 1_000_000
+          ? `${(usage.contextWindow / 1_000_000).toFixed(0)}M`
+          : `${Math.round(usage.contextWindow / 1000)}K`;
+        lines.push(`Context: ${usedK}K/${maxK} (${pct}%)${usage.model ? ' · ' + usage.model : ''}`);
+        if (pct >= 70) lines.push('⚠️ Context window >70% — cân nhắc /handoff');
+      } else if (usage) {
+        const usedK = Math.round(usage.inputTokens / 1000);
+        lines.push(`Tokens used: ${usedK}K${usage.model ? ' · ' + usage.model : ''}`);
+      }
     }
     await ctx.reply(lines.join('\n'));
+  });
+
+  // ----- /model — view/change model for active session --------------------
+  const MODEL_OPTIONS: Record<string, string[]> = {
+    claude: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-4-20250514'],
+    kiro: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-4-20250514'],
+    codex: ['gpt-5.1-codex', 'o3', 'o4-mini'],
+    cursor: ['auto', 'claude-sonnet-4-20250514', 'gpt-5.2'],
+  };
+
+  bot.command('model', async (ctx) => {
+    const cur = activeSession(ctx, store);
+    if (!cur) return ctx.reply('Không có session active — /new để tạo.');
+    const arg = (ctx.match || '').trim();
+    if (!arg) {
+      const agentCfg = config.agents[cur.agent as keyof typeof config.agents] as { model?: string } | undefined;
+      const effective = cur.model ?? agentCfg?.model ?? 'auto (server default)';
+      const models = MODEL_OPTIONS[cur.agent] ?? ['auto'];
+      const buttons = models.map((m) => [{ text: m === effective ? `● ${m}` : m, callback_data: `model:set:${m}` }]);
+      return ctx.reply(`Model hiện tại: ${effective}`, { reply_markup: { inline_keyboard: buttons } });
+    }
+    store.setSessionModel(cur.id, arg);
+    await ctx.reply(`✓ Model đổi thành: ${arg}`);
   });
 
   // ----- /dashboard (plan P0.5) — live status dashboard ------------------
@@ -1114,6 +1158,120 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     await ctx.reply(`🚫 deny += \`${pat}\``, { parse_mode: 'Markdown' });
   });
 
+  // ----- /notify (v1.2 D2) — quiet hours -----
+  bot.command('notify', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+
+    if (!arg) {
+      // Show current status
+      const qh = store.getQuietHours(chatId);
+      if (!qh) {
+        await ctx.reply('🔔 Quiet hours: OFF\n\nUsage:\n/notify quiet 22:00-08:00\n/notify quiet off');
+      } else {
+        const startH = String(Math.floor(qh.start / 60)).padStart(2, '0');
+        const startM = String(qh.start % 60).padStart(2, '0');
+        const endH = String(Math.floor(qh.end / 60)).padStart(2, '0');
+        const endM = String(qh.end % 60).padStart(2, '0');
+        await ctx.reply(`🔕 Quiet hours: ${startH}:${startM}–${endH}:${endM} (${qh.tz})\n\nMessages vẫn đến nhưng không kêu trong khung giờ này.\n/notify quiet off — tắt`);
+      }
+      return;
+    }
+
+    if (arg === 'quiet off') {
+      store.clearQuietHours(chatId);
+      await ctx.reply('🔔 Quiet hours disabled.');
+      return;
+    }
+
+    // Parse "quiet HH:MM-HH:MM" or "quiet HH:MM-HH:MM TZ"
+    const m = arg.match(/^quiet\s+(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})(?:\s+(.+))?$/);
+    if (!m) {
+      await ctx.reply('Usage: /notify quiet 22:00-08:00 [timezone]\nExample: /notify quiet 23:00-07:00 Asia/Ho_Chi_Minh');
+      return;
+    }
+    const startMinute = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    const endMinute = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+    if (startMinute >= 1440 || endMinute >= 1440) {
+      await ctx.reply('❌ Invalid time — hours must be 0-23, minutes 0-59.');
+      return;
+    }
+    const tz = m[5]?.trim() || 'Asia/Ho_Chi_Minh';
+    // Validate timezone
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    } catch {
+      await ctx.reply(`❌ Invalid timezone: ${tz}`);
+      return;
+    }
+    store.setQuietHours(chatId, startMinute, endMinute, tz);
+    const startStr = `${m[1].padStart(2, '0')}:${m[2]}`;
+    const endStr = `${m[3].padStart(2, '0')}:${m[4]}`;
+    await ctx.reply(`🔕 Quiet hours set: ${startStr}–${endStr} (${tz})\nMessages vẫn đến nhưng silent trong khung giờ này.`);
+  });
+
+  // ----- /context (v1.2 D7) — pinned context -----
+  bot.command('context', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply('No active session — /session new <agent> <label> [path]');
+      return;
+    }
+    const projPath = projectPathOf(cur, store, process.cwd());
+
+    if (arg === 'edit') {
+      const fp = pinnedContextPath(projPath);
+      await ctx.reply(`📝 Pinned context file:\n\`${fp}\`\n\nEdit this file to change the context injected into prompts.`, { parse_mode: 'Markdown' });
+      return;
+    }
+
+    if (arg === 'clear') {
+      const removed = clearPinnedContext(projPath);
+      await ctx.reply(removed ? '🗑 Pinned context cleared.' : 'No pinned context file found.');
+      return;
+    }
+
+    // Default: show current context
+    const content = loadPinnedContext(projPath);
+    if (!content) {
+      await ctx.reply(`No pinned context found.\n\nCreate \`${pinnedContextPath(projPath)}\` to inject context into every prompt.`, { parse_mode: 'Markdown' });
+    } else {
+      const preview = content.length > 3000 ? content.slice(0, 3000) + '\n…(truncated)' : content;
+      await ctx.reply(`📌 Pinned context (${content.length} chars):\n\n${preview}`);
+    }
+  });
+
+  // ---- v1.2 D1: /send command — outbound file sharing ----
+  bot.command('send', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+    if (!arg) {
+      await ctx.reply('Usage: /send <path>\nGửi file từ project về Telegram. Path relative to active project.');
+      return;
+    }
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply('No active session — /session new <agent> <label> [path]');
+      return;
+    }
+    const projPath = projectPathOf(cur, store, process.cwd());
+    const resolved = path.resolve(projPath, arg);
+    // Security: only allow files within the project directory
+    if (!resolved.startsWith(projPath + path.sep) && resolved !== projPath) {
+      await ctx.reply('❌ Path traversal không được phép — chỉ gửi file trong project.');
+      return;
+    }
+    const result = await sendFileToChat(
+      { api: bot.api as never },
+      { chatId, filePath: resolved, caption: path.basename(resolved) },
+    );
+    if (!result.success) {
+      await ctx.reply(`❌ ${result.error}`);
+    }
+  });
+
   bot.command('screenshot', async (ctx) => {
     // Plan P1.3: platform-gated capture. Output path uses `os.tmpdir()` so
     // Windows resolves it to `%TEMP%`, Linux/macOS to `/tmp` (or `$TMPDIR` on
@@ -1152,7 +1310,421 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     }
   });
 
+  // ---- v1.2 D6: /history command ----
+  bot.command('history', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const args = (ctx.match ?? '').trim();
+
+    if (args.startsWith('search ')) {
+      const query = args.slice(7).trim();
+      if (!query) { await ctx.reply('Usage: /history search <query>'); return; }
+      const results = store.searchSessions(chatId, query, 5);
+      if (results.length === 0) { await ctx.reply(`🔍 Không tìm thấy kết quả cho "${query}".`); return; }
+      let msg = `🔍 Kết quả tìm kiếm "${query}":\n`;
+      for (let i = 0; i < results.length; i++) {
+        const r = results[i]!;
+        const session = store.getSession(r.sessionId);
+        const date = session ? new Date(session.created_at).toLocaleDateString('vi-VN') : '';
+        const agent = session?.agent ?? '';
+        const status = session?.status ?? '';
+        msg += `\n${i + 1}. [${r.label}] (${agent}, ${status}, ${date})\n   ${r.snippet}\n`;
+      }
+      await ctx.reply(msg);
+      return;
+    }
+
+    const lastMatch = args.match(/^last\s+(\d+)d$/);
+    if (lastMatch) {
+      const days = parseInt(lastMatch[1]!, 10);
+      const sessions = store.getRecentSessions(chatId, days);
+      if (sessions.length === 0) { await ctx.reply(`📋 Không có session nào trong ${days} ngày qua.`); return; }
+      let msg = `📋 Sessions (${days} ngày qua): ${sessions.length}\n`;
+      for (const s of sessions.slice(0, 20)) {
+        const date = new Date(s.created_at).toLocaleDateString('vi-VN');
+        msg += `\n• [${s.label}] ${s.agent} · ${s.status} · ${date}`;
+      }
+      await ctx.reply(msg);
+      return;
+    }
+
+    // Default: show last 7 days
+    const sessions = store.getRecentSessions(chatId, 7);
+    if (sessions.length === 0) { await ctx.reply('📋 Không có session nào trong 7 ngày qua.'); return; }
+    let msg = `📋 Sessions (7 ngày qua): ${sessions.length}\n`;
+    for (const s of sessions.slice(0, 10)) {
+      const date = new Date(s.created_at).toLocaleDateString('vi-VN');
+      msg += `\n• [${s.label}] ${s.agent} · ${s.status} · ${date}`;
+    }
+    msg += '\n\n💡 /history search <query> — tìm kiếm\n💡 /history last <N>d — xem N ngày qua';
+    await ctx.reply(msg);
+  });
+
+  // ---- v1.2 D3: /cost command ----
+  bot.command('cost', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+
+    if (arg) {
+      // /cost <session-label>
+      const session = store.findSessionByLabel(chatId, arg);
+      if (!session) {
+        await ctx.reply(`❌ Session "${arg}" không tìm thấy.`);
+        return;
+      }
+      const c = store.getCostBySession(session.id);
+      await ctx.reply(
+        `💰 Cost — [${session.label}] (${session.agent})\n` +
+        `├ Input: ${c.input_tokens.toLocaleString()} tokens\n` +
+        `├ Output: ${c.output_tokens.toLocaleString()} tokens\n` +
+        `└ Total: $${c.total_cost.toFixed(4)}`,
+      );
+      return;
+    }
+
+    const today = store.getCostByChat(chatId, 1);
+    const week = store.getCostByChat(chatId, 7);
+    const month = store.getCostByChat(chatId, 30);
+    const breakdown = store.getCostBreakdown(chatId, 30);
+
+    let msg =
+      `💰 Cost summary\n` +
+      `├ Today:  $${today.total_cost.toFixed(4)}\n` +
+      `├ 7 days: $${week.total_cost.toFixed(4)}\n` +
+      `└ 30 days: $${month.total_cost.toFixed(4)}`;
+
+    if (breakdown.length > 0) {
+      msg += `\n\n📊 Per-agent (30d):`;
+      for (const b of breakdown) {
+        msg += `\n  ${b.agent}: $${b.total_cost.toFixed(4)} (${b.input_tokens.toLocaleString()} in / ${b.output_tokens.toLocaleString()} out)`;
+      }
+    }
+
+    await ctx.reply(msg);
+  });
+
+  // ---- v1.2 D9: /timeline command ----
+  bot.command('timeline', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+    let sessionId: string | null = null;
+    if (arg) {
+      const found = store.findSessionByLabel(chatId, arg);
+      if (!found) { await ctx.reply(`❌ Session "${arg}" không tìm thấy.`); return; }
+      sessionId = found.id;
+    } else {
+      const cur = activeSession(ctx, store);
+      if (!cur) { await ctx.reply('No active session — /timeline <label> hoặc switch session trước.'); return; }
+      sessionId = cur.id;
+    }
+    const port = (globalThis as any).__telecode_timeline_port as number | undefined;
+    if (!port) { await ctx.reply('❌ Timeline server chưa khởi động.'); return; }
+    await ctx.reply(`📜 http://localhost:${port}/timeline/${sessionId}`);
+  });
+
+  // ---- v1.2 D11: /verify command ----
+  bot.command('verify', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+
+    if (arg === 'status') {
+      const av = config.auto_verify;
+      await ctx.reply(
+        `🔍 Auto-verify config:\n` +
+        `├ Enabled: ${av.enabled}\n` +
+        `├ Command: \`${av.command}\`\n` +
+        `├ Max retries: ${av.max_retries}\n` +
+        `└ Agents: ${av.agents.length === 0 ? '(all)' : av.agents.join(', ')}`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply('No active session — /session new <agent> <label> [path]');
+      return;
+    }
+    const projPath = projectPathOf(cur, store, process.cwd());
+    const command = config.auto_verify.command;
+    await ctx.reply(`🔍 Running: \`${command}\`…`, { parse_mode: 'Markdown' });
+    const result = await runVerifyCommand(command, projPath);
+    if (result.passed) {
+      await ctx.reply(`✅ Verify passed.`);
+    } else {
+      const output = (result.stdout + '\n' + result.stderr).trim();
+      const truncated = output.length > 2000 ? '…' + output.slice(-2000) : output;
+      await ctx.reply(
+        `❌ Verify failed (exit ${result.exitCode}):\n\`\`\`\n${truncated}\n\`\`\``,
+        { parse_mode: 'Markdown' },
+      );
+    }
+  });
+
+  // ---- v1.2 D4: /template command ----
+  bot.command('template', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const args = (ctx.match ?? '').trim().split(/\s+/);
+    const sub = args[0] ?? '';
+    const name = args.slice(1).join(' ').trim();
+
+    if (sub === 'save') {
+      if (!name) { await ctx.reply('Usage: /template save <name>'); return; }
+      const cur = activeSession(ctx, store);
+      if (!cur) { await ctx.reply('❌ Không có active session.'); return; }
+      const lastPrompt = cur.last_message ?? '';
+      store.saveTemplate(chatId, name, cur.agent, lastPrompt, cur.project_id);
+      await ctx.reply(`✅ Template "${name}" saved (agent=${cur.agent}).`);
+      return;
+    }
+
+    if (sub === 'list') {
+      const templates = store.listTemplates(chatId);
+      if (templates.length === 0) { await ctx.reply('📋 Chưa có template nào. Dùng /template save <name>'); return; }
+      let msg = '📋 Templates:\n';
+      for (const t of templates) {
+        msg += `• ${t.name} — ${t.agent} — "${t.prompt.slice(0, 50)}${t.prompt.length > 50 ? '…' : ''}"\n`;
+      }
+      await ctx.reply(msg);
+      return;
+    }
+
+    if (sub === 'run') {
+      if (!name) { await ctx.reply('Usage: /template run <name>'); return; }
+      const tpl = store.getTemplate(chatId, name);
+      if (!tpl) { await ctx.reply(`❌ Template "${name}" không tìm thấy.`); return; }
+      // Create a new session from template
+      const label = `${name}-${Date.now() % 100000}`;
+      const sessionId = randomUUID();
+      store.createSession({
+        id: sessionId,
+        label,
+        agent: tpl.agent as import('../../agents/types.js').AgentKind,
+        project_id: tpl.project_id,
+        chat_id: chatId,
+        sdk_session_id: null,
+        status: 'idle',
+      });
+      store.setActiveSession(chatId, sessionId);
+      await ctx.reply(`📍 [${label}] created from template "${name}" (agent=${tpl.agent})`);
+      // Dispatch the saved prompt
+      if (tpl.prompt) {
+        await dispatchPromptToActiveSession(ctx, tpl.prompt);
+      }
+      return;
+    }
+
+    if (sub === 'delete') {
+      if (!name) { await ctx.reply('Usage: /template delete <name>'); return; }
+      const deleted = store.deleteTemplate(chatId, name);
+      await ctx.reply(deleted ? `🗑 Template "${name}" deleted.` : `❌ Template "${name}" không tìm thấy.`);
+      return;
+    }
+
+    await ctx.reply(
+      '📋 /template commands:\n' +
+      '• /template save <name> — lưu session hiện tại\n' +
+      '• /template list — liệt kê templates\n' +
+      '• /template run <name> — tạo session mới từ template\n' +
+      '• /template delete <name> — xóa template',
+    );
+  });
+
+  // ---- /schedule (v1.2 D5) ----
+  bot.command('schedule', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const raw = (ctx.match ?? '').trim();
+    const args = raw.split(/\s+/);
+    const sub = args[0] ?? '';
+
+    if (sub === 'add') {
+      // /schedule add <name> <min> <hour> <dom> <mon> <dow> <prompt...>
+      if (args.length < 8) {
+        await ctx.reply('Usage: /schedule add <name> <min> <hour> <dom> <mon> <dow> <prompt>');
+        return;
+      }
+      const name = args[1]!;
+      const cron = args.slice(2, 7).join(' ');
+      const prompt = args.slice(7).join(' ');
+      // Use active session's agent or default to claude
+      const cur = activeSession(ctx, store);
+      const agent = cur?.agent ?? 'claude';
+      const projectId = cur?.project_id ?? null;
+      try {
+        store.createSchedule(chatId, name, cron, agent, prompt, projectId);
+      } catch (err: any) {
+        if (String(err).includes('UNIQUE')) {
+          await ctx.reply(`❌ Schedule "${name}" đã tồn tại. Xóa trước rồi tạo lại.`);
+          return;
+        }
+        throw err;
+      }
+      await ctx.reply(`✅ Schedule "${name}" created\n⏰ ${cron} · ${agent}\n📝 ${prompt}`);
+      return;
+    }
+
+    if (sub === 'list') {
+      const schedules = store.listSchedules(chatId);
+      if (schedules.length === 0) { await ctx.reply('📋 Chưa có schedule nào. Dùng /schedule add <name> ...'); return; }
+      let msg = '📋 Schedules:\n';
+      for (const s of schedules) {
+        const status = s.enabled ? '✅' : '⏸';
+        msg += `${status} ${s.name} — ${s.cron} — ${s.agent} — "${s.prompt.slice(0, 40)}${s.prompt.length > 40 ? '…' : ''}"\n`;
+      }
+      await ctx.reply(msg);
+      return;
+    }
+
+    if (sub === 'delete') {
+      const name = args[1] ?? '';
+      if (!name) { await ctx.reply('Usage: /schedule delete <name>'); return; }
+      const deleted = store.deleteSchedule(chatId, name);
+      await ctx.reply(deleted ? `🗑 Schedule "${name}" deleted.` : `❌ Schedule "${name}" không tìm thấy.`);
+      return;
+    }
+
+    if (sub === 'enable') {
+      const name = args[1] ?? '';
+      if (!name) { await ctx.reply('Usage: /schedule enable <name>'); return; }
+      store.toggleSchedule(chatId, name, true);
+      await ctx.reply(`✅ Schedule "${name}" enabled.`);
+      return;
+    }
+
+    if (sub === 'disable') {
+      const name = args[1] ?? '';
+      if (!name) { await ctx.reply('Usage: /schedule disable <name>'); return; }
+      store.toggleSchedule(chatId, name, false);
+      await ctx.reply(`⏸ Schedule "${name}" disabled.`);
+      return;
+    }
+
+    await ctx.reply(
+      '⏰ /schedule commands:\n' +
+      '• /schedule add <name> <cron 5-field> <prompt>\n' +
+      '• /schedule list — liệt kê schedules\n' +
+      '• /schedule enable <name>\n' +
+      '• /schedule disable <name>\n' +
+      '• /schedule delete <name>\n\n' +
+      'Ví dụ: /schedule add daily-test 0 9 * * * pnpm test',
+    );
+  });
+
+  // ---- v1.2 D10: /chain command — multi-agent pipeline ----
+  bot.command('chain', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const arg = (ctx.match ?? '').trim();
+
+    if (!arg) {
+      await ctx.reply(
+        '⛓️ /chain — multi-agent pipeline\n\n' +
+        'Syntax: /chain agent1: prompt1 | agent2: prompt2\n' +
+        'Token `{{prev}}` = output bước trước.\n\n' +
+        'Ví dụ:\n' +
+        '/chain claude: viết unit test cho auth.ts | kiro: review code {{prev}} và suggest fixes\n\n' +
+        'Max 5 steps, phân cách bằng |.',
+      );
+      return;
+    }
+
+    const { parseChain, injectPreviousOutput, validateChainAgents } = await import('../chain.js');
+    const defaultAgent = config.defaults.agent;
+    const parsed = parseChain(arg, defaultAgent);
+    if ('error' in parsed) {
+      await ctx.reply(`❌ ${parsed.error}`);
+      return;
+    }
+
+    const agentError = validateChainAgents(parsed, deps.registry.kinds());
+    if (agentError) {
+      await ctx.reply(`❌ ${agentError}`);
+      return;
+    }
+
+    // Resolve project cwd
+    const cur = activeSession(ctx, store);
+    const projPath = cur
+      ? projectPathOf(cur, store, process.cwd())
+      : process.cwd();
+
+    const total = parsed.length;
+    await ctx.reply(`⛓️ Starting chain (${total} steps)…`);
+
+    let prevOutput = '';
+    let lastSessionId: string | null = null;
+    const createdSessionIds: string[] = [];
+
+    for (let i = 0; i < parsed.length; i++) {
+      const step = parsed[i]!;
+      const stepLabel = `chain-${i + 1}-${Date.now() % 100000}`;
+
+      // Create session for this step
+      const session = manager.createSession({
+        chatId,
+        agent: step.agent,
+        label: stepLabel,
+        projectId: cur?.project_id ?? null,
+      });
+      createdSessionIds.push(session.id);
+
+      // Build prompt with previous output injection
+      const prompt = i === 0
+        ? step.prompt
+        : injectPreviousOutput(step.prompt, prevOutput);
+
+      // Dispatch and collect output
+      const textChunks: string[] = [];
+      await new Promise<void>((resolve, reject) => {
+        void manager
+          .dispatch({
+            sessionId: session.id,
+            sessionLabel: stepLabel,
+            chatId,
+            cwd: projPath,
+            agent: step.agent,
+            resumeId: null,
+            prompt,
+            onEvent: (e) => {
+              if (e.type === 'text') {
+                textChunks.push(e.text);
+              } else if (e.type === 'done') {
+                resolve();
+              } else if (e.type === 'error') {
+                reject(new Error(e.error));
+              }
+            },
+          })
+          .catch(reject);
+      });
+
+      prevOutput = textChunks.join('');
+      lastSessionId = session.id;
+      await ctx.reply(`⛓️ Step ${i + 1}/${total} (${step.agent}) complete`);
+    }
+
+    // Send final output
+    const notifier = notifierFor(chatId);
+    const finalOutput = prevOutput.trim();
+    if (finalOutput) {
+      await notifier.sendChunked(`⛓️ Chain result:\n\n${finalOutput}`, { silent: false });
+    } else {
+      await ctx.reply('⛓️ Chain complete (no text output).');
+    }
+
+    // Close intermediate sessions, keep last one active
+    for (const id of createdSessionIds) {
+      if (id !== lastSessionId) {
+        store.updateSession(id, { status: 'closed' });
+      }
+    }
+    if (lastSessionId) {
+      store.setActiveSession(chatId, lastSessionId);
+    }
+  });
+
   // ---- shared dispatcher for plain text + attachment captions ----
+  // v1.2 D7 — track sessions that already received pinned context injection.
+  const pinnedContextInjected = new Set<string>();
+
   // v1.2 Feature 2/3 — extracted from `bot.on('message:text', ...)` so the
   // new photo + document handlers can reuse the entire onEvent pipeline
   // (verbosity routing, suggestion deferral, auto-summarize, etc.) by simply
@@ -1197,6 +1769,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         `📥 [${cur.label}] inject handoff context (${cur.handoff_context.length} chars) vào prompt — sẽ chỉ chạy 1 lần.`,
         { disable_notification: true },
       );
+    }
+
+    // v1.2 D7 — pinned context injection (once per session)
+    if (!pinnedContextInjected.has(cur.id)) {
+      const pinned = loadPinnedContext(projPath);
+      if (pinned) {
+        effectivePrompt =
+          `[Pinned project context]\n${pinned}\n\n${effectivePrompt}`;
+        pinnedContextInjected.add(cur.id);
+      }
     }
 
     store.appendTranscript(cur.id, `> ${text.slice(0, 200)}`);
@@ -1328,6 +1910,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         agent: cur.agent,
         resumeId: cur.sdk_session_id,
         prompt: effectivePrompt,
+        model: cur.model,
         onEvent: (e) => {
           // Re-read on every event — active session can change during dispatch.
           const activeId = store.getChatState(chatId).active_session_id;
@@ -1860,6 +2443,43 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
               }
               await notifier.closeStream(streamKey);
 
+              // v1.2 D11 — auto-verify helper (shared across all done exit paths)
+              const triggerAutoVerify = async (): Promise<void> => {
+                if (!config.auto_verify?.enabled) return;
+                const avOpts = {
+                  command: config.auto_verify.command,
+                  maxRetries: config.auto_verify.max_retries,
+                  agents: config.auto_verify.agents,
+                };
+                if (!shouldAutoVerify(avOpts, cur.agent)) return;
+                const retries = verifyRetryCount.get(cur.id) ?? 0;
+                const verifyResult = await runVerifyCommand(avOpts.command, projPath);
+                if (verifyResult.passed) {
+                  verifyRetryCount.delete(cur.id);
+                  await notifier.sendPlain(`${labelPrefix}✅ Auto-verify passed.`);
+                } else if (retries < avOpts.maxRetries) {
+                  verifyRetryCount.set(cur.id, retries + 1);
+                  const retryPrompt = buildRetryPrompt(
+                    avOpts.command,
+                    verifyResult,
+                    retries + 1,
+                    avOpts.maxRetries,
+                  );
+                  await notifier.sendPlain(
+                    `${labelPrefix}❌ Auto-verify failed (attempt ${retries + 1}/${avOpts.maxRetries}). Retrying…`,
+                  );
+                  void dispatchPromptToActiveSession(
+                    { chat: { id: chatId }, reply: async () => {} } as any,
+                    retryPrompt,
+                  );
+                } else {
+                  verifyRetryCount.delete(cur.id);
+                  await notifier.sendPlain(
+                    `${labelPrefix}❌ Auto-verify failed after ${avOpts.maxRetries} attempts.`,
+                  );
+                }
+              };
+
               // Phase D.4 — auto done-summary.
               //
               // v1.3 (spec done-summary-all-modes §D1/R1): fire in ALL four
@@ -1941,6 +2561,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 if (baselineMsgId != null && doneKb) {
                   await notifier.editReplyMarkup(baselineMsgId, doneKb);
                 }
+                await triggerAutoVerify();
                 return;
               }
 
@@ -1972,6 +2593,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                   const recap = `${labelPrefix}${enhancedTail}\n${lastLine.slice(0, 280)}`;
                   await notifier.editPlainChunked(doneMsgId, recap);
                 }
+                await triggerAutoVerify();
                 return;
               }
 
@@ -1983,6 +2605,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 turnText.trim() || freshSession?.transcript_tail || doneResultText || '';
               if (summarizePromptContent.length === 0) {
                 // Nothing to summarize — leave the baseline tail in place.
+                await triggerAutoVerify();
                 return;
               }
 
@@ -2007,6 +2630,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                     silent: true,
                   });
                 }
+                await triggerAutoVerify();
                 return;
               }
               const enhancedBody = `${labelPrefix}${enhancedTail}\n${summary}`;
@@ -2014,9 +2638,23 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
               // chars) don't get silently `clip()`-ed by `editPlain`. Overflow
               // spills into continuation messages with `↪ (cont. N/M)` header.
               await notifier.editPlainChunked(doneMsgId, enhancedBody);
+
+              await triggerAutoVerify();
             })();
           } else if (e.type === 'session') {
-            // resume id already persisted in adapter
+            // Persist sdk_session_id so subsequent dispatches pass --resume-id.
+            // Claude adapter persists directly via store import; Kiro/Codex/Cursor
+            // adapters emit this event and rely on the handler to persist.
+            store.updateSession(cur.id, { sdk_session_id: e.sdkSessionId });
+          } else if (e.type === 'usage') {
+            const usageData = {
+              inputTokens: e.inputTokens,
+              outputTokens: e.outputTokens,
+              contextWindow: e.contextWindow ?? 0,
+              model: e.model ?? cur.agent,
+            };
+            sessionUsage.set(cur.id, usageData);
+            store.setSessionUsage(cur.id, usageData);
           }
         },
       })
@@ -2146,6 +2784,64 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const caption = ctx.message.caption ?? null;
     const prompt = buildPromptWithAttachment(caption, result);
     await dispatchPromptToActiveSession(ctx, prompt);
+  });
+
+  // ---- voice / audio → transcribe → dispatch ----
+  // v1.2 D8 — Voice-to-Prompt via OpenAI Whisper API.
+  const handleVoiceOrAudio = async (ctx: any, fileId: string): Promise<void> => {
+    const chatId = ctx.chat!.id;
+    const cur = activeSession(ctx, store);
+    if (!cur) {
+      await ctx.reply('🎵 Nhận được voice nhưng không có active session — /new rồi gửi lại.');
+      return;
+    }
+    const apiKey = config.voice.openai_api_key || process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      await ctx.reply('🎵 Voice-to-prompt chưa được cấu hình. Thêm OPENAI_API_KEY vào .env.');
+      return;
+    }
+    // Download voice file to temp
+    const file = await bot.api.getFile(fileId);
+    const filePath = file.file_path;
+    if (!filePath) {
+      await ctx.reply('🎵 Không lấy được file path từ Telegram.');
+      return;
+    }
+    const fileUrl = `https://api.telegram.org/file/bot${bot.token}/${filePath}`;
+    const tmpPath = path.join(os.tmpdir(), `telecode-voice-${Date.now()}.ogg`);
+    try {
+      const resp = await fetch(fileUrl);
+      if (!resp.ok) {
+        await ctx.reply(`🎵 Download voice thất bại (${resp.status}).`);
+        return;
+      }
+      const { writeFile, unlink } = await import('node:fs/promises');
+      const buf = Buffer.from(await resp.arrayBuffer());
+      await writeFile(tmpPath, buf);
+
+      const { transcribeAudio } = await import('../voice-handler.js');
+      const result = await transcribeAudio(tmpPath, { apiKey, model: config.voice.model });
+      await unlink(tmpPath).catch(() => {});
+
+      if ('error' in result) {
+        await ctx.reply(result.error);
+        return;
+      }
+      const preview = result.text.length > 50 ? result.text.slice(0, 50) + '…' : result.text;
+      await ctx.reply(`🎵 "${preview}"`);
+      await dispatchPromptToActiveSession(ctx, result.text);
+    } catch (err) {
+      await import('node:fs/promises').then((fs) => fs.unlink(tmpPath).catch(() => {}));
+      logger.warn({ err: String(err) }, 'voice handler error');
+      await ctx.reply(`🎵 Lỗi xử lý voice: ${String(err).slice(0, 200)}`);
+    }
+  };
+
+  bot.on('message:voice', async (ctx) => {
+    await handleVoiceOrAudio(ctx, ctx.message.voice.file_id);
+  });
+  bot.on('message:audio', async (ctx) => {
+    await handleVoiceOrAudio(ctx, ctx.message.audio.file_id);
   });
 }
 

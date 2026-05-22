@@ -21,6 +21,26 @@ export const COMMANDS: readonly BotCommand[] = [
   // Phase B (v1.1) — verbosity controls. /mode = per-session, /settings = chat-level.
   { command: 'mode', description: 'Đổi verbosity mode của session active' },
   { command: 'settings', description: 'Chat-level defaults (mode mặc định …)' },
+  { command: 'cost', description: 'Xem chi phí API (today / 7d / 30d)' },
+  { command: 'template', description: 'Lưu / chạy session template' },
+  // Per-session model override
+  { command: 'model', description: 'Xem/đổi model AI của session' },
+  // v1.2 D2 — quiet hours
+  { command: 'notify', description: 'Quiet hours — tắt notification ban đêm' },
+  // v1.2 D5 — scheduled tasks
+  { command: 'schedule', description: 'Lên lịch task tự động (cron)' },
+  // v1.2 D6 — session search & history
+  { command: 'history', description: 'Tìm kiếm session cũ' },
+  // v1.2 D7 — pinned context
+  { command: 'context', description: 'Xem/sửa pinned context (.telecode/context.md)' },
+  // v1.2 D10 — agent chain
+  { command: 'chain', description: 'Chạy multi-agent pipeline' },
+  // v1.2 D11 — auto-verify
+  { command: 'verify', description: 'Chạy verify command thủ công' },
+  // v1.2 D8 — voice-to-prompt
+  { command: 'timeline', description: 'Xem timeline của session (web)' },
+  // v1.2 D1 — outbound file sharing
+  { command: 'send', description: 'Gửi file từ project về Telegram' },
   { command: 'stop', description: 'Dừng task đang chạy' },
   { command: 'screenshot', description: 'Chụp desktop Mac' },
   { command: 'help', description: 'Hướng dẫn nhanh' },
