@@ -316,10 +316,11 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
     expect(out).not.toMatch(/\n\s+\d+\./);
   });
 
-  it('caps body at 3000 chars to stay under Telegram per-message limit (v1.2 Bug 5)', () => {
-    // Build a pathologically long ask: 4 questions × 4 options × full-length
-    // (300-char) descriptions → well over the 3000-char body cap so the
-    // truncation path is actually exercised.
+  it('renders a large multi-question ask in full (v1.3 — chunking moved to send path)', () => {
+    // v1.3: the dispatch path sends AskUserQuestion via `sendChunked` (splits
+    // across Telegram messages), so the renderer no longer clips to fit a
+    // single message. A 4×4 ask with full 300-char descriptions (~5000+ chars,
+    // well over the OLD 3000 body cap) must now render WITHOUT truncation.
     const longLabel = 'x'.repeat(80);
     const longDesc = 'd'.repeat(300);
     const bigQuestion = {
@@ -330,8 +331,24 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
     const input = { questions: Array.from({ length: 4 }, () => ({ ...bigQuestion })) };
     const out = renderToolUse('AskUserQuestion', input);
     const bodyPart = out.replace(/^AskUserQuestion · /, '');
-    expect(bodyPart.length).toBeLessThanOrEqual(3000);
-    // And it WAS truncated (ellipsis present) — proving the cap engaged.
+    // Proves the old 3000-char cap is gone.
+    expect(bodyPart.length).toBeGreaterThan(3000);
+    // Full content, no truncation marker, and the description survives intact.
+    expect(out).not.toContain('…');
+    expect(out).toContain(longDesc);
+    // Safety-net cap (16000) is far above any realistic ask.
+    expect(bodyPart.length).toBeLessThanOrEqual(16000);
+  });
+
+  it('engages the pathological safety-net cap only above 16000 chars', () => {
+    // A single absurd description longer than the 16000-char safety net still
+    // gets a trailing "…" so we never hand Telegram an unbounded blob.
+    const absurd = 'q'.repeat(20000);
+    const out = renderToolUse('AskUserQuestion', {
+      questions: [{ header: 'h', question: 'q?', options: [{ label: 'Opt', description: absurd }] }],
+    });
+    const bodyPart = out.replace(/^AskUserQuestion · /, '');
+    expect(bodyPart.length).toBeLessThanOrEqual(16000);
     expect(bodyPart.endsWith('…')).toBe(true);
   });
 
@@ -366,20 +383,21 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
     expect(out).toContain('A reasonably detailed explanation of what option one does and why.');
   });
 
-  it('truncates each option label to 100 chars (v1.2 Bug 5 relaxed cap)', () => {
-    const huge = 'y'.repeat(150);
-    const out = renderToolUse('AskUserQuestion', {
-      questions: [
-        {
-          header: 'h',
-          question: 'q?',
-          options: [{ label: huge }],
-        },
-      ],
+  it('renders option labels in full up to 200 chars (v1.3 relaxed cap)', () => {
+    // A 150-char label is realistic and must survive intact under the new cap.
+    const label150 = 'y'.repeat(150);
+    const ok = renderToolUse('AskUserQuestion', {
+      questions: [{ header: 'h', question: 'q?', options: [{ label: label150 }] }],
     });
-    // 100-char cap + ellipsis — verify no full 150-char label survived.
-    expect(out).not.toContain(huge);
-    expect(out).toMatch(/y+…/);
+    expect(ok).toContain(label150);
+    expect(ok).not.toContain('…');
+    // Only a pathological >200-char label gets capped.
+    const label250 = 'y'.repeat(250);
+    const capped = renderToolUse('AskUserQuestion', {
+      questions: [{ header: 'h', question: 'q?', options: [{ label: label250 }] }],
+    });
+    expect(capped).not.toContain(label250);
+    expect(capped).toMatch(/y+…/);
   });
 
   it('appends option descriptions (truncated) when present', () => {
@@ -401,19 +419,21 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
     expect(out).toContain('MongoDB — Document store, flexible schema');
   });
 
-  it('truncates very long descriptions to 300 chars (v1.2 Bug 5 relaxed cap)', () => {
-    const longDesc = 'z'.repeat(400);
-    const out = renderToolUse('AskUserQuestion', {
-      questions: [
-        {
-          header: 'h',
-          question: 'q?',
-          options: [{ label: 'Opt', description: longDesc }],
-        },
-      ],
+  it('renders descriptions in full up to 2000 chars (v1.3 relaxed cap)', () => {
+    // A 400-char description is realistic and must render intact now.
+    const desc400 = 'z'.repeat(400);
+    const ok = renderToolUse('AskUserQuestion', {
+      questions: [{ header: 'h', question: 'q?', options: [{ label: 'Opt', description: desc400 }] }],
     });
-    expect(out).not.toContain(longDesc);
-    expect(out).toMatch(/z+…/);
+    expect(ok).toContain(desc400);
+    expect(ok).not.toContain('…');
+    // Only a pathological >2000-char description gets capped.
+    const desc2500 = 'z'.repeat(2500);
+    const capped = renderToolUse('AskUserQuestion', {
+      questions: [{ header: 'h', question: 'q?', options: [{ label: 'Opt', description: desc2500 }] }],
+    });
+    expect(capped).not.toContain(desc2500);
+    expect(capped).toMatch(/z+…/);
   });
 
   it('omits description tail when field is missing or empty', () => {

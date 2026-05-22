@@ -14,7 +14,7 @@ import { toolCollapseMgr, progressMgr } from '../runtime-state.js';
 import { renderStatusEvent, type AgentEventStatus } from '../progress.js';
 import { diffCache } from '../diff-cache.js';
 import { summaryCache } from '../summary-cache.js';
-import { maybeWrapCodeBlock, detectCodeBlock } from '../code-fence.js';
+import { detectCodeBlock, wrapCodeBlockChunked } from '../code-fence.js';
 import { escapeMd } from '../markdown.js';
 import { summarizeWithSession, discardSummarizeMutex } from '../../agents/summarize.js';
 import type { TelecodeConfig } from '../../config.js';
@@ -1385,20 +1385,28 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
               // flow through `appendStream` so debounce + edit-rotation
               // still apply to ongoing narration.
               //
-              // The detection itself never throws; `maybeWrapCodeBlock`
-              // returns the original text on miss. We trust the heuristic
-              // but still hard-fallback to plain text inside the notifier
-              // if Telegram rejects the MarkdownV2 envelope.
+              // The detection itself never throws; on a miss `detectCodeBlock`
+              // returns null and we fall through to plain streaming. On a hit
+              // `wrapCodeBlockChunked` returns ≥1 independently-valid fenced
+              // chunks. We trust the heuristic but still hard-fallback to plain
+              // text inside the notifier if Telegram rejects the MarkdownV2
+              // envelope.
               const detection = detectCodeBlock(e.text);
               if (detection) {
-                const wrapped = maybeWrapCodeBlock(e.text);
-                const composed = labelPrefix
-                  ? escapeMd(labelPrefix) + '\n' + wrapped
-                  : wrapped;
+                // v1.3 Bug fix — chunk long code blocks instead of clipping at
+                // 3500. Each chunk is an independently-valid fenced block; the
+                // label prefix rides only on the first message.
+                const wrappedChunks = wrapCodeBlockChunked(e.text, detection.lang);
                 // Drain any pending stream first so chunk order stays right.
                 void (async () => {
                   await notifier.closeStream(streamKey);
-                  await notifier.sendMarkdownV2(composed, { silent: true });
+                  for (let ci = 0; ci < wrappedChunks.length; ci++) {
+                    const composed =
+                      ci === 0 && labelPrefix
+                        ? escapeMd(labelPrefix) + '\n' + wrappedChunks[ci]
+                        : wrappedChunks[ci]!;
+                    await notifier.sendMarkdownV2(composed, { silent: true });
+                  }
                 })();
               } else {
                 notifier.appendStream(streamKey, e.text, {
@@ -1430,7 +1438,17 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             // collapse logic for buffered events since the user won't see
             // them streamed; the catch-up will render them sequentially).
             const fallbackLine = `🔧 ${scrubbedFriendly}`;
-            if (isActive) {
+            if (isActive && e.tool === 'AskUserQuestion') {
+              // v1.3 Bug fix — AskUserQuestion must arrive in full. It is the
+              // ONE tool_use the user has to read end-to-end to answer it, and
+              // it is never part of a same-tool burst. Bypass the collapse
+              // manager (which would funnel it through `sendPlain` → clip at
+              // 3500, mangling long multi-question asks) and send the full
+              // render via `sendChunked` so it spans multiple Telegram messages
+              // when needed. No diff button / pending-merge applies here.
+              const askText = `${labelPrefix}${fallbackLine}`;
+              void notifier.sendChunked(askText, { silent: true });
+            } else if (isActive) {
               const filePath = extractFilePath(e.input);
               const friendlyTool = friendlyToolLabel(e.tool);
               const item = extractToolItem(scrubbedFriendly, friendlyTool);

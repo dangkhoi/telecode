@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spec — Long-message chunking + AskUserQuestion render fix</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 72px 32px 120px; }
+  header.hero { margin-bottom: 48px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 40px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 20px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 64px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 28px; font-size: 16px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 36px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 26px 0 10px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 22px 26px; margin: 28px 0 40px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; margin: 22px 0; box-shadow: var(--shadow); }
+  .card h3, .card h4 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.danger { border-color: rgba(200,16,46,0.3); background: var(--danger-soft); }
+  .card.success { border-color: rgba(28,124,84,0.3); background: var(--success-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 8px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 56px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.55; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .compare .col h5 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after { border-left: 3px solid var(--success); }
+  @media (max-width: 720px) {
+    .wrap { padding: 44px 18px 72px; }
+    h1 { font-size: 30px; } .lede { font-size: 17px; } h2 { font-size: 22px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Spec · Telecode v1.3</div>
+  <h1>Long-message chunking + AskUserQuestion render fix</h1>
+  <p class="lede">Response dài (truyện, summary, code output) bị cắt cụt im lặng ở 3500 ký tự; AskUserQuestion bị truncate trong từng câu hỏi nên đọc không hiểu. Sửa để mọi nội dung dài được chia nhiều tin nhắn thay vì <code>clip()</code>.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Slug</strong> · telegram-message-chunking-fix</span>
+    <span class="pill"><strong>Author</strong> · vendor.01@frt.vn</span>
+    <span class="pill"><strong>Date</strong> · 2026-05-22</span>
+    <span class="pill"><strong>Effort</strong> · ~nửa ngày</span>
+    <span class="pill"><strong>Status</strong> · Implemented · in senior review</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p><strong>Bug 1 — Response dài bị cắt.</strong> Streaming <code>flush()</code> trong <code>notifier.ts</code> tích toàn bộ text vào <code>s.buffer</code> nhưng <code>clip(composed)</code> chỉ giữ 3500 ký tự đầu. Khi rotate, buffer KHÔNG bị trim → mỗi flush vẫn re-clip đúng 3500 ký tự đầu → phần &gt;3500 mất vĩnh viễn. Fix: rotate thật — commit chunk đầy rồi mang phần dư sang message mới (live-edit tiếp), không clip.</p>
+  <p><strong>Bug 2 — AskUserQuestion cụt.</strong> <code>renderAskUserQuestion()</code> hard-truncate desc=300/body=3000 + "…", rồi gửi qua <code>sendPlain()</code> → <code>clip()</code> lần 2 ở 3500. Fix: render đầy đủ + gửi AskUserQuestion qua <code>sendChunked()</code> (bypass burst-collapse).</p>
+  <p><strong>Tận dụng hạ tầng sẵn có</strong>: <code>splitForTelegram()</code> + <code>sendChunked()</code> đã tồn tại và đúng. Bug là các đường gửi chính không gọi chúng. Không thêm dependency mới.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Changelog</h2>
+<table>
+  <thead><tr><th>Date</th><th>Section</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05-22</td><td>All</td><td>Spec khởi tạo từ chẩn đoán 2 bug user report (response dài + AskUserQuestion cụt).</td></tr>
+    <tr><td>2026-05-22</td><td>Requirements</td><td>User approved. Implement T1–T5: typecheck OK, 772 test pass (+8 mới).</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Context</h2>
+<p>Telecode bridge Telegram ↔ Claude Code. Telegram giới hạn <strong>4096 ký tự / tin nhắn</strong>. Project đã đặt <code>MAX_MSG_CHARS = 3500</code> (chừa headroom). Hạ tầng chunking đã có nhưng chỉ được dùng ở vài call-site (diff, catch-up, session-switch preview), KHÔNG dùng ở đường gửi chính.</p>
+
+<h4>Điểm phát hiện (file · dòng)</h4>
+<table>
+  <thead><tr><th>File</th><th>Symbol</th><th>Vấn đề</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/bot/notifier.ts</code></td><td><code>flush()</code> (≈207–249)</td><td>Streaming: <code>clip(composed)</code> cắt 3500; buffer không trim sau rotate → mất phần dư. <strong>Căn nguyên chính của bug 1.</strong></td></tr>
+    <tr><td><code>src/bot/notifier.ts</code></td><td><code>sendPlain()</code> / <code>sendMarkdownV2()</code></td><td>Chỉ <code>clip()</code>, không chunk.</td></tr>
+    <tr><td><code>src/bot/tool-render.ts</code></td><td><code>renderAskUserQuestion()</code> (≈381–431)</td><td>Hard-truncate desc=300/body=3000 + "…". <strong>Căn nguyên bug 2 (a).</strong></td></tr>
+    <tr><td><code>src/bot/commands/index.ts</code></td><td>tool_use dispatch (≈1526)</td><td>AskUserQuestion gửi qua <code>sendPlain()</code> → clip lần 2. <strong>Căn nguyên bug 2 (b).</strong></td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Requirements</h2>
+<p><span class="badge badge-accent">Approval gate 1</span></p>
+<ul class="checklist">
+  <li class="todo"><strong>R1</strong>: Response prose dài bất kỳ (vd truyện ~6000 ký tự) phải hiển thị ĐẦY ĐỦ, chia nhiều tin nhắn, không mất ký tự nào.</li>
+  <li class="todo"><strong>R2</strong>: Streaming live-edit UX vẫn giữ — không phá debounce/rotation; tin cuối vẫn edit-in-place mượt.</li>
+  <li class="todo"><strong>R3</strong>: AskUserQuestion render đầy đủ từng câu hỏi + từng option label + description, không cắt mid-word, không drop câu hỏi sau.</li>
+  <li class="todo"><strong>R4</strong>: AskUserQuestion dài &gt;3500 ký tự vẫn tới đủ (nhiều tin nhắn nếu cần).</li>
+  <li class="todo"><strong>R5</strong>: Code-block dài (detected) trong response không bị cắt; mỗi chunk vẫn đóng/mở fence hợp lệ.</li>
+  <li class="todo"><strong>R6</strong>: Không regression: diff, catch-up, summary, session-switch (đã chunk) vẫn hoạt động. Toàn bộ test cũ pass.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Design</h2>
+<p><span class="badge badge-muted">Approval gate 2 — sẽ hoàn thiện song song code</span></p>
+
+<h3>D1 — Streaming overflow rotation (notifier <code>flush()</code>)</h3>
+<p>Thay vì <code>clip()</code>, khi <code>composed.length &gt; MAX_MSG_CHARS</code>:</p>
+<ol>
+  <li>Gọi <code>splitForTelegram(composed)</code> → <code>parts[]</code>.</li>
+  <li><strong>Commit</strong> các phần <code>parts[0..n-2]</code> thành tin nhắn hoàn chỉnh: edit <code>messageId</code> hiện tại = <code>parts[0]</code>; gửi <code>parts[1..n-2]</code> bằng <code>sendMessage</code> mới (silent giữ nguyên).</li>
+  <li><strong>Carry</strong> phần cuối <code>parts[n-1]</code>: đặt làm buffer sống mới — <code>s.buffer = parts[n-1]</code>, <code>s.messageId = null</code> (flush kế sẽ tạo tin mới rồi edit-in-place tiếp), reset <code>edits/charsSinceRotate/startedAt</code>.</li>
+  <li><strong>Prefix set-once</strong>: prefix đã nằm trong <code>parts[0]</code>; sau commit đầu tiên set <code>s.prefix = ''</code> để phần carry không bị lặp prefix. Ghi chú JSDoc.</li>
+</ol>
+<p>Hệ quả: live-edit vẫn áp dụng cho phần đuôi đang chạy; phần đã đầy được "đóng băng" thành tin riêng. Không mất ký tự.</p>
+
+<h3>D2 — AskUserQuestion render (tool-render)</h3>
+<ul>
+  <li>Bỏ hard-cut <code>ASK_BODY_MAX</code> (hoặc nâng lên rất cao chỉ như safety-net chống pathological, vd 16000). Giữ sanity cap mềm cho từng field nhưng KHÔNG cắt mid-word phần người dùng cần đọc — ưu tiên render full label + full description.</li>
+  <li>Vì việc chống tràn 4096 chuyển sang tầng gửi (D3), render không cần tự ép 3500 nữa.</li>
+</ul>
+
+<h3>D3 — AskUserQuestion gửi qua sendChunked (commands dispatch)</h3>
+<ul>
+  <li>Khi <code>e.tool === 'AskUserQuestion'</code>: bypass burst-collapse (AskUserQuestion không bao giờ là burst), gửi bằng <code>notifier.sendChunked(formatted, { silent })</code> thay vì <code>sendPlain</code>.</li>
+  <li>pending-tools registration: giữ tương thích — dùng message_id đầu tiên trả về từ <code>sendChunked</code>.</li>
+</ul>
+
+<h3>D4 — sendMarkdownV2 chunk + re-fence (code blocks)</h3>
+<ul>
+  <li>Thêm <code>sendMarkdownV2Chunked()</code>: split theo line-boundary, mỗi chunk re-wrap fence <code>```</code> hợp lệ (đóng cuối chunk N, mở đầu chunk N+1). Path code-block (commands ≈1401) dùng hàm này.</li>
+  <li>Fallback parse-error giữ nguyên: nếu MarkdownV2 fail → plain (đã chunk).</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Tasks</h2>
+<p><span class="badge badge-muted">Approval gate 3 — DAG, hoàn thiện song song code</span></p>
+<table>
+  <thead><tr><th>ID</th><th>Task</th><th>File</th><th>Dep</th></tr></thead>
+  <tbody>
+    <tr><td>T1</td><td>Refactor <code>flush()</code> overflow rotation (D1) + helper carry-remainder</td><td><code>notifier.ts</code></td><td>—</td></tr>
+    <tr><td>T2</td><td>Thêm <code>sendMarkdownV2Chunked()</code> + re-fence helper (D4)</td><td><code>notifier.ts</code></td><td>—</td></tr>
+    <tr><td>T3</td><td>Nới <code>renderAskUserQuestion()</code> render full (D2)</td><td><code>tool-render.ts</code></td><td>—</td></tr>
+    <tr><td>T4</td><td>AskUserQuestion → <code>sendChunked</code> (D3) + code-block → <code>sendMarkdownV2Chunked</code></td><td><code>commands/index.ts</code></td><td>T2,T3</td></tr>
+    <tr><td>T5</td><td>Tests: flush overflow giữ full content; AskUserQuestion full render; markdown chunk re-fence</td><td><code>tests/</code></td><td>T1–T4</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Verification</h2>
+<ul class="checklist">
+  <li class="todo">Unit: <code>flush()</code> với buffer 8000 ký tự → ≥2 sendMessage, nối lại = full (no "…").</li>
+  <li class="todo">Unit: <code>renderAskUserQuestion</code> 3 câu hỏi, mỗi câu 4 option có description dài → output chứa đủ mọi label + description.</li>
+  <li class="todo">Unit: AskUserQuestion dispatch gọi <code>sendChunked</code>, không <code>sendPlain</code>.</li>
+  <li class="todo">Unit: <code>sendMarkdownV2Chunked</code> với code 9000 ký tự → mỗi chunk fence cân bằng.</li>
+  <li class="todo">Regression: <code>npm test</code> toàn bộ pass (21+ tests hiện có).</li>
+  <li class="todo">E2E thủ công: gửi lại yêu cầu "kể truyện 1000 chữ" qua Telegram → nhận đủ nhiều tin nhắn.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Open Questions</h2>
+<ul>
+  <li><strong>Q1</strong>: Tin nhắn tiếp theo có cần header <code>↪ (cont. N/M)</code> như <code>sendChunked</code> không, hay để liền mạch cho prose? (Đề xuất: prose stream KHÔNG header để đọc liền; chỉ <code>sendChunked</code> giữ header.)</li>
+  <li><strong>Q2</strong>: <code>MAX_MSG_CHARS</code> giữ 3500 hay nâng gần 4096? (Đề xuất giữ 3500 — an toàn với prefix.)</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>References</h2>
+<ul>
+  <li><code>src/bot/notifier.ts</code> — <code>flush</code>, <code>sendChunked</code>, <code>splitForTelegram</code>, <code>clip</code></li>
+  <li><code>src/bot/tool-render.ts</code> — <code>renderAskUserQuestion</code></li>
+  <li><code>src/bot/commands/index.ts</code> — tool_use dispatch, code-block path</li>
+  <li>Spec tiền nhiệm: <code>docs/specs/telegram-media-input.html</code> (đặt các ASK_* cap hiện tại)</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Reviewer Log</h2>
+<p class="section-sub">Append-only. Mỗi pass review thêm 1 <code>h3</code>.</p>
+
+<h3>Pass 1 — 2026-05-22</h3>
+<p><strong>Reviewer</strong>: Senior architect (Opus 4.7). <strong>Scope</strong>: T1–T5 / R1–R6, files <code>notifier.ts</code>, <code>code-fence.ts</code>, <code>tool-render.ts</code>, <code>commands/index.ts</code> + 3 test files.</p>
+
+<h4>Scope checklist</h4>
+<table>
+  <thead><tr><th>Item</th><th>Verdict</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>R1 — long prose full, no loss</td><td><span class="badge badge-success">✅</span></td><td><code>flush()</code> overflow rotation peels full chunks + carries tail; test asserts 4000 x's all preserved, no "…".</td></tr>
+    <tr><td>R2 — live-edit UX preserved</td><td><span class="badge badge-success">✅</span></td><td>Tail carries as fresh running message (messageId=null), normal edit-in-place resumes. Debounce/rotation untouched.</td></tr>
+    <tr><td>R3 — AskUserQuestion full render</td><td><span class="badge badge-success">✅</span></td><td>Caps raised (label 200 / desc 2000 / body 16000); tests assert full label + desc survive, no mid-word cut.</td></tr>
+    <tr><td>R4 — long ask spans messages</td><td><span class="badge badge-success">✅</span></td><td>Dispatch sends via <code>sendChunked</code>; new dispatch test asserts sendChunked called, sendPlain NOT.</td></tr>
+    <tr><td>R5 — code-block chunks valid fences</td><td><span class="badge badge-success">✅</span></td><td><code>wrapCodeBlockChunked</code> emits balanced fences; 2 review bugs found + fixed (see below).</td></tr>
+    <tr><td>R6 — no regression</td><td><span class="badge badge-success">✅</span></td><td>775 pass / 2 skipped (was 772) — only additive. Typecheck clean.</td></tr>
+    <tr><td>T1–T5 deliverables</td><td><span class="badge badge-success">✅</span></td><td>All wired (not stubbed) + tested. T2's <code>sendMarkdownV2Chunked</code> was realised as <code>wrapCodeBlockChunked</code> + per-chunk <code>sendMarkdownV2</code> loop in dispatch — equivalent, no API regression.</td></tr>
+  </tbody>
+</table>
+
+<h4>Findings (with fixes applied)</h4>
+<ul>
+  <li><strong>[P1] code-block first-chunk fence chop.</strong> <code>CODE_CHUNK_BUDGET</code> was 3500 — exactly <code>sendMarkdownV2</code>'s internal <code>clip(3500)</code> threshold. The dispatch prepends <code>escapeMd("[label] ")+"\n"</code> to chunk[0], pushing the composed first message to ~3506 chars → <code>clip()</code> chopped the closing <code>```</code> → MarkdownV2 parse error → plain fallback with lost tail + stray "…". <strong>Fix</strong>: <code>CODE_CHUNK_BUDGET = 3500 − 96</code> headroom for the prefix. Regression test added (chunk[0]+long-label ≤ 3500, fence intact).</li>
+  <li><strong>[P2] hard-split worst-case escape overflow.</strong> Single-line hard-split used <code>floor(BUDGET/2)</code> raw chars, ignoring the fence wrapper. An all-backslash/backtick line escaped 2× → 3512-char chunk (> budget, still &lt; 4096 so no Telegram reject). <strong>Fix</strong>: <code>HARD_SLICE = floor((BUDGET − WRAPPER)/2)</code>; verified worst-case chunk ≤ budget. Regression test added (pure-backslash + pure-backtick lines, with/without lang).</li>
+  <li><strong>[P3] inter-chunk newline cosmetics.</strong> <code>splitForTelegram</code> drops the join <code>\n</code> at part boundaries (existing shared-infra contract). In the flush rotation, two paragraphs split across messages lose the boundary newline — invisible across separate Telegram bubbles, matches spec Q1's accepted "seamless prose" answer. Not patched (out of scope; would alter shared infra).</li>
+  <li><strong>[P2 — out of scope, flagged not patched] AskUserQuestion suppressed in summary mode.</strong> <code>shouldEmit()</code> drops <code>tool_use</code> in the default <em>summary</em> mode, so an AskUserQuestion never reaches the new dispatch branch unless the session is in normal/thinking/verbose. This is pre-existing behavior unrelated to truncation; surfacing blocking asks regardless of mode is a separate feature decision. Recommend a follow-up spec.</li>
+  <li><strong>[P3] stale comment.</strong> Dispatch comment referenced removed <code>maybeWrapCodeBlock</code>; updated to describe <code>detectCodeBlock</code>/<code>wrapCodeBlockChunked</code>.</li>
+</ul>
+
+<h4>Concurrency / state-machine</h4>
+<p>The <code>flush()</code> rotation is non-transactional (commit loop runs before <code>s.buffer</code> shrinks; a mid-loop throw bubbles to <code>handleSendError</code> retry which re-runs from the full buffer → possible duplicate head chunk on a transient 429). This is the SAME risk the original <code>clip()</code> code carried and is documented in-code; <code>takeToken()</code> pre-waits the rate limit so mid-loop 429s are rare. Judged <strong>acceptable</strong> for the bug-fix scope. Prefix set-once mutation (<code>s.prefix=''</code> after first commit) verified: no double-emit — subsequent flushes compose from buffer only; re-overflow re-splits with already-blank prefix.</p>
+
+<h4>AskUserQuestion dispatch wiring</h4>
+<p>Bypassing <code>pending.addPending</code> does NOT orphan a tool_result: the matching <code>tool_result</code> hits the existing orphan branch (fresh <code>sendPlain</code> of the ✅/❌ marker) — no keyboard flow exists for AskUserQuestion (answered via free-text reply), so nothing breaks. <code>labelPrefix + fallbackLine</code> = <code>"[label] 🔧 …"</code>, matching the collapse format ordering. Verified.</p>
+
+<h4>Tech freshness</h4>
+<p>No new dependencies. grammY <code>bot.api.editMessageText/sendMessage</code> signatures match existing call-sites (3-arg form). No deprecated APIs introduced.</p>
+
+<p><strong>Test result</strong>: <code>tsc --noEmit</code> clean · <code>vitest run</code> = 775 passed / 2 skipped (65 files). +3 tests added this pass (AskUserQuestion→sendChunked, worst-case escape, prefix-headroom).</p>
+<p><strong>Verdict</strong>: <span class="badge badge-success">APPROVED</span> — 100% of R1–R6 / T1–T5 deliverables implemented, wired, and tested. 2 review bugs ([P1]+[P2]) found and fixed; 1 cross-cutting mode-gating concern flagged for a follow-up spec (out of this spec's truncation scope).</p>
+
+</div>
+</body>
+</html>

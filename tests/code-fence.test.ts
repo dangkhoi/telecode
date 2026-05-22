@@ -11,7 +11,12 @@
  *  - Defensive: empty string, all-whitespace, non-string inputs.
  */
 import { describe, it, expect } from 'vitest';
-import { detectCodeBlock, maybeWrapCodeBlock } from '../src/bot/code-fence.js';
+import {
+  detectCodeBlock,
+  maybeWrapCodeBlock,
+  wrapCodeBlockChunked,
+} from '../src/bot/code-fence.js';
+import { escapeMd } from '../src/bot/markdown.js';
 
 describe('detectCodeBlock — JSON', () => {
   it('detects object-style JSON with quoted key', () => {
@@ -200,5 +205,97 @@ describe('maybeWrapCodeBlock', () => {
   it('passes through non-detected text unchanged', () => {
     const txt = 'Hello, how are you today?';
     expect(maybeWrapCodeBlock(txt)).toBe(txt);
+  });
+});
+
+describe('wrapCodeBlockChunked — v1.3 long code-block fix', () => {
+  // Per-chunk budget reserves headroom below sendMarkdownV2's internal
+  // clip(3500) for the label prefix prepended to chunk[0] (see [P1] fix).
+  const BUDGET = 3500 - 96;
+  // sendMarkdownV2 clip threshold — chunk[0] + label prefix MUST stay under it.
+  const SEND_CLIP = 3500;
+
+  it('returns a single wrapped chunk when it fits', () => {
+    const out = wrapCodeBlockChunked('const x = 1;', 'ts');
+    expect(out).toEqual(['```ts\nconst x = 1;\n```']);
+  });
+
+  it('splits a long multi-line block into multiple valid fenced chunks', () => {
+    // ~9000 chars of code over many lines → must split.
+    const lines = Array.from({ length: 300 }, (_, i) => `line ${i} ${'a'.repeat(20)}`);
+    const raw = lines.join('\n');
+    const chunks = wrapCodeBlockChunked(raw, null);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      // Each chunk is an independently-valid fenced block under the limit.
+      expect(c.length).toBeLessThanOrEqual(BUDGET);
+      expect(c.startsWith('```')).toBe(true);
+      expect(c.endsWith('```')).toBe(true);
+      // Balanced fences: exactly two ``` markers (open + close).
+      expect((c.match(/```/g) ?? []).length).toBe(2);
+    }
+
+    // No content lost: strip fences from every chunk, rejoin, compare lines.
+    const recovered = chunks
+      .map((c) => c.replace(/^```[^\n]*\n/, '').replace(/\n```$/, ''))
+      .join('\n');
+    // Every original line must be present in order.
+    for (const ln of lines) expect(recovered).toContain(ln);
+  });
+
+  it('chunk[0] + label prefix stays under sendMarkdownV2 clip (no fence chop)', () => {
+    // [P1] regression — the dispatch path prepends `escapeMd("[label] ")+"\n"`
+    // to chunk[0] then sends via sendMarkdownV2, which clip()s at 3500. If the
+    // composed first message exceeds 3500 the closing ``` fence gets chopped
+    // and MarkdownV2 parsing breaks. Use a long-ish label to stress headroom.
+    const lines = Array.from({ length: 300 }, (_, i) => `line ${i} ${'a'.repeat(20)}`);
+    const chunks = wrapCodeBlockChunked(lines.join('\n'), 'typescript');
+    const labelPrefix = '[a-very-long-session-label-name] ';
+    const composed0 = escapeMd(labelPrefix) + '\n' + chunks[0];
+    expect(composed0.length).toBeLessThanOrEqual(SEND_CLIP);
+    // Fence still intact after the prefix is glued on.
+    expect(chunks[0]!.endsWith('```')).toBe(true);
+  });
+
+  it('hard-splits a single line longer than the budget', () => {
+    const giant = 'z'.repeat(9000); // no newlines
+    const chunks = wrapCodeBlockChunked(giant, null);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.length).toBeLessThanOrEqual(BUDGET);
+      expect((c.match(/```/g) ?? []).length).toBe(2);
+    }
+    const totalZ = chunks
+      .map((c) => (c.match(/z/g) ?? []).length)
+      .reduce((a, b) => a + b, 0);
+    expect(totalZ).toBe(9000);
+  });
+
+  it('keeps every chunk within budget even for worst-case 2× escape expansion', () => {
+    // Senior-review (Opus 4.7) [P2] regression — a single line of pure
+    // backslashes (or backticks) escapes to 2× its raw length. The hard-split
+    // slice size must reserve room for BOTH the escape doubling AND the fence
+    // wrapper, otherwise a chunk overshoots CODE_CHUNK_BUDGET. With a `lang`
+    // hint present the wrapper is longest, so test both escape chars + a lang.
+    for (const { raw, lang } of [
+      { raw: '\\'.repeat(9000), lang: 'json' },
+      { raw: '`'.repeat(9000), lang: null as string | null },
+      { raw: '\\'.repeat(9000), lang: null as string | null },
+    ]) {
+      const chunks = wrapCodeBlockChunked(raw, lang);
+      expect(chunks.length).toBeGreaterThan(1);
+      for (const c of chunks) {
+        expect(c.length).toBeLessThanOrEqual(BUDGET);
+        // Telegram's hard ceiling is 4096 — never even close to breaching it.
+        expect(c.length).toBeLessThanOrEqual(4096);
+      }
+      // No raw char lost: every escaped char round-trips back.
+      const escapedChar = raw[0] === '\\' ? '\\\\' : '\\`';
+      const totalEscaped = chunks
+        .map((c) => (c.match(new RegExp(escapedChar.replace(/[\\`]/g, '\\$&'), 'g')) ?? []).length)
+        .reduce((a, b) => a + b, 0);
+      expect(totalEscaped).toBe(9000);
+    }
   });
 });

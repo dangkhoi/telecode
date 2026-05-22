@@ -209,9 +209,58 @@ export class Notifier {
     if (!s || s.pending || !s.buffer) return;
     s.pending = true;
     try {
-      const composed = s.prefix ? `${s.prefix}${s.buffer}` : s.buffer;
-      const text = clip(composed);
       const sendOpts = s.silent ? ({ disable_notification: true } as never) : undefined;
+      let composed = s.prefix ? `${s.prefix}${s.buffer}` : s.buffer;
+
+      // Bug fix (P0) — long-response truncation. The previous code did
+      // `clip(composed)`, keeping only the first 3500 chars; since `s.buffer`
+      // is never trimmed, every subsequent flush re-clipped the SAME prefix and
+      // silently dropped everything past the cap (a 6000-char story arrived as
+      // ~3500 chars with a trailing "…"). Fix: when the running text overflows
+      // a single Telegram message, peel the full leading chunks off as
+      // finalized standalone messages, then reduce the live buffer to the final
+      // chunk and fall through to the normal send/edit path so streaming
+      // edit-in-place continues for the tail. No content is lost.
+      //
+      // Ordering note: the committed-chunk loop runs BEFORE we shrink
+      // `s.buffer`. A transient throw inside the loop bubbles to the outer
+      // `handleSendError` retry, which re-runs flush from the full buffer — the
+      // same non-transactional rotation risk the original code carried. We rely
+      // on `takeToken()` pre-waiting the rate limit so mid-loop 429s are rare.
+      if (composed.length > MAX_MSG_CHARS) {
+        const parts = splitForTelegram(composed);
+        const heads = parts.slice(0, -1);
+        for (let i = 0; i < heads.length; i++) {
+          const chunk = heads[i]!;
+          await this.takeToken();
+          if (i === 0 && s.messageId) {
+            // Finalize the in-flight running message as the first full chunk.
+            try {
+              await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, chunk);
+            } catch (err) {
+              const handled = await this.handleEditError(err);
+              if (!handled) {
+                await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+              }
+            }
+          } else {
+            await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+          }
+        }
+        // Carry the final chunk forward as a fresh running message. The prefix
+        // was already emitted inside the first committed chunk, so blank it to
+        // avoid duplicating it on the tail (set-once prefix is intentionally
+        // mutated here — documented exception).
+        s.buffer = parts[parts.length - 1]!;
+        s.prefix = '';
+        s.messageId = null;
+        s.edits = 0;
+        s.charsSinceRotate = 0;
+        s.startedAt = Date.now();
+        composed = s.buffer;
+      }
+
+      const text = composed;
       await this.takeToken();
       const needRotate =
         !s.messageId ||

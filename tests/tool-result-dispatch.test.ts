@@ -55,16 +55,19 @@ function makeBotSpy(): { bot: Bot; getHandler: () => MessageTextHandler } {
 function makeNotifier(): {
   notifier: Notifier;
   sendPlain: ReturnType<typeof vi.fn>;
+  sendChunked: ReturnType<typeof vi.fn>;
   editPlain: ReturnType<typeof vi.fn>;
   editReplyMarkup: ReturnType<typeof vi.fn>;
 } {
   let nextId = 100;
   const sendPlain = vi.fn(async () => nextId++);
+  const sendChunked = vi.fn(async () => [nextId++]);
   const editPlain = vi.fn(async () => {});
   const editReplyMarkup = vi.fn(async () => {});
   const notifier = {
     appendStream: vi.fn(),
     sendPlain,
+    sendChunked,
     closeStream: vi.fn(async () => {}),
     flush: vi.fn(async () => {}),
     send: sendPlain,
@@ -72,7 +75,7 @@ function makeNotifier(): {
     editPlain,
     editReplyMarkup,
   } as unknown as Notifier;
-  return { notifier, sendPlain, editPlain, editReplyMarkup };
+  return { notifier, sendPlain, sendChunked, editPlain, editReplyMarkup };
 }
 
 class FakeRegistry {
@@ -123,6 +126,7 @@ interface Harness {
   store: SessionStore;
   manager: SessionManager;
   sendPlain: ReturnType<typeof vi.fn>;
+  sendChunked: ReturnType<typeof vi.fn>;
   editPlain: ReturnType<typeof vi.fn>;
   editReplyMarkup: ReturnType<typeof vi.fn>;
   a: SessionRow;
@@ -137,7 +141,7 @@ async function setup(): Promise<Harness> {
   const manager = new SessionManager(store, new FakeRegistry(adapter) as never, {
     bufferCapBytes: 5000,
   });
-  const { notifier, sendPlain, editPlain, editReplyMarkup } = makeNotifier();
+  const { notifier, sendPlain, sendChunked, editPlain, editReplyMarkup } = makeNotifier();
   const { bot, getHandler } = makeBotSpy();
 
   const deps: CommandDeps = {
@@ -169,6 +173,7 @@ async function setup(): Promise<Harness> {
 
   // Drain initial "dispatching…" reply that didn't go through notifier.
   sendPlain.mockClear();
+  sendChunked.mockClear();
   editPlain.mockClear();
   editReplyMarkup.mockClear();
 
@@ -176,6 +181,7 @@ async function setup(): Promise<Harness> {
     store,
     manager,
     sendPlain,
+    sendChunked,
     editPlain,
     editReplyMarkup,
     a,
@@ -468,6 +474,51 @@ describe('Phase A.2/A.5 — tool_result dispatch + suggestion deferral', () => {
       expect(lastMergedText).toContain('b.ts');
       expect(lastMergedText).toContain('c.ts');
       expect(lastMergedText).toContain('✅ Read ok');
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  // Senior-review (Opus 4.7) — v1.3 coverage gap. AskUserQuestion must be
+  // dispatched via `sendChunked` (multi-message, no clip) and bypass the
+  // collapse path's `sendPlain` (which would clip a long ask at 3500). This
+  // closes the Verification checklist item "AskUserQuestion dispatch calls
+  // sendChunked, not sendPlain".
+  it('AskUserQuestion tool_use dispatches via sendChunked, NOT sendPlain', async () => {
+    const h = await setup();
+    try {
+      h.ready.emit({
+        type: 'tool_use',
+        tool: 'AskUserQuestion',
+        input: {
+          questions: [
+            {
+              header: 'Auth',
+              question: 'Which auth method?',
+              options: [
+                { label: 'OAuth', description: 'Delegated token flow' },
+                { label: 'API key', description: 'Static shared secret' },
+              ],
+            },
+          ],
+        },
+      });
+      await flush();
+
+      // The full ask goes through sendChunked (spans multiple messages when
+      // long); the collapse path's sendPlain MUST NOT be used here.
+      expect(h.sendChunked).toHaveBeenCalledTimes(1);
+      expect(h.sendPlain).not.toHaveBeenCalled();
+      expect(h.editPlain).not.toHaveBeenCalled();
+
+      const [askText, opts] = h.sendChunked.mock.calls[0]!;
+      // labelPrefix '[A] ' + fallback '🔧 ' ordering matches collapse format.
+      expect(askText as string).toMatch(/^\[A\] 🔧 /);
+      expect(askText as string).toContain('AskUserQuestion');
+      expect(askText as string).toContain('Which auth method?');
+      expect(askText as string).toContain('OAuth');
+      expect(askText as string).toContain('API key');
+      expect((opts as Record<string, unknown>).silent).toBe(true);
     } finally {
       h.cleanup();
     }

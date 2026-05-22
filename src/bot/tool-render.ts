@@ -375,9 +375,16 @@ export function renderToolUse(
  * prefix the dispatch path prepends). Pathologically long asks still get a
  * trailing "…" rather than a hard Telegram rejection.
  */
-const ASK_LABEL_MAX = 100;
-const ASK_DESC_MAX = 300;
-const ASK_BODY_MAX = 3000;
+// v1.3 Bug fix — AskUserQuestion readability. The user MUST read this tool_use
+// in full to answer it. Previous caps (desc 300 / body 3000 + hard "…" cut)
+// truncated long descriptions mid-word and could drop later questions. Now that
+// the dispatch path sends AskUserQuestion via `sendChunked` (splits across
+// Telegram messages instead of clipping), the renderer no longer needs to fit a
+// single 3500-char message — so we render labels + descriptions in full and
+// keep only a generous safety-net cap against pathological abuse.
+const ASK_LABEL_MAX = 200;
+const ASK_DESC_MAX = 2000;
+const ASK_BODY_MAX = 16000;
 function renderAskUserQuestion(o: Record<string, unknown>): string {
   const qsRaw = o.questions;
   if (!Array.isArray(qsRaw) || qsRaw.length === 0) {

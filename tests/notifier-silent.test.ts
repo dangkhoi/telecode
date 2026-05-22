@@ -145,37 +145,35 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
       expect(opts).toEqual({ disable_notification: true });
     });
 
-    it('keeps prefix prepended after message rotation', async () => {
-      // Trigger a rotation by exceeding ROTATE_EDITS (50). Simulate by:
-      //   - First flush sends the initial message (edits=0).
-      //   - We bump edits to 50 by interleaving small flushes (cheap: just
-      //     poke the stream then let it edit, but ROTATE_EDITS=50 makes that
-      //     slow). Easier: force a rotation by exceeding ROTATE_CHARS (3500)
-      //     in a single buffer.
+    it('splits an over-limit buffer into multiple messages without losing content (v1.3)', () => {
+      // v1.3 long-response fix: a buffer larger than MAX_MSG_CHARS (3500) used
+      // to be clip()-ped — everything past 3500 was silently dropped. Now the
+      // overflow is split into a head message (carrying the prefix) plus a tail
+      // message, with NO content lost.
       const big = 'x'.repeat(4000);
       notifier.appendStream('k', big, { prefix: '[A] ', silent: false });
 
-      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 1);
-      await vi.runAllTimersAsync();
+      return (async () => {
+        await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 1);
+        await vi.runAllTimersAsync();
 
-      // First call: send the (clipped) text.
-      expect(api.sendMessage).toHaveBeenCalledTimes(1);
-      const firstText = api.sendMessage.mock.calls[0]![1] as string;
-      expect(firstText.startsWith('[A] ')).toBe(true);
+        // Overflow → ≥2 messages (head + tail), no edit (fresh sends).
+        expect(api.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
 
-      // Append more → since charsSinceRotate already > ROTATE_CHARS, the next
-      // flush should rotate (new sendMessage instead of editMessageText).
-      notifier.appendStream('k', 'tail');
-      await vi.advanceTimersByTimeAsync(DEBOUNCE_MS + 1);
-      await vi.runAllTimersAsync();
+        // Prefix rides on the FIRST message only.
+        const firstText = api.sendMessage.mock.calls[0]![1] as string;
+        expect(firstText.startsWith('[A] ')).toBe(true);
 
-      expect(api.sendMessage).toHaveBeenCalledTimes(2);
-      expect(api.editMessageText).not.toHaveBeenCalled();
-      const secondText = api.sendMessage.mock.calls[1]![1] as string;
-      // Rotation flushes the buffer accumulated since the first send, which
-      // includes leftover from the clipped first chunk + 'tail'. Either way,
-      // the prefix MUST still be at the front.
-      expect(secondText.startsWith('[A] ')).toBe(true);
+        // Every 'x' is preserved across the messages: concatenate all sent
+        // bodies, strip the one-time prefix, and count the x's.
+        const allBodies = api.sendMessage.mock.calls
+          .map((c) => c![1] as string)
+          .join('');
+        const xCount = (allBodies.match(/x/g) ?? []).length;
+        expect(xCount).toBe(4000);
+        // No truncation ellipsis anywhere.
+        expect(allBodies).not.toContain('…');
+      })();
     });
   });
 });
