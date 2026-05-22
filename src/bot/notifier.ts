@@ -1,6 +1,7 @@
 import type { Bot, Context } from 'grammy';
 import { scrubSecrets } from '../util/scrub.js';
 import { logger } from '../util/logger.js';
+import { mdToTelegramV2 } from './md-to-telegram.js';
 
 /**
  * Notifier only touches `bot.api.*` (no context-dependent helpers), so it
@@ -31,13 +32,26 @@ interface Stream {
   startedAt: number;
   pending: boolean;
   flushTimer: NodeJS.Timeout | null;
+  /**
+   * v1.4 (perf-pass §A) — timestamp of the FIRST append since the last flush.
+   * Drives the maxWait cap of the adaptive debounce so a continuously
+   * streaming response still updates roughly every `debounceMs` instead of
+   * only after a quiet gap. `null` when nothing is pending.
+   */
+  firstPendingAt: number | null;
 }
 
 const MAX_MSG_CHARS = 3500;
 const ROTATE_EDITS = 50;
 const ROTATE_CHARS = 3500;
 const ROTATE_MS = 5 * 60_000;
-const DEFAULT_DEBOUNCE_MS = 3000;
+// v1.4 (perf-pass §A) — adaptive streaming flush. `DEFAULT_DEBOUNCE_MS` is now
+// the maxWait CAP (was a flat trailing debounce that, at 3000ms, showed nothing
+// until a 3s pause during continuous output). We flush `QUIET_MS` after the
+// last append (responsive to natural pauses) but never wait longer than
+// `debounceMs` from the first pending append. Config still overrides debounceMs.
+const DEFAULT_DEBOUNCE_MS = 800;
+const QUIET_MS = 250;
 
 interface TokenBucket {
   tokens: number;
@@ -192,24 +206,37 @@ export class Notifier {
         startedAt: Date.now(),
         pending: false,
         flushTimer: null,
+        firstPendingAt: null,
       };
       this.streams.set(key, s);
     }
     // opts on subsequent calls are intentionally ignored — set once.
     s.buffer += safe;
     s.charsSinceRotate += safe.length;
+    // v1.4 (perf-pass §A) — adaptive debounce: flush QUIET_MS after the last
+    // append, but never later than `debounceMs` (maxWait) from the first
+    // pending append, so continuous streams still update periodically.
+    const now = Date.now();
+    if (s.firstPendingAt === null) s.firstPendingAt = now;
     if (s.flushTimer) clearTimeout(s.flushTimer);
+    const remainingMax = Math.max(0, this.debounceMs - (now - s.firstPendingAt));
+    const delay = Math.min(QUIET_MS, remainingMax);
     s.flushTimer = setTimeout(() => {
       void this.flush(key);
-    }, this.debounceMs);
+    }, delay);
   }
 
   async flush(key: string): Promise<void> {
     const s = this.streams.get(key);
     if (!s || s.pending || !s.buffer) return;
     s.pending = true;
+    // v1.4 (perf-pass §A) — pending window closes; next append reopens it.
+    s.firstPendingAt = null;
     try {
       const sendOpts = s.silent ? ({ disable_notification: true } as never) : undefined;
+      const mdOpts = s.silent
+        ? ({ disable_notification: true, parse_mode: 'MarkdownV2' } as never)
+        : ({ parse_mode: 'MarkdownV2' } as never);
       let composed = s.prefix ? `${s.prefix}${s.buffer}` : s.buffer;
 
       // Bug fix (P0) — long-response truncation. The previous code did
@@ -232,19 +259,39 @@ export class Notifier {
         const heads = parts.slice(0, -1);
         for (let i = 0; i < heads.length; i++) {
           const chunk = heads[i]!;
+          const mdChunk = mdToTelegramV2(chunk);
           await this.takeToken();
           if (i === 0 && s.messageId) {
             // Finalize the in-flight running message as the first full chunk.
             try {
-              await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, chunk);
+              await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, mdChunk, mdOpts);
             } catch (err) {
-              const handled = await this.handleEditError(err);
-              if (!handled) {
-                await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+              if (this.isMdParseError(err)) {
+                try {
+                  await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, chunk);
+                } catch (err2) {
+                  const handled = await this.handleEditError(err2);
+                  if (!handled) {
+                    await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+                  }
+                }
+              } else {
+                const handled = await this.handleEditError(err);
+                if (!handled) {
+                  await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+                }
               }
             }
           } else {
-            await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+            try {
+              await this.opts.bot.api.sendMessage(this.opts.chatId, mdChunk, mdOpts);
+            } catch (err) {
+              if (this.isMdParseError(err)) {
+                await this.opts.bot.api.sendMessage(this.opts.chatId, chunk, sendOpts);
+              } else {
+                throw err;
+              }
+            }
           }
         }
         // Carry the final chunk forward as a fresh running message. The prefix
@@ -261,6 +308,7 @@ export class Notifier {
       }
 
       const text = composed;
+      const mdText = mdToTelegramV2(text);
       await this.takeToken();
       const needRotate =
         !s.messageId ||
@@ -269,24 +317,53 @@ export class Notifier {
         Date.now() - s.startedAt >= ROTATE_MS;
 
       if (needRotate || !s.messageId) {
-        const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, text, sendOpts);
-        s.messageId = msg.message_id;
-        s.edits = 0;
-        s.charsSinceRotate = text.length;
-        s.startedAt = Date.now();
-      } else {
         try {
-          await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, text);
-          s.edits++;
+          const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, mdText, mdOpts);
+          s.messageId = msg.message_id;
+          s.edits = 0;
+          s.charsSinceRotate = text.length;
+          s.startedAt = Date.now();
         } catch (err) {
-          // fall back to new message
-          const handled = await this.handleEditError(err);
-          if (!handled) {
+          if (this.isMdParseError(err)) {
             const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, text, sendOpts);
             s.messageId = msg.message_id;
             s.edits = 0;
             s.charsSinceRotate = text.length;
             s.startedAt = Date.now();
+          } else {
+            throw err;
+          }
+        }
+      } else {
+        try {
+          await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, mdText, mdOpts);
+          s.edits++;
+        } catch (err) {
+          if (this.isMdParseError(err)) {
+            // Fallback: edit as plain text
+            try {
+              await this.opts.bot.api.editMessageText(this.opts.chatId, s.messageId, text);
+              s.edits++;
+            } catch (err2) {
+              const handled = await this.handleEditError(err2);
+              if (!handled) {
+                const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, text, sendOpts);
+                s.messageId = msg.message_id;
+                s.edits = 0;
+                s.charsSinceRotate = text.length;
+                s.startedAt = Date.now();
+              }
+            }
+          } else {
+            // fall back to new message
+            const handled = await this.handleEditError(err);
+            if (!handled) {
+              const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, text, sendOpts);
+              s.messageId = msg.message_id;
+              s.edits = 0;
+              s.charsSinceRotate = text.length;
+              s.startedAt = Date.now();
+            }
           }
         }
       }
@@ -317,6 +394,15 @@ export class Notifier {
       return true;
     }
     return false;
+  }
+
+  private isMdParseError(err: unknown): boolean {
+    const e = err as { error_code?: number; description?: string };
+    return (
+      e?.error_code === 400 &&
+      typeof e.description === 'string' &&
+      /can't parse entities|parse_mode|MARKDOWN_PARSE_ERROR/i.test(e.description)
+    );
   }
 
   private async handleSendError(err: unknown, retry: () => Promise<number | null | void>): Promise<number | null> {
@@ -421,16 +507,48 @@ export class Notifier {
    */
   async sendChunked(text: string, extra?: SendPlainExtra): Promise<number[]> {
     const safe = scrubSecrets(text);
-    const parts = splitForTelegram(safe);
+    const mdFull = mdToTelegramV2(safe);
+    const parts = splitForTelegram(mdFull);
     const ids: number[] = [];
+    const mdExtra: SendPlainExtra = { ...(extra ?? {}), parse_mode: 'MarkdownV2' };
     for (let i = 0; i < parts.length; i++) {
       const body = parts.length > 1 && i > 0
-        ? `↪ (cont. ${i + 1}/${parts.length})\n${parts[i]}`
+        ? `↪ \\(cont\\. ${i + 1}/${parts.length}\\)\n${parts[i]}`
         : parts[i]!;
-      const id = await this.sendPlain(body, extra);
+      let id: number | null;
+      try {
+        id = await this.sendPlainRaw(body, mdExtra);
+      } catch (err) {
+        if (this.isMdParseError(err)) {
+          // Fallback: send original plain text chunk
+          const plainParts = splitForTelegram(safe);
+          const plainBody = plainParts.length > 1 && i > 0
+            ? `↪ (cont. ${i + 1}/${plainParts.length})\n${plainParts[i] ?? ''}`
+            : (plainParts[i] ?? safe);
+          id = await this.sendPlain(plainBody, extra);
+        } else {
+          id = await this.handleSendError(err, () => this.sendPlain(
+            parts.length > 1 && i > 0
+              ? `↪ (cont. ${i + 1}/${parts.length})\n${parts[i]}`
+              : parts[i]!,
+            extra,
+          ));
+        }
+      }
       if (id != null) ids.push(id);
     }
     return ids;
+  }
+
+  /**
+   * Raw sendMessage without scrub/clip — used internally by sendChunked/flush
+   * where text is already processed.
+   */
+  private async sendPlainRaw(text: string, extra?: SendPlainExtra): Promise<number | null> {
+    const apiOpts = normalizeExtra(extra);
+    await this.takeToken();
+    const msg = await this.opts.bot.api.sendMessage(this.opts.chatId, text, apiOpts as never);
+    return msg.message_id;
   }
 
   /**
@@ -449,16 +567,55 @@ export class Notifier {
     extra?: { reply_markup?: unknown },
   ): Promise<number[]> {
     const safe = scrubSecrets(text);
-    const parts = splitForTelegram(safe);
-    // First part replaces the original message.
-    await this.editPlain(messageId, parts[0]!, extra);
+    const mdFull = mdToTelegramV2(safe);
+    const mdParts = splitForTelegram(mdFull);
+    // First part replaces the original message — try MarkdownV2 with fallback.
+    try {
+      await this.editPlainRaw(messageId, mdParts[0]!, { ...extra, parse_mode: 'MarkdownV2' });
+    } catch (err) {
+      if (this.isMdParseError(err)) {
+        const plainParts = splitForTelegram(safe);
+        await this.editPlain(messageId, plainParts[0]!, extra);
+      } else {
+        const plainParts = splitForTelegram(safe);
+        await this.editPlain(messageId, plainParts[0]!, extra);
+      }
+    }
     const extraIds: number[] = [];
-    for (let i = 1; i < parts.length; i++) {
-      const body = `↪ (cont. ${i + 1}/${parts.length})\n${parts[i]}`;
-      const id = await this.sendPlain(body);
+    for (let i = 1; i < mdParts.length; i++) {
+      const body = `↪ \\(cont\\. ${i + 1}/${mdParts.length}\\)\n${mdParts[i]}`;
+      let id: number | null;
+      try {
+        id = await this.sendPlainRaw(body, { parse_mode: 'MarkdownV2' });
+      } catch (err) {
+        if (this.isMdParseError(err)) {
+          const plainParts = splitForTelegram(safe);
+          const plainBody = `↪ (cont. ${i + 1}/${plainParts.length})\n${plainParts[i] ?? ''}`;
+          id = await this.sendPlain(plainBody);
+        } else {
+          id = null;
+        }
+      }
       if (id != null) extraIds.push(id);
     }
     return extraIds;
+  }
+
+  /**
+   * Raw editMessageText without scrub/clip — used internally for MarkdownV2 path.
+   */
+  private async editPlainRaw(
+    messageId: number,
+    text: string,
+    extra?: Record<string, unknown>,
+  ): Promise<void> {
+    await this.takeToken();
+    await this.opts.bot.api.editMessageText(
+      this.opts.chatId,
+      messageId,
+      text,
+      extra ? (extra as never) : undefined,
+    );
   }
 }
 

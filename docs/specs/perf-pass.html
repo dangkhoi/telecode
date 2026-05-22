@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spec — Perf pass: giảm độ trễ telecode vs CLI trực tiếp</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 72px 32px 120px; }
+  header.hero { margin-bottom: 48px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 40px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 20px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 64px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 28px; font-size: 16px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 36px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 26px 0 10px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 22px 26px; margin: 28px 0 40px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; margin: 22px 0; box-shadow: var(--shadow); }
+  .card h3, .card h4 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.danger { border-color: rgba(200,16,46,0.3); background: var(--danger-soft); }
+  .card.success { border-color: rgba(28,124,84,0.3); background: var(--success-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 8px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 56px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.55; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .compare .col h5 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after { border-left: 3px solid var(--success); }
+  .gate { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); margin-left: 8px; vertical-align: middle; }
+  @media (max-width: 720px) {
+    .wrap { padding: 44px 18px 72px; }
+    h1 { font-size: 30px; } .lede { font-size: 17px; } h2 { font-size: 22px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Spec · Telecode v1.4</div>
+  <h1>Perf pass — giảm độ trễ telecode vs CLI trực tiếp</h1>
+  <p class="lede">Người dùng cảm nhận telecode chậm hơn chạy CLI trực tiếp. Điều tra xác nhận đúng. Spec này gom các quick-win độ-trễ rủi-ro-thấp + instrument để đo, đồng thời gỡ regression responsiveness do fix done-summary (D1) gây ra. <strong>Áp dụng cho cả 4 AI agentic (Claude · Kiro · Codex · Cursor)</strong> vì nằm ở tầng dùng chung. Root-cause structural (spawn lại process mỗi turn) được tách sang spec riêng <code>warm-session</code>.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Slug</strong> · perf-pass</span>
+    <span class="pill"><strong>Author</strong> · vendor.01@frt.vn</span>
+    <span class="pill"><strong>Date</strong> · 2026-05-22</span>
+    <span class="pill"><strong>Effort</strong> · ~0.5–1 ngày</span>
+    <span class="pill"><strong>Status</strong> · Implemented · pending senior review</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p>Tách <strong>chậm cảm nhận</strong> vs <strong>chậm thật</strong>. Perf pass xử 3 thứ rẻ-mà-hiệu-quả: <strong>(A)</strong> hạ debounce streaming 3000ms → adaptive ~800ms; <strong>(C)</strong> auto-done-summary <em>non-blocking</em> (không gây "session busy") + <em>recap rẻ</em> cho mode đã stream text (chỉ mode <code>summary</code> mới gọi LLM thật) — gỡ thuế perf mà fix D1 vừa thêm; <strong>(I)</strong> instrument đo <code>spawn→first-token→result</code> mỗi turn để định lượng.</p>
+  <p>Root-cause thật <strong>(B)</strong> — <code>query()</code> string-mode tạo process mới + <code>--resume</code> replay mỗi turn (SDK docs: <em>"each call starts fresh"</em>), chi phí tăng theo độ dài phiên — KHÔNG nằm trong spec này; nó là refactor lớn → spec <code>warm-session</code> riêng. Instrument (I) ở đây chính là dữ liệu đầu vào để quyết B.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Changelog</h2>
+<table>
+  <thead><tr><th>Date</th><th>Section</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05-22</td><td>All</td><td>Initial — từ phản hồi user "telecode chậm hơn CLI trực tiếp" + yêu cầu trị tận gốc.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Context</h2>
+<p class="section-sub">Điều tra code đã xác nhận các nguồn trễ (không phải cảm tính).</p>
+
+<div class="card">
+  <h4>Phân loại nguồn trễ</h4>
+  <table>
+    <thead><tr><th>ID</th><th>Nguồn</th><th>Loại</th><th>Bằng chứng</th><th>Spec</th></tr></thead>
+    <tbody>
+      <tr><td><strong>A</strong></td><td>Debounce streaming 3000ms</td><td>Cảm nhận</td><td><code>config.ts:164 debounce_ms=3000</code>; <code>notifier.ts:40 DEFAULT_DEBOUNCE_MS=3000</code></td><td>perf-pass</td></tr>
+      <tr><td><strong>B</strong></td><td>Spawn process + <code>--resume</code> replay mỗi turn (tăng theo độ dài phiên)</td><td><strong>Thật / structural</strong></td><td><code>claude.ts:142</code> <code>query({prompt:string,resume})</code> per <code>run()</code>; SDK docs: "each call to query() starts fresh"</td><td><span class="badge badge-warn">warm-session (khác)</span></td></tr>
+      <tr><td><strong>C</strong></td><td>Auto-done-summary = +1 round-trip/turn, giữ mutex → "session busy"</td><td>Thật + UX</td><td><code>manager.ts:147</code> reject khi <code>mutex.isLocked()</code>; summarize gọi <code>dispatch</code></td><td>perf-pass</td></tr>
+      <tr><td>D</td><td>Telegram round-trip + rate-limit bucket</td><td>Nhỏ</td><td><code>notifier.takeToken()</code></td><td>—</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="card warn">
+  <h4>Regression cần gỡ (do fix done-summary D1)</h4>
+  <p>Spec <code>done-summary-all-modes</code> (đã merge) bật auto-done-summary ở <em>mọi</em> mode. Trước đó verbose/thinking KHÔNG summarize → giờ mọi turn đều có cửa sổ "session busy" + tốn 1 round-trip. Perf pass §C reconcile: giữ "summary mọi mode" nhưng làm nó rẻ + non-blocking.</p>
+</div>
+
+<div class="card success">
+  <h4>Phạm vi adapter — Perf pass cover CẢ 4 (Claude · Kiro · Codex · Cursor)</h4>
+  <p>A/C/I nằm ở <strong>tầng dùng chung</strong>, KHÔNG trong adapter, nên hiệu lực đồng đều cho cả 4 AI agentic:</p>
+  <table>
+    <thead><tr><th>Hạng mục</th><th>Tầng</th><th>Claude</th><th>Kiro</th><th>Codex</th><th>Cursor</th></tr></thead>
+    <tbody>
+      <tr><td>A — debounce</td><td><code>notifier.ts</code> (agent-agnostic)</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>C — summarize non-block + recap rẻ</td><td><code>manager.ts</code> + <code>commands/index.ts</code>; <code>summarizeWithSession</code> tái dùng adapter của session nên cả 4 đều dính round-trip phụ + "session busy"</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+      <tr><td>I — instrument</td><td><code>manager.dispatch</code> + mốc spawn trong từng adapter</td><td>✅</td><td>✅</td><td>✅</td><td>✅</td></tr>
+    </tbody>
+  </table>
+  <p><strong>B — spawn/replay mỗi turn</strong> dính cả 4 nhưng cách trị KHÁC nhau (Claude: AsyncIterable · Codex/Cursor: giữ app-server/ACP sống · Kiro: headless one-shot, có thể bất khả) → <em>KHÔNG</em> thuộc Perf pass; tách sang spec <code>warm-session</code> (cấu trúc per-adapter dễ→khó).</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Requirements <span class="gate">Approval gate #1</span></h2>
+<p class="section-sub">Approve out-of-band (portal hoặc prompt "Approve Requirements section of spec perf-pass").</p>
+
+<table>
+  <thead><tr><th>ID</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>R1</strong></td>
+      <td>Giảm độ trễ hiển thị streaming (A).</td>
+      <td>Debounce mặc định ↓ từ 3000ms; adaptive: flush sớm cho burst ngắn. Config vẫn override được. Không tăng số lần edit gây 429 (giữ rate-limit an toàn).</td>
+    </tr>
+    <tr>
+      <td><strong>R2</strong></td>
+      <td><span class="badge badge-warn">P1</span> Auto-done-summary KHÔNG bao giờ gây "session busy" cho prompt kế (C).</td>
+      <td>User gửi prompt mới ngay sau khi turn xong → không nhận "⏳ session busy" do summarize. Summarize bị hủy/bỏ khi có prompt mới.</td>
+    </tr>
+    <tr>
+      <td><strong>R3</strong></td>
+      <td>Recap rẻ cho mode đã stream text; chỉ <code>summary</code> mode mới gọi LLM summarize (C).</td>
+      <td>normal/thinking/verbose: KHÔNG tốn round-trip LLM cho done-summary (dùng recap heuristic / nội dung đã có). summary mode: vẫn LLM summarize như cũ. "Summary mọi mode" (R1 cũ của done-summary) vẫn thỏa.</td>
+    </tr>
+    <tr>
+      <td><strong>R4</strong></td>
+      <td>Instrument đo độ trễ mỗi turn (I).</td>
+      <td>Log có mốc: nhận prompt → spawn/dispatch → first text event → result/done, kèm <code>elapsedMs</code> từng chặng + độ dài resume context + <code>agent</code> (claude/kiro/codex/cursor). Đo TÁCH theo từng adapter để có số liệu B per-adapter (Kiro Rust cold start, Codex/Cursor server init, Claude resume replay). Đủ để định lượng B trước khi quyết warm-session.</td>
+    </tr>
+    <tr>
+      <td><strong>R5</strong></td>
+      <td>Không hồi quy hành vi/đúng đắn.</td>
+      <td>Toàn bộ test cũ pass; approval-in-flight vẫn skip summarize; guaranteed-content (done-summary §D4) vẫn giữ; không làm mất nội dung ở mode nào.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Design <span class="gate">Approval gate #2</span></h2>
+<p class="section-sub">Hoàn thiện chi tiết song song khi implement (DAG). Nháp định hướng.</p>
+
+<div class="card">
+  <h4>A — Adaptive debounce (R1)</h4>
+  <p><code>notifier.ts</code>: hạ <code>DEFAULT_DEBOUNCE_MS</code> 3000→800 + <code>config.ts</code> default tương ứng. Thêm flush sớm: nếu buffer "đứng yên" &gt; ~250ms (không có append mới) thì flush ngay thay vì chờ trọn cửa sổ. Trần edit-rate vẫn qua <code>takeToken()</code> nên không vỡ 429. Giữ <code>ROTATE_*</code> nguyên.</p>
+</div>
+
+<div class="card">
+  <h4>C1 — Summarize non-blocking (R2)</h4>
+  <p>Hiện summarize chạy fire-and-forget nhưng <em>acquire busy-mutex</em> qua <code>manager.dispatch</code> → prompt user mới bị reject. Hướng: đánh dấu summarize là "low-priority/cancellable" — khi <code>dispatch</code> nhận prompt user mới mà mutex đang bị giữ BỞI summarize, thì <em>hủy summarize</em> (abort) và nhường cho user, thay vì trả "session busy". Cần phân biệt chủ thể giữ mutex (user vs summarize) — thêm cờ <code>rt.holder: 'user'|'summarize'|null</code>.</p>
+</div>
+
+<div class="card">
+  <h4>C2 — Recap rẻ cho mode đã stream (R3)</h4>
+  <p>Trong nhánh <code>done</code>: nếu <code>!textWasSuppressed</code> (normal/thinking/verbose — user đã thấy full text), KHÔNG gọi <code>summarizeWithSession</code>. Thay vào đó dựng recap rẻ từ dữ liệu sẵn có (tail của <code>turnText</code> + kết quả tool cuối + cost/duration) — 0 round-trip. Chỉ khi <code>textWasSuppressed</code> (summary mode) mới gọi LLM summarize như hiện tại. Giữ nguyên guaranteed-content fallback §D4.</p>
+</div>
+
+<div class="card">
+  <h4>I — Instrumentation (R4)</h4>
+  <p>Thêm timing log (level 30, gắn <code>sessionId</code>): <code>t_prompt_received</code>, <code>t_dispatch_start</code>, <code>t_first_text</code>, <code>t_done</code>; suy ra <code>spawnToFirstTokenMs</code>, <code>firstTokenToDoneMs</code>, <code>totalMs</code>, + <code>resumeContextChars</code> (độ dài context replay, để thấy nó tăng theo phiên). Gắn ở <code>manager.dispatch</code> + adapter. Đây là dữ liệu quyết định warm-session.</p>
+</div>
+
+<div class="compare">
+  <div class="col before">
+    <h5>Trước</h5>
+    <div class="mock">Turn xong → summarize (mọi mode)
+→ mutex khóa vài giây
+→ prompt mới: "⏳ session busy"
+Streaming: gom 3s/lần</div>
+  </div>
+  <div class="col after">
+    <h5>Sau Perf pass</h5>
+    <div class="mock">Turn xong → recap rẻ (normal/…)
+hoặc LLM summarize (summary mode)
+→ prompt mới HỦY summarize, chạy ngay
+Streaming: ~800ms, flush sớm khi lặng</div>
+  </div>
+</div>
+
+<!-- ============================================================== -->
+<h2>Tasks <span class="gate">Approval gate #3</span></h2>
+<p class="section-sub">DAG — owner đơn cho mỗi file để tránh write-conflict.</p>
+
+<ul class="checklist">
+  <li class="todo"><strong>T1</strong> — A: adaptive debounce + hạ default. <span class="badge badge-muted">notifier.ts, config.ts</span></li>
+  <li class="todo"><strong>T2</strong> — C1: cờ <code>rt.holder</code> + hủy summarize khi user prompt tới. <span class="badge badge-muted">manager.ts</span></li>
+  <li class="todo"><strong>T3</strong> — C2: recap rẻ cho mode đã stream; gate LLM summarize chỉ cho summary mode. <span class="badge badge-muted">commands/index.ts</span></li>
+  <li class="todo"><strong>T4</strong> — I: timing instrumentation + resumeContextChars + field <code>agent</code>; thêm mốc spawn trong CẢ 4 adapter (<code>claude.ts</code>, <code>kiro.ts</code>, <code>codex.ts</code>, <code>cursor.ts</code>) để đo per-adapter. <span class="badge badge-muted">manager.ts, agents/{claude,kiro,codex,cursor}.ts</span></li>
+  <li class="todo"><strong>T5</strong> — Tests: debounce timing, "no session-busy do summarize", "normal mode không gọi summarizeWithSession", "summary mode vẫn gọi", instrument log shape. <span class="badge badge-muted">tests/</span></li>
+  <li class="todo"><strong>T6</strong> — Build dist + reload daemon + smoke 4 mode + đọc log đo độ trễ thực tế.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Verification</h2>
+<table>
+  <thead><tr><th>Req</th><th>Cách verify</th></tr></thead>
+  <tbody>
+    <tr><td>R1</td><td>Unit: fake timer, assert flush sớm khi lặng &gt;250ms + flush trọn khi liên tục. Smoke: cảm nhận mượt hơn trên Telegram.</td></tr>
+    <tr><td>R2</td><td>Unit: summarize đang chạy + dispatch user prompt → KHÔNG trả "session busy"; summarize bị abort.</td></tr>
+    <tr><td>R3</td><td>Unit: mode normal/thinking/verbose → <code>summarizeWithSession</code> KHÔNG được gọi; mode summary → CÓ gọi. Recap vẫn có nội dung.</td></tr>
+    <tr><td>R4</td><td>Smoke: đọc log, có đủ mốc + elapsedMs + field <code>agent</code>; chạy mỗi adapter trong {claude,kiro,codex,cursor} thấy có timing riêng; phiên dài thấy resumeContextChars tăng.</td></tr>
+    <tr><td>R5</td><td><code>npx vitest run</code> full pass; guaranteed-content test (done-summary §D4) vẫn xanh.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Open Questions</h2>
+<div class="card warn"><p><strong>Q1.</strong> Debounce 800ms hợp lý? Hay để adaptive thuần (flush theo khoảng lặng, bỏ con số cứng)?</p></div>
+<div class="card warn"><p><strong>Q2.</strong> Recap rẻ (C2) cho mode đã stream nên hiển thị gì? Chỉ <code>✅ Done · Xs · $cost</code> + dòng cuối, hay thêm danh sách tool đã chạy?</p></div>
+<div class="card warn"><p><strong>Q3.</strong> Khi hủy summarize (C1), có cần giữ lại done-card "✅ Done" không kèm summary, hay im lặng? (Đề xuất: giữ done-card.)</p></div>
+
+<!-- ============================================================== -->
+<h2>References</h2>
+<ul>
+  <li><code>src/bot/notifier.ts</code> — debounce, takeToken, flush/rotate</li>
+  <li><code>src/session/manager.ts</code> — dispatch, busy mutex (<code>:147</code>), waitForIdle</li>
+  <li><code>src/bot/commands/index.ts</code> — done block + auto-done-summary</li>
+  <li><code>src/agents/claude.ts</code> — <code>query()</code> per run (<code>:142</code>)</li>
+  <li><code>src/agents/summarize.ts</code> — summarizeWithSession</li>
+  <li>SDK docs (Context7 <code>/nothflare/claude-agent-sdk-docs</code>): query() string = fresh session; streaming-input (AsyncIterable) giữ session sống — cơ sở cho spec warm-session</li>
+  <li>Spec liên quan: <code>done-summary-all-modes.html</code> (regression nguồn của §C), <code>warm-session.html</code> (sẽ tạo cho root-cause B)</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Reviewer Log</h2>
+<p class="section-sub">Append-only. Mỗi pass senior review (Opus 4.7) thêm 1 mục.</p>
+<div class="card">
+  <h4>Pass 0 — 2026-05-22 — Author draft</h4>
+  <p>Spec khởi tạo, chờ approve Requirements. Chưa có code. B (root-cause structural) tách sang spec warm-session.</p>
+</div>
+
+<div class="card warn">
+  <h4>Pass 1 (INTERIM, Sonnet) — 2026-05-22 — Opus pass còn nợ</h4>
+  <p><strong>Lý do interim:</strong> reviewer Opus 4.7 không chạy được do API 529 Overloaded (server-side, thử 3 lần). Self-review tạm bằng Sonnet để không block; <strong>vẫn cần chạy lại Opus khi hết tải</strong> trước khi coi là review xong.</p>
+  <p><strong>Đã rà + xử lý:</strong></p>
+  <ul>
+    <li><span class="badge badge-muted">P2</span> <strong>Double-preempt window (C1)</strong>: 2 user prompt tới khi summarize đang chạy → cả hai cùng preempt+queue thay vì cái thứ 2 "busy". Fix: set <code>holder='user'</code> ngay sau abort + <code>finally</code> chỉ clear holder khi <code>rt.holder===kind</code> (tránh summarize finally clobber holder của preemptor). Đã fix.</li>
+    <li><span class="badge badge-success">non-issue</span> <strong>Secret leak ở recap C2 / fallback §D4</strong>: <code>turnText</code> thô (chưa scrub) nhưng <code>editPlainChunked</code> + <code>sendChunked</code> đều <code>scrubSecrets</code> tại tầng notifier (notifier.ts:446,474) → an toàn.</li>
+    <li><span class="badge badge-success">OK</span> Debounce: <code>delay=min(QUIET, max(0, maxWait−elapsed))</code> không âm; <code>firstPendingAt</code> reset ở flush, không starvation.</li>
+    <li><span class="badge badge-success">OK</span> C2 empty turnText (tool-only turn) → không edit recap, giữ done-card; chấp nhận.</li>
+  </ul>
+  <p><strong>Kết quả:</strong> <code>tsc</code> clean · <code>vitest</code> 784 pass / 2 skip · build dist OK. Verdict tạm: PASS-WITH-CAVEAT (chờ Opus xác nhận concurrency C1 + scope T4 per-adapter).</p>
+</div>
+
+</div>
+</body>
+</html>

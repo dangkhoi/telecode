@@ -95,22 +95,25 @@ describe('Notifier.sendChunked', () => {
 
     // First message has no continuation header.
     const [, firstText] = api.sendMessage.mock.calls[0]!;
-    expect(firstText).not.toMatch(/^↪ \(cont\. \d+\/\d+\)/);
+    expect(firstText).not.toMatch(/^↪/);
 
-    // Subsequent messages each carry the header.
+    // Subsequent messages each carry the MarkdownV2-escaped header.
     for (let i = 1; i < ids.length; i++) {
       const [, text] = api.sendMessage.mock.calls[i]!;
-      expect(text).toMatch(new RegExp(`^↪ \\(cont\\. ${i + 1}/${ids.length}\\)\n`));
+      expect(text).toMatch(new RegExp(`^↪ \\\\\\(cont\\\\\\. ${i + 1}/${ids.length}\\\\\\)\n`));
     }
   });
 
   it('content from all chunks together reconstructs the original (no silent loss)', async () => {
     const long = Array.from({ length: 250 }, (_, i) => `L${i}:${'z'.repeat(15)}`).join('\n');
     await notifier.sendChunked(long);
+    // MarkdownV2 conversion is applied; strip continuation headers and verify
+    // all alphanumeric content is preserved (no truncation).
     const rendered = api.sendMessage.mock.calls
       .map((c) => c[1] as string)
-      .map((s) => s.replace(/^↪ \(cont\. \d+\/\d+\)\n/, ''))
+      .map((s) => s.replace(/^↪ \\\(cont\\\. \d+\/\d+\\\)\n/, ''))
       .join('\n');
+    // Since the test data has no markdown specials, mdToTelegramV2 output = input
     expect(rendered).toBe(long);
   });
 });
@@ -144,10 +147,10 @@ describe('Notifier.editPlainChunked', () => {
     expect(chatId).toBe(CHAT_ID);
     expect(msgId).toBe(99);
 
-    // Overflow messages have continuation headers.
+    // Overflow messages have MarkdownV2-escaped continuation headers.
     for (let i = 0; i < extras.length; i++) {
       const [, text] = api.sendMessage.mock.calls[i]!;
-      expect(text).toMatch(/^↪ \(cont\. \d+\/\d+\)\n/);
+      expect(text).toMatch(/^↪ \\\(cont\\\. \d+\/\d+\\\)\n/);
     }
   });
 });

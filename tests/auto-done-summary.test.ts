@@ -250,14 +250,16 @@ afterEach(() => {
 });
 
 describe('Phase D.4 — auto done-summary', () => {
-  it('normal mode: emits enhanced "✅ Done · Xs · $cost" tail + summary edit', async () => {
+  it('normal mode: CHEAP recap (no LLM round-trip) — v1.4 perf-pass §C2/R3', async () => {
     const h = await setup({
       mode: 'normal',
       transcript: 'tested 3 files',
-      summaryText: 'Đã chạy npm test, 432 pass.',
+      summaryText: 'should NOT fire — normal mode streamed live',
     });
     try {
-      // Emit done with realistic cost+duration.
+      // User already saw this streamed text → recap must be built from it, NOT
+      // via a fresh LLM summarize.
+      h.primary.emit({ type: 'text', text: 'Đã chạy npm test, 432 pass.' });
       h.primary.emit({
         type: 'done',
         durationMs: 47_000,
@@ -267,33 +269,28 @@ describe('Phase D.4 — auto done-summary', () => {
       h.primary.finish();
       await flush(50);
 
-      // The done tail must be the enhanced "✅ Done · 47s · $0.0231".
+      // Enhanced tail present.
       const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
-      const doneSend = sendTexts.find((t) => t.includes('✅ Done · 47s · $0.0231'));
-      expect(doneSend).toBeDefined();
-      // After summarize lands, editPlain should fire with the summary
-      // appended.
+      expect(sendTexts.some((t) => t.includes('✅ Done · 47s · $0.0231'))).toBe(true);
+      // Recap edit = tail + last streamed line, NO LLM call.
+      expect(h.summaryStarted()).toBe(false);
       const editTexts = h.editPlain.mock.calls.map((c) => c[1]) as string[];
-      const editWithSummary = editTexts.find((t) =>
-        t.includes('Đã chạy npm test, 432 pass.'),
-      );
-      expect(editWithSummary).toBeDefined();
-      expect(editWithSummary).toContain('✅ Done · 47s · $0.0231');
-      // Original transcript content was passed to the adapter — summary was
-      // actually fired.
-      expect(h.summaryStarted()).toBe(true);
+      const recap = editTexts.find((t) => t.includes('Đã chạy npm test, 432 pass.'));
+      expect(recap).toBeDefined();
+      expect(recap).toContain('✅ Done · 47s · $0.0231');
     } finally {
       h.cleanup();
     }
   });
 
-  it('verbose mode: v1.3 NOW fires done-summary too (R1 — every mode summarizes)', async () => {
+  it('verbose mode: cheap recap, no LLM (R3)', async () => {
     const h = await setup({
       mode: 'verbose',
       transcript: 'whatever',
-      summaryText: 'Tóm tắt verbose recap.',
+      summaryText: 'should NOT fire',
     });
     try {
+      h.primary.emit({ type: 'text', text: 'verbose streamed line.' });
       h.primary.emit({
         type: 'done',
         durationMs: 12_000,
@@ -303,30 +300,31 @@ describe('Phase D.4 — auto done-summary', () => {
       h.primary.finish();
       await flush(30);
 
-      // v1.3: enhanced tail (not v1.0 lowercase) + summary fires + edit appends.
       const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
       expect(sendTexts.some((t) => /✅ Done · 12s · \$0\.0050/.test(t))).toBe(true);
-      expect(h.summaryStarted()).toBe(true);
+      expect(h.summaryStarted()).toBe(false);
       const editTexts = h.editPlain.mock.calls.map((c) => c[1]) as string[];
-      expect(editTexts.find((t) => t.includes('Tóm tắt verbose recap.'))).toBeDefined();
+      expect(editTexts.find((t) => t.includes('verbose streamed line.'))).toBeDefined();
     } finally {
       h.cleanup();
     }
   });
 
-  it('thinking mode: also fires done-summary (R1)', async () => {
+  it('thinking mode: cheap recap, no LLM (R3)', async () => {
     const h = await setup({
       mode: 'thinking',
       transcript: 'ctx',
-      summaryText: 'Tóm thinking.',
+      summaryText: 'should NOT fire',
     });
     try {
+      h.primary.emit({ type: 'text', text: 'thinking streamed line.' });
       h.primary.emit({ type: 'done', durationMs: 4_000, totalCostUsd: 0.002, result: 'ok' });
       h.primary.finish();
       await flush(30);
-      expect(h.summaryStarted()).toBe(true);
+      // No LLM summarize fired in a mode that already streamed the text.
+      expect(h.summaryStarted()).toBe(false);
       const editTexts = h.editPlain.mock.calls.map((c) => c[1]) as string[];
-      expect(editTexts.find((t) => t.includes('Tóm thinking.'))).toBeDefined();
+      expect(editTexts.find((t) => t.includes('thinking streamed line.'))).toBeDefined();
     } finally {
       h.cleanup();
     }

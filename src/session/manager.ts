@@ -9,6 +9,13 @@ import { logger } from '../util/logger.js';
 export interface SessionRuntime {
   mutex: Mutex;
   abort: AbortController | null;
+  /**
+   * v1.4 (perf-pass §C1) — who currently holds the busy mutex. `'summarize'`
+   * is a low-priority background holder (auto-done / auto-tool-result / on-demand
+   * summary) that a real `'user'` dispatch is allowed to PREEMPT (abort) instead
+   * of being rejected with "session busy". `null` when idle.
+   */
+  holder: 'user' | 'summarize' | null;
 }
 
 export interface DispatchOpts {
@@ -16,6 +23,9 @@ export interface DispatchOpts {
   prompt: string;
   onEvent: (e: AgentEvent) => void;
 }
+
+/** v1.4 (perf-pass §C1) — dispatch priority. Defaults to `'user'`. */
+export type DispatchKind = 'user' | 'summarize';
 
 /** Optional knobs the daemon supplies from config. */
 export interface SessionManagerOpts {
@@ -39,7 +49,7 @@ export class SessionManager {
   private rt(id: string): SessionRuntime {
     let r = this.runtimes.get(id);
     if (!r) {
-      r = { mutex: new Mutex(), abort: null };
+      r = { mutex: new Mutex(), abort: null, holder: null };
       this.runtimes.set(id, r);
     }
     return r;
@@ -142,19 +152,53 @@ export class SessionManager {
     this.buffers.delete(sessionId);
   }
 
-  async dispatch(opts: DispatchOpts & { cwd: string; agent: AgentKind; sessionLabel: string; chatId: number; resumeId: string | null }): Promise<void> {
+  async dispatch(
+    opts: DispatchOpts & {
+      cwd: string;
+      agent: AgentKind;
+      sessionLabel: string;
+      chatId: number;
+      resumeId: string | null;
+      /** v1.4 (perf-pass §C1) — priority; defaults to 'user'. */
+      kind?: DispatchKind;
+    },
+  ): Promise<void> {
+    const kind: DispatchKind = opts.kind ?? 'user';
     const rt = this.rt(opts.sessionId);
     if (rt.mutex.isLocked()) {
-      opts.onEvent({
-        type: 'error',
-        error: '⏳ session busy — /stop to interrupt or wait.',
-      });
-      return;
+      // v1.4 (perf-pass §C1) — a real user dispatch PREEMPTS an in-flight
+      // background summarize instead of bouncing with "session busy". We abort
+      // the summarize and fall through to runExclusive, which queues fairly and
+      // acquires the mutex the moment the aborted summarize releases it.
+      if (kind === 'user' && rt.holder === 'summarize') {
+        rt.abort?.abort(new Error('preempted_by_user'));
+        // Claim the holder slot optimistically so a SECOND user dispatch
+        // arriving before the summarize finishes releasing sees holder==='user'
+        // and bounces with "session busy" (instead of also preempting and
+        // double-queuing). The aborted summarize's `finally` will NOT clobber
+        // this: runExclusive serializes, so our queued callback re-asserts
+        // holder='user' after it acquires.
+        rt.holder = 'user';
+        // fall through
+      } else {
+        opts.onEvent({
+          type: 'error',
+          error: '⏳ session busy — /stop to interrupt or wait.',
+        });
+        return;
+      }
     }
     await rt.mutex.runExclusive(async () => {
+      rt.holder = kind;
       rt.abort = new AbortController();
       this.store.updateSession(opts.sessionId, { status: 'running' });
       const adapter = this.registry.require(opts.agent);
+      // v1.4 (perf-pass §I) — per-turn latency instrumentation. The `agent`
+      // field lets us slice timing per adapter (Kiro Rust cold start vs
+      // Codex/Cursor server init vs Claude resume replay). dispatch→first-text
+      // captures spawn + resume-replay cost; first-text→done is generation.
+      const tDispatch = Date.now();
+      let tFirstText: number | null = null;
       try {
         await adapter.run({
           sessionId: opts.sessionId,
@@ -164,6 +208,7 @@ export class SessionManager {
           resumeId: opts.resumeId,
           initialPrompt: opts.prompt,
           onEvent: (e) => {
+            if (e.type === 'text' && tFirstText === null) tFirstText = Date.now();
             try {
               opts.onEvent(e);
             } catch (err) {
@@ -173,7 +218,27 @@ export class SessionManager {
           abortSignal: rt.abort.signal,
         });
       } finally {
+        if (kind === 'user') {
+          const tDone = Date.now();
+          logger.info(
+            {
+              sessionId: opts.sessionId,
+              agent: opts.agent,
+              hasResume: !!opts.resumeId,
+              promptChars: opts.prompt.length,
+              dispatchToFirstTextMs: tFirstText !== null ? tFirstText - tDispatch : null,
+              firstTextToDoneMs: tFirstText !== null ? tDone - tFirstText : null,
+              totalMs: tDone - tDispatch,
+            },
+            'dispatch timing',
+          );
+        }
         rt.abort = null;
+        // Only clear the holder if it's still US. A preempting user dispatch
+        // sets holder='user' BEFORE we (the aborted summarize) reach this
+        // finally; clobbering it back to null would reopen the double-preempt
+        // window. The preemptor's queued callback re-asserts its own holder.
+        if (rt.holder === kind) rt.holder = null;
         this.store.updateSession(opts.sessionId, { status: 'idle' });
       }
     });

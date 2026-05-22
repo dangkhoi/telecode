@@ -100,8 +100,9 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
       expect(api.sendMessage).toHaveBeenCalledTimes(1);
       const [chatId, text, opts] = api.sendMessage.mock.calls[0]!;
       expect(chatId).toBe(CHAT_ID);
-      expect(text).toBe('[A] chunk1');
-      expect(opts).toEqual({ disable_notification: true });
+      // MarkdownV2: [ and ] are escaped
+      expect(text).toBe('\\[A\\] chunk1');
+      expect(opts).toEqual({ disable_notification: true, parse_mode: 'MarkdownV2' });
     });
 
     it('emits chunk only when no prefix supplied', async () => {
@@ -113,8 +114,8 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
       expect(api.sendMessage).toHaveBeenCalledTimes(1);
       const [, text, opts] = api.sendMessage.mock.calls[0]!;
       expect(text).toBe('hello');
-      // No silent → no disable_notification set.
-      expect(opts).toBeUndefined();
+      // MarkdownV2 parse_mode is always set for streaming
+      expect(opts).toEqual({ parse_mode: 'MarkdownV2' });
     });
 
     it('preserves prefix from first call when later append omits opts', async () => {
@@ -128,8 +129,8 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
 
       expect(api.sendMessage).toHaveBeenCalledTimes(1);
       const [, text, opts] = api.sendMessage.mock.calls[0]!;
-      expect(text).toBe('[A] onetwo');
-      expect(opts).toEqual({ disable_notification: true });
+      expect(text).toBe('\\[A\\] onetwo');
+      expect(opts).toEqual({ disable_notification: true, parse_mode: 'MarkdownV2' });
     });
 
     it('ignores conflicting opts on subsequent calls (set-once semantics)', async () => {
@@ -141,8 +142,8 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
       await vi.runAllTimersAsync();
 
       const [, text, opts] = api.sendMessage.mock.calls[0]!;
-      expect(text).toBe('[A] ab');
-      expect(opts).toEqual({ disable_notification: true });
+      expect(text).toBe('\\[A\\] ab');
+      expect(opts).toEqual({ disable_notification: true, parse_mode: 'MarkdownV2' });
     });
 
     it('splits an over-limit buffer into multiple messages without losing content (v1.3)', () => {
@@ -160,9 +161,9 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
         // Overflow → ≥2 messages (head + tail), no edit (fresh sends).
         expect(api.sendMessage.mock.calls.length).toBeGreaterThanOrEqual(2);
 
-        // Prefix rides on the FIRST message only.
+        // Prefix rides on the FIRST message only (escaped for MarkdownV2).
         const firstText = api.sendMessage.mock.calls[0]![1] as string;
-        expect(firstText.startsWith('[A] ')).toBe(true);
+        expect(firstText.startsWith('\\[A\\] ')).toBe(true);
 
         // Every 'x' is preserved across the messages: concatenate all sent
         // bodies, strip the one-time prefix, and count the x's.
@@ -175,5 +176,42 @@ describe('Notifier — silent + prefix (v0.8 A2)', () => {
         expect(allBodies).not.toContain('…');
       })();
     });
+  });
+});
+
+// ----------------------------------------------------------------------------
+// v1.4 (perf-pass §A) — adaptive streaming debounce
+// ----------------------------------------------------------------------------
+describe('Notifier — adaptive debounce (v1.4 perf-pass §A)', () => {
+  let bot: Bot;
+  let api: MockApi;
+  let notifier: Notifier;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    ({ bot, api } = makeBot());
+    // maxWait cap = 800ms; QUIET_MS (250) is a source constant.
+    notifier = new Notifier({ bot, chatId: CHAT_ID, debounceMs: 800 });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('flushes ~250ms after the LAST append (quiet), not after the full maxWait', async () => {
+    notifier.appendStream('k', 'hello');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(api.sendMessage).not.toHaveBeenCalled(); // 100ms < QUIET 250ms
+    await vi.advanceTimersByTimeAsync(200); // total 300ms > 250ms
+    expect(api.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('maxWait cap: continuous appends still flush mid-stream (no starvation)', async () => {
+    // Append every 100ms. A pure trailing debounce (reset each append) would
+    // NOT flush until appends stop; the maxWait cap forces a flush by ~800ms.
+    for (let i = 0; i < 9; i++) {
+      notifier.appendStream('k', 'x'); // t = 0,100,...,800
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    // We are now at ~t=900 while still notionally streaming. With the cap it has
+    // already flushed (timer fired at ~t=800); pure-250-trailing would not have.
+    expect(api.sendMessage).toHaveBeenCalled();
   });
 });

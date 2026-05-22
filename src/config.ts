@@ -161,10 +161,12 @@ const ConfigSchema = z.object({
   session_switch_preview_lines: z.number().int().min(0).max(20).default(3),
   notifier: z
     .object({
-      debounce_ms: z.number().int().positive().default(3000),
+      // v1.4 (perf-pass §A) — maxWait cap for adaptive streaming flush. Lowered
+      // 3000→800: at 3000 a continuous response showed nothing until a 3s pause.
+      debounce_ms: z.number().int().positive().default(800),
       buffer_cap_bytes: z.number().int().positive().default(50_000),
     })
-    .default({ debounce_ms: 3000, buffer_cap_bytes: 50_000 }),
+    .default({ debounce_ms: 800, buffer_cap_bytes: 50_000 }),
 });
 
 /**

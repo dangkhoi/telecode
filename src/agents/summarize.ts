@@ -221,6 +221,8 @@ export async function summarizeWithSession(opts: SummarizeOpts): Promise<string 
         agent: sess.agent,
         resumeId: sess.sdk_session_id,
         prompt: fullPrompt,
+        // v1.4 (perf-pass §C1) — low-priority: a real user prompt preempts this.
+        kind: 'summarize',
         onEvent: (e: AgentEvent) => {
           // Capture ONLY text events. We deliberately ignore tool_use /
           // tool_result / status events from the summarize call — the

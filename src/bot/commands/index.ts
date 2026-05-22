@@ -1953,6 +1953,28 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 await notifier.editReplyMarkup(doneMsgId, doneKb);
               }
 
+              // v1.4 (perf-pass §C2/R3) — CHEAP recap for modes that already
+              // streamed the full text (normal/thinking/verbose). The user has
+              // SEEN the answer, so spending a full LLM round-trip (which also
+              // holds the session mutex and stalls the next prompt) just to
+              // re-summarize it is pure overhead. Build a zero-round-trip recap
+              // from data we already have (last meaningful line of the turn).
+              // Only `summary` mode — where streaming text was suppressed — pays
+              // for the real LLM summarize below.
+              if (!textWasSuppressed) {
+                const lastLine = turnText
+                  .trim()
+                  .split('\n')
+                  .map((l) => l.trim())
+                  .filter(Boolean)
+                  .pop();
+                if (lastLine) {
+                  const recap = `${labelPrefix}${enhancedTail}\n${lastLine.slice(0, 280)}`;
+                  await notifier.editPlainChunked(doneMsgId, recap);
+                }
+                return;
+              }
+
               // Build the summarize input. v1.3 (§D2): prefer the FULL turn
               // text captured this turn — it's the real answer. `transcript_tail`
               // (last line of each chunk only) and `doneResultText` are fallbacks
