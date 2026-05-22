@@ -121,6 +121,7 @@
   <tbody>
     <tr><td>2026-05-21</td><td>All</td><td>Initial spec — bundle 3 yêu cầu user gửi đêm 21/05.</td></tr>
     <tr><td>2026-05-21</td><td>Design</td><td>Chốt unified @path approach sau khi verify Context7 docs (Claude SDK base64 requires streaming-mode → disruptive).</td></tr>
+    <tr><td>2026-05-22</td><td>Tasks · Bug 5</td><td>Phát hiện regression sau commit 4f569a4: AskUserQuestion render bị cắt (caps label 40 / desc 60 / body 800 quá tay — câu 3+4 mất). Relax caps → label 100 / desc 300 / body 3000 (vẫn dưới Telegram 3500 limit).</td></tr>
   </tbody>
 </table>
 
@@ -428,6 +429,23 @@ telegram: {
 
 <h4>Verdict</h4>
 <p><strong>APPROVED</strong> · 100% R1-R4 deliverables landed; 4 findings ([P2] × 3, [P3] × 1) patched and covered by new tests; Context7 tech-freshness clean; ready for security scan + commit.</p>
+
+<h3>Pass 2 — 2026-05-22 (Bug 5 · AskUserQuestion render bị cắt)</h3>
+<p class="section-sub">Regression report từ user sau commit <code>4f569a4</code>: AskUserQuestion render trong Telegram bị cắt, không đọc được nội dung (chính cái 4-câu-hỏi ở đầu session này).</p>
+<div class="card danger">
+  <h4 style="margin-top:0;">Root cause</h4>
+  <p>Fix Bug 4 (session trước) render AskUserQuestion theo triết lý "compact preview" giống <code>Read · file.ts</code>: cap option label 40 chars, description 60 chars, body 800 chars. Nhưng AskUserQuestion là tool DUY NHẤT user phải đọc đầy đủ để trả lời. Với ask 4 câu × 3 option + description ~85 chars: description cắt giữa chừng, câu 3+4 mất hẳn (body vượt 800 → truncate).</p>
+</div>
+<div class="card success">
+  <h4 style="margin-top:0;">Fix</h4>
+  <ul>
+    <li><code>tool-render.ts</code> · thêm 3 constant: <code>ASK_LABEL_MAX=100</code> (was 40), <code>ASK_DESC_MAX=300</code> (was 60), <code>ASK_BODY_MAX=3000</code> (was 800). Vẫn dưới Telegram per-message limit (<code>MAX_MSG_CHARS=3500</code> trong notifier), chừa ~500 chars headroom cho prefix <code>🔧 [label] AskUserQuestion · </code>.</li>
+    <li>Pathological ask (4 câu × 4 option × 300-char desc) vẫn truncate gọn bằng <code>…</code> thay vì bị Telegram reject.</li>
+    <li>Tests: <code>tool-render.test.ts</code> — cập nhật 3 test (body cap 800→3000, label 40→100, desc 60→300) + thêm 1 test "does NOT truncate a realistic 4-question ask" mô phỏng đúng shape gây bug.</li>
+  </ul>
+</div>
+<p><strong>Verify</strong>: typecheck clean · <code>tool-render.test.ts</code> 42/42 pass · full suite 768 pass / 2 skipped / 0 fail · build clean.</p>
+<p><strong>Verdict</strong>: APPROVED — single-file logic change (&lt;20 LoC, 3 constants), không động public API, không scope gap.</p>
 <!-- Reviewer log entries appended below by the senior-reviewer sub-agent -->
 
 </div>

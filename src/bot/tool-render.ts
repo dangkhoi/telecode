@@ -363,10 +363,21 @@ export function renderToolUse(
  * `options[*].label`, but we treat anything unexpected as best-effort
  * (renders `?` rather than crashing the dispatcher).
  *
- * Kept under the 4096-char Telegram message limit by truncating per-option
- * label to 40 chars and capping total output at 800 chars. Users can ask
- * the agent to repeat / clarify if rendering ever needs more room.
+ * v1.2 Bug 5 — readability fix. AskUserQuestion is the ONE tool_use the
+ * user MUST read in full to act on it (it's a literal question with
+ * options + trade-off descriptions). The original compact-preview caps
+ * (label 40 / description 60 / body 800) — copied from the generic
+ * "Read · file.ts" preview philosophy — mangled real multi-question asks:
+ * descriptions cut mid-word, later questions dropped entirely. We now use
+ * generous caps that still stay safely under Telegram's per-message limit
+ * (MAX_MSG_CHARS = 3500 in the notifier): label 100, description 300, body
+ * 3000 (leaves ~500 chars headroom for the "🔧 [label] AskUserQuestion · "
+ * prefix the dispatch path prepends). Pathologically long asks still get a
+ * trailing "…" rather than a hard Telegram rejection.
  */
+const ASK_LABEL_MAX = 100;
+const ASK_DESC_MAX = 300;
+const ASK_BODY_MAX = 3000;
 function renderAskUserQuestion(o: Record<string, unknown>): string {
   const qsRaw = o.questions;
   if (!Array.isArray(qsRaw) || qsRaw.length === 0) {
@@ -388,10 +399,10 @@ function renderAskUserQuestion(o: Record<string, unknown>): string {
           // "PostgreSQL" / "MongoDB" reads as bare choices with no help text.
           // Keep the same 40-char cap on labels; append a short description
           // tail when available so the rendered line stays compact.
-          const label = truncate(opt.label.trim(), 40);
+          const label = truncate(opt.label.trim(), ASK_LABEL_MAX);
           const descRaw =
             typeof opt.description === 'string' ? opt.description.trim() : '';
-          const descPart = descRaw ? ` — ${truncate(descRaw, 60)}` : '';
+          const descPart = descRaw ? ` — ${truncate(descRaw, ASK_DESC_MAX)}` : '';
           labels.push(`${label}${descPart}`);
         }
       }
@@ -408,10 +419,10 @@ function renderAskUserQuestion(o: Record<string, unknown>): string {
   }
   if (stanzas.length === 0) return 'AskUserQuestion';
   const body = stanzas.join('\n\n');
-  // Cap at 800 chars so a pathologically long set of options doesn't blow
+  // Cap at ASK_BODY_MAX so a pathologically long set of options doesn't blow
   // past Telegram's per-message limit when this gets concatenated with the
-  // "🔧 " prefix + session label.
-  const capped = body.length > 800 ? body.slice(0, 799) + '…' : body;
+  // "🔧 [label] AskUserQuestion · " prefix the dispatch path prepends.
+  const capped = body.length > ASK_BODY_MAX ? body.slice(0, ASK_BODY_MAX - 1) + '…' : body;
   // Cosmetic fix: use the canonical "ToolName · {item}" separator (same as
   // Read/Edit/Bash/etc.) so the dispatch path's burst-collapse format
   // (`🔧 {toolName} · {item}`) doesn't render "AskUserQuestion · AskUserQuestion"

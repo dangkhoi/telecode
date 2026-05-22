@@ -316,31 +316,58 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
     expect(out).not.toMatch(/\n\s+\d+\./);
   });
 
-  it('caps body at 800 chars to stay under Telegram per-message limit', () => {
-    const longLabel = 'x'.repeat(50);
+  it('caps body at 3000 chars to stay under Telegram per-message limit (v1.2 Bug 5)', () => {
+    // Build a pathologically long ask: 4 questions × 4 options × full-length
+    // (300-char) descriptions → well over the 3000-char body cap so the
+    // truncation path is actually exercised.
+    const longLabel = 'x'.repeat(80);
+    const longDesc = 'd'.repeat(300);
+    const bigQuestion = {
+      header: 'big',
+      question: 'pick',
+      options: Array.from({ length: 4 }, () => ({ label: longLabel, description: longDesc })),
+    };
+    const input = { questions: Array.from({ length: 4 }, () => ({ ...bigQuestion })) };
+    const out = renderToolUse('AskUserQuestion', input);
+    const bodyPart = out.replace(/^AskUserQuestion · /, '');
+    expect(bodyPart.length).toBeLessThanOrEqual(3000);
+    // And it WAS truncated (ellipsis present) — proving the cap engaged.
+    expect(bodyPart.endsWith('…')).toBe(true);
+  });
+
+  it('does NOT truncate a realistic 4-question ask (v1.2 Bug 5 — readability)', () => {
+    // Mirrors the exact shape that exposed the bug: 4 questions, 3 options
+    // each, ~80-char descriptions. This must render FULLY (no ellipsis, all
+    // four headers + every description tail present).
+    const mkQ = (h: string, q: string) => ({
+      header: h,
+      question: q,
+      options: [
+        { label: 'Option one here', description: 'A reasonably detailed explanation of what option one does and why.' },
+        { label: 'Option two here', description: 'A reasonably detailed explanation of what option two does and why.' },
+        { label: 'Option three', description: 'A reasonably detailed explanation of what option three does and why.' },
+      ],
+    });
     const input = {
       questions: [
-        {
-          header: 'big',
-          question: 'pick',
-          options: Array.from({ length: 4 }, () => ({ label: longLabel })),
-        },
-        {
-          header: 'big2',
-          question: 'pick',
-          options: Array.from({ length: 4 }, () => ({ label: longLabel })),
-        },
+        mkQ('Verbose btn', 'Behavior mong muốn?'),
+        mkQ('Image input', 'Forward ảnh thế nào?'),
+        mkQ('File input', 'Xử lý file thế nào?'),
+        mkQ('Agent scope', 'Làm cho agent nào?'),
       ],
     };
     const out = renderToolUse('AskUserQuestion', input);
-    // 800-char cap + "AskUserQuestion\n" prefix (~17) + ellipsis. We just
-    // assert the body portion didn't blow past the cap.
-    const bodyPart = out.replace(/^AskUserQuestion · /, '');
-    expect(bodyPart.length).toBeLessThanOrEqual(800);
+    expect(out).not.toContain('…'); // nothing truncated
+    expect(out).toContain('[Verbose btn]');
+    expect(out).toContain('[Image input]');
+    expect(out).toContain('[File input]');
+    expect(out).toContain('[Agent scope]');
+    // A full description tail survives intact.
+    expect(out).toContain('A reasonably detailed explanation of what option one does and why.');
   });
 
-  it('truncates each option label to 40 chars', () => {
-    const huge = 'y'.repeat(100);
+  it('truncates each option label to 100 chars (v1.2 Bug 5 relaxed cap)', () => {
+    const huge = 'y'.repeat(150);
     const out = renderToolUse('AskUserQuestion', {
       questions: [
         {
@@ -350,7 +377,7 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
         },
       ],
     });
-    // 40 chars + 1 ellipsis = 41 — verify no full 100-char label survived.
+    // 100-char cap + ellipsis — verify no full 150-char label survived.
     expect(out).not.toContain(huge);
     expect(out).toMatch(/y+…/);
   });
@@ -374,8 +401,8 @@ describe('renderToolUse — AskUserQuestion (bug fix: question + options must su
     expect(out).toContain('MongoDB — Document store, flexible schema');
   });
 
-  it('truncates long descriptions to 60 chars', () => {
-    const longDesc = 'z'.repeat(120);
+  it('truncates very long descriptions to 300 chars (v1.2 Bug 5 relaxed cap)', () => {
+    const longDesc = 'z'.repeat(400);
     const out = renderToolUse('AskUserQuestion', {
       questions: [
         {
