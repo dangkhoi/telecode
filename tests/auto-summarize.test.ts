@@ -2,7 +2,7 @@
  * Phase D.2 — auto-summarize tool_result.
  *
  * Verifies the new dispatch behaviour that fires when a `tool_result.preview`
- * exceeds the configurable threshold AND the session mode is not `verbose`:
+ * exceeds the configurable threshold (all modes, including verbose):
  *
  *   1. The initial merged message shows a "⏳ Summarizing N output…" placeholder
  *      (NOT the truncated preview) so the user knows a summary is coming.
@@ -14,8 +14,8 @@
  *      stranded with a stuck "⏳ Summarizing…" message.
  *   4. Short previews (< threshold) skip auto-summarize entirely — render the
  *      regular merged "🔧 Bash · ls\n✅ Bash ok\n{preview}" body immediately.
- *   5. Mode `verbose` skips auto-summarize even on long previews — preserves
- *      v1.0 firehose behaviour for power users.
+ *   5. Verbose mode now ALSO auto-summarizes (user requirement: all modes need
+ *      LLM summarize because output volume is too high to follow manually).
  *   6. Sessions without sdk_session_id (never ran a turn) skip auto-summarize
  *      regardless of length (no resume context → summary would hallucinate).
  *
@@ -330,9 +330,9 @@ describe('Phase D.2 — auto-summarize long tool_result', () => {
     }
   });
 
-  it('verbose mode: skips auto-summarize even for long previews', async () => {
+  it('verbose mode: auto-summarizes same as other modes', async () => {
     const longPreview = 'y'.repeat(800);
-    const h = await setup({ mode: 'verbose', summaryText: 'should not fire' });
+    const h = await setup({ mode: 'verbose', summaryText: 'verbose summary result' });
     try {
       h.primary.emit({ type: 'tool_use', tool: 'Bash', input: { command: 'npm test' } });
       await flush();
@@ -346,9 +346,9 @@ describe('Phase D.2 — auto-summarize long tool_result', () => {
       await flush(20);
 
       const firstEdit = h.editPlain.mock.calls[0]![1] as string;
-      // Verbose path skips D.2 — no placeholder, original (truncated) preview shown.
-      expect(firstEdit).not.toContain('⏳ Summarizing');
-      expect(h.summaryStarted()).toBe(false);
+      // Verbose now also gets D.2 auto-summarize — placeholder shown.
+      expect(firstEdit).toContain('⏳ Summarizing');
+      expect(h.summaryStarted()).toBe(true);
     } finally {
       h.cleanup();
     }

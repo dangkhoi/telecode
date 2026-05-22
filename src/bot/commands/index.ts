@@ -1633,14 +1633,14 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             // Phase D.2 — auto-summarize gate. Fires only when:
             //   - Active session (background gets a single buffered line, no
             //     room to send placeholder + summary edit cleanly).
-            //   - Mode != verbose (verbose users want raw transcript).
             //   - Full preview char-count exceeds the configurable threshold
             //     (default 500). Short outputs are already readable.
             //   - Session has a sdk_session_id (no resume token → summarize
             //     would have no context, falls through to original render).
+            // NOTE: fires in ALL modes (including verbose) — user requirement
+            // "mode nào cũng cần LLM summarize".
             const autoSummarize =
               isActive &&
-              currentMode !== 'verbose' &&
               fullPreview.length > autoSummarizeThreshold() &&
               !!cur.sdk_session_id;
             if (isActive) {
