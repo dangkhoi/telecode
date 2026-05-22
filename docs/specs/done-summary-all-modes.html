@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spec — Done-summary đầy đủ cho mọi verbosity mode</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 72px 32px 120px; }
+  header.hero { margin-bottom: 48px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 40px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 20px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 64px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 28px; font-size: 16px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 36px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 26px 0 10px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 22px 26px; margin: 28px 0 40px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; margin: 22px 0; box-shadow: var(--shadow); }
+  .card h3, .card h4 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.danger { border-color: rgba(200,16,46,0.3); background: var(--danger-soft); }
+  .card.success { border-color: rgba(28,124,84,0.3); background: var(--success-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 8px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 56px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.55; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .compare .col h5 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after { border-left: 3px solid var(--success); }
+  .gate { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 6px; background: var(--warn-soft); color: var(--warn); margin-left: 8px; vertical-align: middle; }
+  @media (max-width: 720px) {
+    .wrap { padding: 44px 18px 72px; }
+    h1 { font-size: 30px; } .lede { font-size: 17px; } h2 { font-size: 22px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Spec · Telecode v1.3</div>
+  <h1>Done-summary đầy đủ cho mọi verbosity mode</h1>
+  <p class="lede">Đảm bảo sau khi hoàn tất MỖI tác vụ, ở BẤT KỲ verbosity mode nào (summary / normal / thinking / verbose), người dùng luôn nhận được một bản tóm tắt đầy đủ thông tin để nắm kết quả — không bao giờ rơi vào tình trạng "bot trả lời nhưng màn hình trống".</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Slug</strong> · done-summary-all-modes</span>
+    <span class="pill"><strong>Author</strong> · vendor.01@frt.vn</span>
+    <span class="pill"><strong>Date</strong> · 2026-05-22</span>
+    <span class="pill"><strong>Effort</strong> · ~0.5 ngày</span>
+    <span class="pill"><strong>Status</strong> · Implemented · senior-reviewed · pending daemon reload</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p><strong>Triệu chứng user gặp:</strong> hỏi câu dài → màn hình Telegram "không có content". Root cause: session ở verbosity mode <code>summary</code> (do default <code>DEFAULT_VERBOSITY_MODE='summary'</code>, session mode=<code>null</code>) → <code>shouldEmit('text')=false</code> → toàn bộ streaming text bị chặn; user chỉ còn trông cậy vào auto-done-summary, vốn (a) chỉ chạy ở <code>summary</code>/<code>normal</code>, (b) bị nuôi bằng <code>transcript_tail</code> chỉ-dòng-cuối, (c) instruction ép "1-2 câu, không giải thích" → quá cụt.</p>
+  <p><strong>Yêu cầu user (nguyên văn):</strong> "ở bất cứ mode nào, cũng cần phải summary đầy đủ thông tin cho người dùng đọc, ngay cả mode verbose, khi làm xong 1 tác vụ, cũng cần summary lại, đảm bảo đủ content để user nắm."</p>
+  <p><strong>Fix (4 điểm):</strong> (1) bật auto-done-summary ở <em>cả 4 mode</em>; (2) nuôi summarizer bằng <em>full turn text</em> tích lũy trong turn thay vì transcript_tail; (3) viết lại instruction để summary <em>đầy đủ, tự-chứa</em>; (4) <em>guaranteed-content fallback</em> — khi summarizer fail/timeout thì gửi thẳng full text (chunked) để content không bao giờ mất. Bonus: đổi <code>DEFAULT_VERBOSITY_MODE</code> → <code>'normal'</code>.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Changelog</h2>
+<table>
+  <thead><tr><th>Date</th><th>Section</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05-22</td><td>All</td><td>Initial spec — phát sinh từ điều tra bug "không thấy content trả về" trong phiên 22/05.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Context</h2>
+<p class="section-sub">Bug được phát hiện trong lúc dùng thật, qua điều tra log + state.db + code.</p>
+
+<div class="card">
+  <h4>Bằng chứng điều tra</h4>
+  <ul>
+    <li><strong>state.db</strong>: session <code>a267e1cb</code> có <code>verbosity_mode = null</code>; <code>chat_state</code> không có cột default → <code>resolveMode()</code> trả <code>DEFAULT_VERBOSITY_MODE = 'summary'</code> (<code>src/session/verbosity.ts:52,172</code>).</li>
+    <li><strong>verbosity.ts:146</strong> <code>shouldEmit</code>: case <code>'text'</code> → <code>return mode !== 'summary'</code> ⇒ ở mode summary, streaming text bị chặn hoàn toàn.</li>
+    <li><strong>log telecode.3.log</strong>: mỗi turn của <code>a267e1cb</code> chỉ có <code>summarize: ok</code>, KHÔNG có <code>tg send failed</code> ⇒ Telegram không từ chối; nội dung bị tầng gating chủ động bỏ.</li>
+    <li><strong>commands/index.ts:1842</strong>: <code>enableAutoDoneSummary = (currentMode==='summary' || currentMode==='normal') &amp;&amp; ...</code> ⇒ <code>thinking</code>/<code>verbose</code> KHÔNG có done-summary.</li>
+    <li><strong>commands/index.ts:1424</strong> + <strong>store.ts:176</strong>: transcript_tail tích bằng <code>e.text.split('\n').slice(-1)[0]</code> — chỉ giữ DÒNG CUỐI mỗi text-chunk ⇒ input summarize bị méo, mất nội dung giữa.</li>
+    <li><strong>commands/index.ts:141</strong>: instruction = "Tóm tắt … 1-2 câu … Không giải thích" ⇒ summary quá cụt, không "đủ content để user nắm".</li>
+  </ul>
+</div>
+
+<div class="card warn">
+  <h4>Vì sao "tin đầu có vẻ tới, tin sau trống"</h4>
+  <p>Thực chất user <em>chưa bao giờ</em> thấy nội dung streaming thật ở mode summary — chỉ thấy done-summary. Tin mô tả ảnh thì summary đủ nghĩa nên tưởng OK; các bài phân tích dài thì summary 1-2 câu không tải nổi nội dung → cảm giác "trống". Đây là class bug "content loss", không phải "render/markdown/chunk" như giả thuyết ban đầu.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Requirements <span class="gate">Approval gate #1</span></h2>
+<p class="section-sub">Approve out-of-band (portal hoặc prompt "Approve Requirements section of spec done-summary-all-modes").</p>
+
+<table>
+  <thead><tr><th>ID</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>R1</strong></td>
+      <td>Sau khi hoàn tất một tác vụ, done-summary phải xuất hiện ở <em>cả 4 mode</em>: summary, normal, thinking, verbose.</td>
+      <td>Với mỗi mode, một turn có nội dung thật (text/tool) → kết thúc bằng 1 message done có phần tóm tắt nội dung (không chỉ "✅ done").</td>
+    </tr>
+    <tr>
+      <td><strong>R2</strong></td>
+      <td>Summary phải "đầy đủ thông tin để user nắm" — tự-chứa, phản ánh kết quả/câu trả lời thật, không phải meta-summary 1 câu.</td>
+      <td>Với câu trả lời phân tích dài, summary truyền tải được các điểm/kết luận chính (không bị cắt còn 1-2 câu vô nghĩa). Độ dài thích ứng theo nội dung.</td>
+    </tr>
+    <tr>
+      <td><strong>R3</strong></td>
+      <td><span class="badge badge-danger">P0</span> Guaranteed content — nội dung không bao giờ biến mất, kể cả khi summarizer timeout/crash.</td>
+      <td>Mô phỏng summarizer trả <code>null</code>: ở mode <code>summary</code> (text bị suppress), user vẫn nhận được full nội dung turn (chunked). Không có đường nào dẫn tới màn hình trống.</td>
+    </tr>
+    <tr>
+      <td><strong>R4</strong></td>
+      <td>Default verbosity mode an toàn cho session/chat mới.</td>
+      <td><code>DEFAULT_VERBOSITY_MODE = 'normal'</code>; session mới (mode=null) hiển thị full streaming text ngay, không cần user gõ <code>/mode</code>.</td>
+    </tr>
+    <tr>
+      <td><strong>R5</strong></td>
+      <td>Không hồi quy chức năng & cost story hiện có.</td>
+      <td>Approval-in-flight vẫn skip summarize; per-session summarize mutex giữ nguyên; toàn bộ test cũ pass. Lưu ý: số lần gọi summarizer/turn TĂNG ở verbose/thinking (trước đây 0 → nay 1) — đây là chủ đích của R1, không phải hồi quy.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Design <span class="gate">Approval gate #2</span></h2>
+<p class="section-sub">Sẽ hoàn thiện chi tiết song song khi implement (DAG). Bản nháp định hướng dưới đây.</p>
+
+<div class="card">
+  <h4>D1 — Bật done-summary mọi mode (R1)</h4>
+  <p><code>commands/index.ts:1842</code>: bỏ điều kiện <code>(currentMode==='summary' || currentMode==='normal')</code>. <code>enableAutoDoneSummary</code> chỉ còn phụ thuộc <code>!approvalInFlight &amp;&amp; hasResumeId &amp;&amp; hasContent</code>. Mode <code>verbose</code>/<code>thinking</code> trước đây rơi vào nhánh baseline-tail giờ cũng nhận done-summary recap.</p>
+</div>
+
+<div class="card">
+  <h4>D2 — Full turn text thay vì transcript_tail (R2)</h4>
+  <p>Trong onEvent của dispatch chính, tích lũy một biến <code>turnText</code> (đóng theo scope mỗi turn) cộng dồn <em>mọi</em> <code>e.text</code> (không chỉ dòng cuối). Khi <code>done</code>, dùng <code>turnText.trim()</code> làm input summarize (fallback <code>transcript_tail</code> rồi <code>doneResultText</code> nếu rỗng). Không đụng cơ chế transcript_tail hiện có (vẫn dùng cho /sessions preview).</p>
+  <p><em>Lưu ý bộ nhớ:</em> cap <code>turnText</code> ở ngưỡng an toàn (ví dụ 32KB) để tránh phình RAM với turn cực dài; vượt thì giữ phần đầu + phần cuối.</p>
+</div>
+
+<div class="card">
+  <h4>D3 — Instruction giàu nội dung (R2)</h4>
+  <p>Viết lại <code>AUTO_DONE_SUMMARIZE_INSTRUCTION</code>: yêu cầu bản tóm tắt <em>tự-chứa, đủ để người đọc nắm kết quả mà không cần xem chi tiết</em>; giữ con số/kết luận/đường dẫn quan trọng; cho phép gạch đầu dòng; độ dài thích ứng (ngắn cho việc nhỏ, có cấu trúc cho việc lớn). Bỏ ràng buộc "1-2 câu / không giải thích".</p>
+</div>
+
+<div class="card success">
+  <h4>D4 — Guaranteed-content fallback (R3, P0)</h4>
+  <p>Khi <code>summarizeWithSession</code> trả <code>null</code> (timeout/crash):</p>
+  <ul>
+    <li>Nếu <strong>text đã được stream trong turn</strong> (mode normal/thinking/verbose, <code>turnText</code> đã hiển thị) → giữ baseline tail <code>✅ Done</code> là đủ (user đã thấy nội dung).</li>
+    <li>Nếu <strong>text bị suppress</strong> (mode <code>summary</code>) → gửi thẳng <code>turnText</code> qua <code>sendChunked</code> (đã có sẵn) để đảm bảo content tới user. Đây là điểm mấu chốt chống "màn hình trống".</li>
+  </ul>
+  <p>Điều kiện rẽ nhánh dựa trên <code>shouldEmit({type:'text'}, currentMode)</code> — single source of truth, không hardcode lại tên mode.</p>
+</div>
+
+<div class="card">
+  <h4>D5 — Default mode normal (R4)</h4>
+  <p><code>verbosity.ts:52</code>: <code>DEFAULT_VERBOSITY_MODE = 'normal'</code>. Cập nhật doc-comment + test khẳng định default. Không migrate dữ liệu cũ (session mode=null tự hưởng default mới).</p>
+</div>
+
+<div class="compare">
+  <div class="col before">
+    <h5>Trước (mode summary, summarizer fail)</h5>
+    <div class="mock">[koi] ✅ Done · 4s
+(không gì thêm — content mất)</div>
+  </div>
+  <div class="col after">
+    <h5>Sau (D4 fallback)</h5>
+    <div class="mock">[koi] ✅ Done · 4s
+&lt;full nội dung turn, chunked nếu &gt;3500&gt;</div>
+  </div>
+</div>
+
+<!-- ============================================================== -->
+<h2>Tasks <span class="gate">Approval gate #3</span></h2>
+<p class="section-sub">DAG — owner đơn cho file <code>commands/index.ts</code> để tránh write-conflict.</p>
+
+<ul class="checklist">
+  <li class="todo"><strong>T1</strong> — D5: đổi <code>DEFAULT_VERBOSITY_MODE</code> → <code>'normal'</code> + doc-comment. Sửa <code>tests/verbosity.test.ts</code> / <code>verbosity-store.test.ts</code> assert default. <span class="badge badge-muted">verbosity.ts</span></li>
+  <li class="todo"><strong>T2</strong> — D1: bỏ mode-gate ở <code>enableAutoDoneSummary</code>. <span class="badge badge-muted">commands/index.ts</span></li>
+  <li class="todo"><strong>T3</strong> — D2: thêm tích lũy <code>turnText</code> trong onEvent + dùng làm input summarize (kèm cap 32KB). <span class="badge badge-muted">commands/index.ts</span></li>
+  <li class="todo"><strong>T4</strong> — D3: viết lại <code>AUTO_DONE_SUMMARIZE_INSTRUCTION</code>. <span class="badge badge-muted">commands/index.ts</span></li>
+  <li class="todo"><strong>T5</strong> — D4: nhánh fallback gửi <code>turnText</code> chunked khi summary=null &amp; text bị suppress. <span class="badge badge-muted">commands/index.ts</span></li>
+  <li class="todo"><strong>T6</strong> — Tests: cập nhật <code>auto-done-summary.test.ts</code>, <code>summary-full-output.test.ts</code>, <code>verbosity.test.ts</code>; thêm case "verbose có done-summary", "summary + summarizer-null → full content gửi đi".</li>
+  <li class="todo"><strong>T7</strong> — Build <code>dist/</code> + reload daemon + smoke test 4 mode trên Telegram.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Verification</h2>
+<table>
+  <thead><tr><th>Req</th><th>Cách verify</th></tr></thead>
+  <tbody>
+    <tr><td>R1</td><td>Unit: với mỗi mode trong {summary,normal,thinking,verbose}, dispatch giả lập có text+done → assert có gọi summarize / có message tóm tắt.</td></tr>
+    <tr><td>R2</td><td>Unit + smoke: feed answer dài, assert instruction mới được dùng & summary &gt; ngưỡng cụt; manual đọc trên Telegram.</td></tr>
+    <tr><td>R3</td><td>Unit: mock <code>summarizeWithSession</code> trả null ở mode summary → assert <code>sendChunked(turnText)</code> được gọi.</td></tr>
+    <tr><td>R4</td><td>Unit: <code>resolveMode(null,null) === 'normal'</code>.</td></tr>
+    <tr><td>R5</td><td>Chạy full <code>vitest</code>; assert approval-in-flight vẫn skip; đếm số call summarize/turn không đổi.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Open Questions</h2>
+<div class="card warn">
+  <p><strong>Q1.</strong> Mode <code>verbose</code> user đã thấy full transcript — done-summary recap có thừa không? Spec hiện chọn "vẫn hiện" theo yêu cầu user ("ngay cả mode verbose"). Có cần nút tắt riêng không?</p>
+</div>
+<div class="card warn">
+  <p><strong>Q2.</strong> Cap <code>turnText</code> 32KB — ngưỡng hợp lý? Hay theo số ký tự khác?</p>
+</div>
+<div class="card warn">
+  <p><strong>Q3.</strong> D4 fallback gửi full text khi summarizer fail ở mode summary có làm "summary mode" mất ý nghĩa tiết kiệm? (Chỉ xảy ra khi fail — chấp nhận được, vì content &gt; tiết kiệm.)</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>References</h2>
+<ul>
+  <li><code>src/session/verbosity.ts</code> — <code>shouldEmit</code>, <code>resolveMode</code>, <code>DEFAULT_VERBOSITY_MODE</code></li>
+  <li><code>src/bot/commands/index.ts</code> — done-summary block (~1820-1921), instruction (141), transcript append (1424)</li>
+  <li><code>src/agents/summarize.ts</code> — <code>summarizeWithSession</code></li>
+  <li><code>src/bot/notifier.ts</code> — <code>sendChunked</code>, <code>editPlainChunked</code>, <code>splitForTelegram</code></li>
+  <li>Spec liên quan: <code>docs/specs/telegram-media-input.html</code> (Phase D done-summary gốc)</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Reviewer Log</h2>
+<p class="section-sub">Append-only. Mỗi pass senior review (Opus 4.7) thêm 1 mục, không overwrite.</p>
+<div class="card">
+  <h4>Pass 0 — 2026-05-22 — Author draft</h4>
+  <p>Spec khởi tạo, chờ approve Requirements. Chưa có code.</p>
+</div>
+
+<div class="card success">
+  <h4>Pass 1 — 2026-05-22 — Senior review (Opus 4.7)</h4>
+  <p><strong>Verdict: APPROVED.</strong> Implementation khớp với spec; tất cả deliverable R1–R5 / T1–T6 có code + test. T7 (build/reload/smoke) là deploy-step, ngoài scope review code.</p>
+
+  <h4>Scope checklist</h4>
+  <ul class="checklist">
+    <li class="done"><strong>R1 / T1–T2</strong> — done-summary fire ở cả 4 mode (bỏ mode-gate ở <code>enableAutoDoneSummary</code>). Test: "verbose mode NOW fires", "thinking mode also fires".</li>
+    <li class="done"><strong>R2 / T3–T4</strong> — full <code>turnText</code> accumulator + instruction giàu nội dung. Cap 32KB head+tail correct (kết quả sau trim &lt; CAP, head ổn định qua nhiều lần trim, không lặp vô hạn).</li>
+    <li class="done"><strong>R3 / T5</strong> <span class="badge badge-danger">P0</span> — guaranteed-content fallback ở CẢ 2 nhánh (summarizer-null & no-resume). Test: "summary + summarizer FAILS → full text sent"; "summary + no-resume + text → raw surfaces" (thêm Pass 1).</li>
+    <li class="done"><strong>R4 / T1</strong> — <code>DEFAULT_VERBOSITY_MODE='normal'</code> + test <code>resolveMode(null,null)==='normal'</code>.</li>
+    <li class="partial"><strong>R5</strong> — không hồi quy (780 test pass, approval-in-flight vẫn skip, mutex giữ nguyên). LƯU Ý: acceptance "số call summarize/turn không đổi" mâu thuẫn với R1 — verbose/thinking trước KHÔNG gọi summarizer, giờ CÓ. Đây là tradeoff chủ ý theo yêu cầu user (Q1/Q3 đã ghi nhận). Wording R5 cần nới — xem [P3] dưới.</li>
+  </ul>
+
+  <h4>Findings</h4>
+  <ul>
+    <li><span class="badge badge-muted">P3</span> <strong>R5 acceptance contradicts R1.</strong> "đếm số call summarize/turn không đổi" không còn đúng cho verbose/thinking (đó chính là điểm của R1). Code đúng theo R1; chỉ wording spec lỗi thời. Action: flag — đề nghị author sửa acceptance R5 thành "không tăng call ở các mode đã có summarize từ trước; verbose/thinking tăng có chủ đích theo R1".</li>
+    <li><span class="badge badge-muted">P3</span> <strong>Thứ tự gửi không nhất quán giữa 2 nhánh fallback.</strong> Nhánh no-resume: gửi raw content TRƯỚC rồi <code>✅ done</code>. Nhánh summarizer-null: gửi <code>✅ Done</code> card TRƯỚC rồi raw content. Cả hai đều bảo toàn content (R3 đạt); chỉ khác thứ tự hiển thị. Không block — để nguyên (refactor ngoài scope).</li>
+    <li><span class="badge badge-success">OK</span> <strong>Double-send</strong> — kiểm tra 4 nhánh: summary+success chỉ hiện summary (không dump raw — test mới Pass 1 khẳng định); summary+fail hiện card+raw (1 lần content); normal/thinking/verbose+fail KHÔNG dump (đã stream live). Không có đường nào gửi content 2 lần.</li>
+    <li><span class="badge badge-success">OK</span> <strong><code>{type:'text',text:''}</code> cho shouldEmit</strong> — hợp lệ với union <code>{type:'text';text:string;final?:boolean}</code>; case <code>'text'</code> chỉ đọc <code>mode</code>, bỏ qua giá trị text; default-case fallback cũng trả <code>mode!=='summary'</code> ⇒ robust nếu union đổi.</li>
+    <li><span class="badge badge-success">OK</span> <strong>Race với mutex / accumulation</strong> — <code>onEvent</code> đồng bộ, <code>appendTurnText</code> chạy trước IIFE của <code>done</code>; events tuần tự nên <code>turnText</code> đã đầy đủ khi done đọc. Fallback nằm sau <code>await summarizeWithSession</code>, tuần tự — không thêm tương tác mutex mới.</li>
+    <li><span class="badge badge-success">OK</span> <strong>Secret-scrub trên fallback</strong> — <code>sendChunked</code> gọi <code>scrubSecrets</code> nội bộ ⇒ raw turn text được scrub trước khi gửi (quan trọng vì đây là raw dump, không qua render layer).</li>
+    <li><span class="badge badge-success">OK</span> <strong>Truncated dump</strong> — khi cap hit, dump có marker <code>…</code>; phần giữa cũng đã bị loại khỏi summarize input ⇒ nhất quán, chấp nhận được theo §D2.</li>
+  </ul>
+
+  <h4>Fixes applied (Pass 1)</h4>
+  <ul>
+    <li>Thêm 2 regression test vào <code>tests/auto-done-summary.test.ts</code>: (1) "summary + summarizer SUCCESS → raw KHÔNG bị gửi lại" (khóa chặt no-double-send cho R3); (2) "summary + no-resume + streamed text → raw vẫn surface" (cover nhánh <code>!enableAutoDoneSummary</code> với <code>textWasSuppressed</code>, trước đó không có test).</li>
+    <li>Cập nhật docstring header của test file (mô tả cũ "verbose skips summarize" đã lỗi thời).</li>
+  </ul>
+
+  <h4>Tech freshness</h4>
+  <ul>
+    <li>Không thêm dependency. Code mới chỉ dùng <code>String.slice/trim/length</code>, template literal, numeric separator (<code>32_000</code> — ổn định từ ES2021/Node 12). Không có deprecated Node/TS API. <span class="badge badge-success">OK</span> (Context7 skip — không có dep mới, đúng §5.2).</li>
+  </ul>
+
+  <h4>Test result</h4>
+  <p><code>npx tsc --noEmit</code> clean. <code>npx vitest run</code> → <strong>780 passed · 2 skipped (782)</strong>, 65 file. Review loop exit: 0 P0/P1/P2 còn lại; 2 P3 là spec-wording / cosmetic, không block merge.</p>
+</div>
+
+</div>
+</body>
+</html>

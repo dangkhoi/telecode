@@ -46,10 +46,17 @@ export const VERBOSITY_MODES: readonly VerbosityMode[] = Object.freeze([
 
 /**
  * Baked-in default — used when neither the session NOR the chat has a stored
- * preference. Matches the persona-50% bucket (on-the-go glance user) per
- * plan §2.1.
+ * preference.
+ *
+ * v1.3 (spec done-summary-all-modes §D5/R4): changed 'summary' → 'normal'.
+ * Rationale: 'summary' suppresses ALL streaming text (`shouldEmit('text')`
+ * returns false), so a brand-new session silently hid the agent's actual
+ * answers and relied entirely on the best-effort done-summary — users
+ * experienced "the bot replied but the screen is blank". 'normal' streams the
+ * full response by default; users who want the condensed surface opt in via
+ * `/mode summary`.
  */
-export const DEFAULT_VERBOSITY_MODE: VerbosityMode = 'summary';
+export const DEFAULT_VERBOSITY_MODE: VerbosityMode = 'normal';
 
 /**
  * User-facing metadata per mode. Surfaced by `/mode` (current + inline kbd

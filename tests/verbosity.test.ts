@@ -28,8 +28,8 @@ describe('verbosity: constants', () => {
     expect(Object.isFrozen(VERBOSITY_MODES)).toBe(true);
   });
 
-  it('default mode is summary (on-the-go persona, plan §2.1)', () => {
-    expect(DEFAULT_VERBOSITY_MODE).toBe('summary');
+  it('default mode is normal (v1.3 — summary suppressed all text → blank-screen bug)', () => {
+    expect(DEFAULT_VERBOSITY_MODE).toBe('normal');
   });
 
   it('MODE_METADATA has an entry per mode with non-empty fields', () => {
@@ -75,8 +75,8 @@ describe('verbosity: resolveMode', () => {
   it('session > chat > default', () => {
     expect(resolveMode('verbose', 'normal')).toBe('verbose');
     expect(resolveMode(null, 'thinking')).toBe('thinking');
-    expect(resolveMode(undefined, undefined)).toBe('summary');
-    expect(resolveMode(null, null)).toBe('summary');
+    expect(resolveMode(undefined, undefined)).toBe('normal');
+    expect(resolveMode(null, null)).toBe('normal');
   });
 
   it('session null + chat present → chat', () => {

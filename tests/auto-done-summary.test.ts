@@ -1,16 +1,22 @@
 /**
  * Phase D.4 — Auto done-summary.
  *
- * Verifies the new behaviour added to the `done` branch of the dispatcher:
+ * Verifies the behaviour of the `done` branch of the dispatcher:
  *
- *   - mode = summary OR normal: emit `✅ Done · {duration}s · ${cost}` first,
- *     then run summarizeWithSession on the session transcript_tail, then
- *     EDIT the done message to append the agent's summary.
- *   - mode = verbose: skip summarize entirely. Keep the v1.0 tail format
- *     (`✅ done · $cost` — lowercase "done", no duration breakdown).
- *   - summarize timeout / null: send the enhanced tail but never edit.
+ *   - ALL four modes (summary/normal/thinking/verbose): emit
+ *     `✅ Done · {duration}s · ${cost}` first, then run summarizeWithSession on
+ *     the captured full turn text, then EDIT the done message to append the
+ *     agent's summary. (v1.3 spec done-summary-all-modes §D1/R1 — was
+ *     summary|normal only.)
+ *   - summarize timeout / null: keep the enhanced tail; AND when streaming was
+ *     suppressed this turn (summary mode) send the raw captured turn text so
+ *     content is never lost (§D4/R3 guaranteed content). When text was streamed
+ *     live (normal/thinking/verbose) no raw dump — the user already saw it.
+ *   - summarize success in summary mode: summary is the only surface — the raw
+ *     turn text is NOT also sent (no double-send).
  *   - session.status = waiting_approval (defensive): skip summarize.
- *   - session without sdk_session_id: skip summarize.
+ *   - session without sdk_session_id: skip summarize, but still surface raw
+ *     turn text if streaming was suppressed.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -281,11 +287,11 @@ describe('Phase D.4 — auto done-summary', () => {
     }
   });
 
-  it('verbose mode: keeps v1.0 lowercase "done" tail, NO summary edit', async () => {
+  it('verbose mode: v1.3 NOW fires done-summary too (R1 — every mode summarizes)', async () => {
     const h = await setup({
       mode: 'verbose',
       transcript: 'whatever',
-      summaryText: 'should not fire',
+      summaryText: 'Tóm tắt verbose recap.',
     });
     try {
       h.primary.emit({
@@ -295,15 +301,126 @@ describe('Phase D.4 — auto done-summary', () => {
         result: 'success',
       });
       h.primary.finish();
-      await flush(20);
+      await flush(30);
+
+      // v1.3: enhanced tail (not v1.0 lowercase) + summary fires + edit appends.
+      const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
+      expect(sendTexts.some((t) => /✅ Done · 12s · \$0\.0050/.test(t))).toBe(true);
+      expect(h.summaryStarted()).toBe(true);
+      const editTexts = h.editPlain.mock.calls.map((c) => c[1]) as string[];
+      expect(editTexts.find((t) => t.includes('Tóm tắt verbose recap.'))).toBeDefined();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('thinking mode: also fires done-summary (R1)', async () => {
+    const h = await setup({
+      mode: 'thinking',
+      transcript: 'ctx',
+      summaryText: 'Tóm thinking.',
+    });
+    try {
+      h.primary.emit({ type: 'done', durationMs: 4_000, totalCostUsd: 0.002, result: 'ok' });
+      h.primary.finish();
+      await flush(30);
+      expect(h.summaryStarted()).toBe(true);
+      const editTexts = h.editPlain.mock.calls.map((c) => c[1]) as string[];
+      expect(editTexts.find((t) => t.includes('Tóm thinking.'))).toBeDefined();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('summary mode + summarizer FAILS: full turn text is sent (R3/D4 — guaranteed content)', async () => {
+    const h = await setup({
+      mode: 'summary',
+      transcript: 'tail',
+      summaryText: null, // summarizer errors → null
+    });
+    try {
+      // Stream real answer text BEFORE done. In summary mode this is suppressed
+      // from streaming but accumulated into turnText for the fallback.
+      h.primary.emit({ type: 'text', text: 'ANSWER-BODY-12345 full content here.' });
+      h.primary.emit({ type: 'done', durationMs: 6_000, totalCostUsd: 0.001, result: 'success' });
+      h.primary.finish();
+      await flush(40);
+
+      // Summarizer was attempted but failed; the raw captured turn text must
+      // reach the user (via sendChunked → sendPlain in the test notifier).
+      expect(h.summaryStarted()).toBe(true);
+      const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
+      expect(sendTexts.some((t) => t.includes('ANSWER-BODY-12345 full content here.'))).toBe(true);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('normal mode + summarizer FAILS: NO raw dump (user already saw the stream)', async () => {
+    const h = await setup({
+      mode: 'normal',
+      transcript: 'tail',
+      summaryText: null,
+    });
+    try {
+      h.primary.emit({ type: 'text', text: 'STREAMED-ALREADY-SEEN' });
+      h.primary.emit({ type: 'done', durationMs: 6_000, totalCostUsd: 0.001, result: 'success' });
+      h.primary.finish();
+      await flush(40);
 
       const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
-      // v1.0 format: lowercase "done", no "Done · 12s ·"
-      const doneSend = sendTexts.find((t) => /✅ done · \$0\.0050/.test(t));
-      expect(doneSend).toBeDefined();
-      // No subsequent edit (summarize skipped).
-      expect(h.editPlain).not.toHaveBeenCalled();
+      // In normal mode text was streamed live → no duplicate raw dump on failure.
+      expect(sendTexts.some((t) => t.includes('STREAMED-ALREADY-SEEN'))).toBe(false);
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('summary mode + summarizer SUCCEEDS: raw turn text is NOT also sent (no double-send, R3)', async () => {
+    const h = await setup({
+      mode: 'summary',
+      transcript: 'tail',
+      summaryText: 'Tóm tắt gọn.',
+    });
+    try {
+      // Stream content in summary mode (suppressed live, accumulated for fallback).
+      h.primary.emit({ type: 'text', text: 'RAW-BODY-SHOULD-NOT-LEAK-ON-SUCCESS' });
+      h.primary.emit({ type: 'done', durationMs: 5_000, totalCostUsd: 0.001, result: 'success' });
+      h.primary.finish();
+      await flush(40);
+
+      // Summary succeeded → it is the ONLY content surface; the raw turn text
+      // must NOT be sent as a separate message (would duplicate / defeat
+      // summary mode). Summary appears via the edit path.
+      expect(h.summaryStarted()).toBe(true);
+      const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
+      expect(sendTexts.some((t) => t.includes('RAW-BODY-SHOULD-NOT-LEAK-ON-SUCCESS'))).toBe(false);
+      const editTexts = h.editPlain.mock.calls.map((c) => c[1]) as string[];
+      expect(editTexts.find((t) => t.includes('Tóm tắt gọn.'))).toBeDefined();
+    } finally {
+      h.cleanup();
+    }
+  });
+
+  it('summary mode + NO resume id + streamed text: raw turn text still surfaces (R3/D4 no-resume branch)', async () => {
+    const h = await setup({
+      mode: 'summary',
+      withResume: false,
+      transcript: 'tail',
+      summaryText: 'should not fire',
+    });
+    try {
+      h.primary.emit({ type: 'text', text: 'NO-RESUME-SUMMARY-BODY-XYZ' });
+      h.primary.emit({ type: 'done', durationMs: 4_000, totalCostUsd: 0.001, result: 'success' });
+      h.primary.finish();
+      await flush(40);
+
+      // Can't summarize (no resume id) AND text was suppressed live → the
+      // guaranteed-content fallback in the !enableAutoDoneSummary branch must
+      // surface the raw turn text so the user isn't left blank.
       expect(h.summaryStarted()).toBe(false);
+      const sendTexts = h.sendPlain.mock.calls.map((c) => c[0]) as string[];
+      expect(sendTexts.some((t) => t.includes('NO-RESUME-SUMMARY-BODY-XYZ'))).toBe(true);
     } finally {
       h.cleanup();
     }

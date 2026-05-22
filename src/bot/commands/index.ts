@@ -139,9 +139,24 @@ const AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION =
  * what it just did across the entire turn. 1-2 câu giữ ngắn để fit phone glance.
  */
 const AUTO_DONE_SUMMARIZE_INSTRUCTION =
-  'Tóm tắt công việc vừa làm trong 1-2 câu tiếng Việt, ngắn gọn. ' +
-  'Tập trung vào: đã làm gì xong, file/feature/test nào đã đụng, ' +
-  'kết quả cuối (pass/fail/blocked). Không giải thích, không markdown — chỉ summary.';
+  'Viết bản tóm tắt TỰ-CHỨA bằng tiếng Việt cho câu trả lời / công việc vừa rồi, ' +
+  'đủ thông tin để người đọc NẮM ĐƯỢC KẾT QUẢ mà không cần xem lại chi tiết. ' +
+  'Giữ lại các điểm chính, kết luận, con số và đường dẫn quan trọng. ' +
+  'Nếu là tác vụ code: nêu đã làm gì, file/feature/test nào đụng, kết quả (pass/fail/blocked). ' +
+  'Nếu là câu trả lời/giải thích: truyền tải các ý chính và kết luận. ' +
+  'Độ dài thích ứng: việc nhỏ vài câu, việc lớn dùng gạch đầu dòng. ' +
+  'Không thêm lời mở đầu kiểu "Đây là tóm tắt" — đi thẳng vào nội dung.';
+
+/**
+ * v1.3 (spec done-summary-all-modes §D2) — cap for the per-turn accumulated
+ * assistant text. Keeps the summarize input (and the §D4 fallback payload)
+ * bounded so a pathologically long turn can't pin RAM. On overflow we keep the
+ * head + tail (the middle is where prose is most compressible / least
+ * load-bearing for a summary).
+ */
+const TURN_TEXT_CAP = 32_000;
+const TURN_TEXT_HEAD = 20_000;
+const TURN_TEXT_TAIL = 11_000;
 
 /**
  * Phase D.2 helper — render a byte count as a compact human-readable hint
@@ -1212,6 +1227,24 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     // running. See docs/specs/telegram-media-input.html §R1.
     let lastResolvedTool: { toolName: string; filePath: string | null; ok: boolean } | null = null;
 
+    // v1.3 (spec done-summary-all-modes §D2) — accumulate the FULL assistant
+    // text of this turn so the auto-done-summary can be fed the real answer
+    // (not `transcript_tail`, which keeps only the last line of each chunk and
+    // thus mangles multi-paragraph replies). Accumulated BEFORE the shouldEmit
+    // gate so it captures text even in `summary` mode where streaming is
+    // suppressed — that captured text is also the guaranteed-content fallback
+    // (§D4) when the summarizer times out / crashes. Capped to avoid pinning
+    // RAM on pathologically long turns (keep head + tail).
+    let turnText = '';
+    const appendTurnText = (chunk: string): void => {
+      turnText += chunk;
+      if (turnText.length > TURN_TEXT_CAP) {
+        const head = turnText.slice(0, TURN_TEXT_HEAD);
+        const tail = turnText.slice(-TURN_TEXT_TAIL);
+        turnText = `${head}\n…\n${tail}`;
+      }
+    };
+
     // Phase A.5 — per-dispatch pending-tool tracker. Suggestion keyboards are
     // now attached when the matching tool_result arrives (Phase A.2 branch
     // below), NOT when the tool_use is announced — the user has more useful
@@ -1369,6 +1402,13 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
             } else if (progressText !== null) {
               void progressMgr.update(cur.id, progressText);
             }
+          }
+
+          // v1.3 (spec done-summary-all-modes §D2/§D4) — capture the full
+          // assistant text BEFORE the shouldEmit gate so it's collected even
+          // in `summary` mode (where text events are suppressed below).
+          if (e.type === 'text') {
+            appendTurnText(e.text);
           }
 
           if (!shouldEmit(e, currentMode)) {
@@ -1820,10 +1860,13 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
               }
               await notifier.closeStream(streamKey);
 
-              // Phase D.4 — auto done-summary. Triggers when mode is summary
-              // or normal AND we have a result/durationMs to format (i.e. the
-              // dispatch ran a real turn, not a 0-event no-op). Verbose mode
-              // skips — power users see the raw transcript already.
+              // Phase D.4 — auto done-summary.
+              //
+              // v1.3 (spec done-summary-all-modes §D1/R1): fire in ALL four
+              // verbosity modes (was: summary|normal only). Per user requirement
+              // "ở bất cứ mode nào … khi làm xong 1 tác vụ cũng cần summary lại,
+              // đảm bảo đủ content để user nắm" — verbose/thinking now also get
+              // an end-of-turn recap.
               //
               // Guard: skip when session.status is `waiting_approval` (an
               // approval is mid-flight; firing summarize now would pollute
@@ -1840,9 +1883,18 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
               // auto-summary even though the agent now has resume context
               // (Opus 4.7 review [P3]).
               const enableAutoDoneSummary =
-                (currentMode === 'summary' || currentMode === 'normal') &&
                 !approvalInFlight &&
                 !!(freshSession?.sdk_session_id ?? cur.sdk_session_id);
+
+              // v1.3 (§D4/R3) — was the streaming text suppressed this turn?
+              // In `summary` mode `shouldEmit('text')` is false, so the user
+              // saw NOTHING during the turn — the done-summary (or its
+              // fallback) is the ONLY content surface. Used below to guarantee
+              // content reaches the user even when the summarizer bails.
+              const textWasSuppressed = !shouldEmit(
+                { type: 'text', text: '' },
+                currentMode,
+              );
 
               // Compose the basic done tail first — fallback if summarize
               // bails. Duration shown in seconds (rounded) when present.
@@ -1873,7 +1925,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                   : undefined;
 
               if (!enableAutoDoneSummary) {
-                // Verbose / no-resume / approval-pending → original v1.0 tail.
+                // No-resume / approval-pending → can't run the summarizer.
+                // v1.3 (§D4/R3): if text was SUPPRESSED this turn (summary
+                // mode) and we captured content, surface the raw turn text so
+                // the user isn't left with a blank screen. Only when the turn
+                // is actually finished (not approval-in-flight).
+                if (textWasSuppressed && !approvalInFlight && turnText.trim().length > 0) {
+                  await notifier.sendChunked(`${labelPrefix}${turnText.trim()}`, {
+                    silent: true,
+                  });
+                }
                 const baselineMsgId = await notifier.sendPlain(
                   `${labelPrefix}${baselineTail}`,
                 );
@@ -1892,10 +1953,12 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 await notifier.editReplyMarkup(doneMsgId, doneKb);
               }
 
-              // Build the summarize input — the most recent transcript tail
-              // gives the agent enough context to summarize what it just did.
+              // Build the summarize input. v1.3 (§D2): prefer the FULL turn
+              // text captured this turn — it's the real answer. `transcript_tail`
+              // (last line of each chunk only) and `doneResultText` are fallbacks
+              // for turns that produced no streamed text (e.g. tool-only turns).
               const summarizePromptContent =
-                freshSession?.transcript_tail ?? doneResultText ?? '';
+                turnText.trim() || freshSession?.transcript_tail || doneResultText || '';
               if (summarizePromptContent.length === 0) {
                 // Nothing to summarize — leave the baseline tail in place.
                 return;
@@ -1910,7 +1973,18 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 kind: 'auto-done',
               });
               if (!summary) {
-                // Timeout / error — keep the baseline tail; no edit needed.
+                // v1.3 (§D4/R3, P0) — guaranteed content. Summarizer timed out
+                // or crashed. If the streaming text was SUPPRESSED this turn
+                // (summary mode), the user has seen nothing — falling back to a
+                // bare "✅ Done" would lose the entire answer. Send the raw
+                // captured turn text instead (chunked for >3500 chars). When
+                // text WAS streamed (normal/thinking/verbose), the user already
+                // saw it, so the baseline tail is sufficient.
+                if (textWasSuppressed && turnText.trim().length > 0) {
+                  await notifier.sendChunked(`${labelPrefix}${turnText.trim()}`, {
+                    silent: true,
+                  });
+                }
                 return;
               }
               const enhancedBody = `${labelPrefix}${enhancedTail}\n${summary}`;
