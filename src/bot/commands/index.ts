@@ -1021,10 +1021,10 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
   // ----- /model — view/change model for active session --------------------
   const MODEL_OPTIONS: Record<string, string[]> = {
-    claude: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-4-20250514'],
-    kiro: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-4-20250514'],
+    claude: ['claude-sonnet-4', 'claude-opus-4.7', 'claude-haiku-4.5'],
+    kiro: ['auto', 'claude-sonnet-4', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
     codex: ['gpt-5.1-codex', 'o3', 'o4-mini'],
-    cursor: ['auto', 'claude-sonnet-4-20250514', 'gpt-5.2'],
+    cursor: ['auto', 'claude-sonnet-4', 'gpt-5.2'],
   };
 
   bot.command('model', async (ctx) => {
