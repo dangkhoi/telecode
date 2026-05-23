@@ -400,6 +400,57 @@ export class KiroAdapter implements AgentAdapter {
       start.onEvent({ type: 'error', error: msg });
     }
   }
+
+  /**
+   * Phase v1.2 — live model discovery via `kiro-cli chat --list-models`.
+   *
+   * The upstream output looks like:
+   *
+   *     Available models (* = default):
+   *
+   *     * auto                 1.00x credits      Models chosen by task ...
+   *       claude-opus-4.7      2.20x credits      Experimental preview ...
+   *       claude-sonnet-4.6    1.30x credits      The latest Claude Sonnet ...
+   *       ...
+   *
+   * We parse out the first column (the model id) — the credits column and
+   * description are dropped because the picker keyboard only has room for
+   * the id. The leading `*` marker is stripped.
+   *
+   * Bounded by a 5s timeout so a hung kiro-cli process can't block the
+   * `/model` reply — `null` is returned on timeout / non-zero exit /
+   * empty parse so the caller can fall back to the hardcoded list.
+   */
+  async listModels(): Promise<string[] | null> {
+    try {
+      const r = await execa(this.opts.binary, ['chat', '--list-models'], {
+        timeout: 5_000,
+        reject: false,
+        encoding: 'utf8',
+      });
+      if (r.failed || (r.exitCode ?? 0) !== 0) return null;
+      const combined = String(r.stdout ?? '') + String(r.stderr ?? '');
+      const clean = stripAnsi(combined);
+      const ids: string[] = [];
+      for (const rawLine of clean.split('\n')) {
+        // Strip the leading "* " default marker, then take the first
+        // whitespace-separated token. Skip header / blank lines and any
+        // line whose first token doesn't look like a model id (lower-case
+        // word characters, dots, dashes — no spaces, no parens, no `:`).
+        const line = rawLine.replace(/^\s*\*\s*/, '').trim();
+        if (!line) continue;
+        const first = line.split(/\s+/)[0] ?? '';
+        if (!/^[a-z0-9][a-z0-9._-]*$/.test(first)) continue;
+        // Filter out common non-model first words from the header.
+        if (first === 'available' || first === 'models' || first === 'usage') continue;
+        ids.push(first);
+      }
+      return ids.length > 0 ? ids : null;
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'kiro listModels failed');
+      return null;
+    }
+  }
 }
 
 /** Map known model name fragments to context window sizes (tokens). */

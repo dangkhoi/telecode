@@ -1141,25 +1141,119 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   });
 
   // ----- /model — view/change model for active session --------------------
-  // Picker options reflect what the upstream CLIs actually support. Codex /
-  // Cursor accept arbitrary model strings via -m / --model — the picker is
-  // just a convenience for the most common picks; users can still type
-  // `/model <any-name>` to override.
+  // Strategy (verified Phase v1.2 fix):
+  //   - Claude + Codex: use ALIASES (`sonnet`/`opus`/`haiku` and `auto`).
+  //     Both CLIs auto-resolve aliases to the latest concrete model name,
+  //     so the picker stays accurate across vendor releases without needing
+  //     a code update. Power users can still type full names via
+  //     `/model <full-name>` (free-form input is honored).
+  //   - Kiro + Cursor: a live `listModels()` adapter call (with 10-min
+  //     in-process cache + hardcoded fallback) — see the model-cache /
+  //     adapter helper paths below. The picker stays current automatically.
+  //
+  // The hardcoded entries below are the FALLBACK shown when listModels()
+  // returns null (adapter unsupported / spawn failed / parse error). They
+  // must always be valid for the relevant CLI so the user can at least
+  // pick something even when the live fetch is broken.
   const MODEL_OPTIONS: Record<string, string[]> = {
-    claude: ['claude-sonnet-4', 'claude-opus-4.7', 'claude-haiku-4.5'],
-    kiro: ['auto', 'claude-sonnet-4', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
-    // Codex 0.130 defaults to `gpt-5.5`; the legacy `gpt-5.1-codex` still
-    // works as an alias. The five entries here cover the current production
-    // tiers without overwhelming the inline keyboard on mobile (3 cells
-    // wide × 2 rows max). Source: `codex app-server` thread/start default
-    // response on Codex 0.130 + Cursor's `cursor-agent models` listing
-    // (Cursor's listing names the underlying OpenAI models too).
-    codex: ['gpt-5.5', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex', 'o3'],
-    // Cursor 2026.05 supports a wide list (see `cursor-agent models`). We
-    // surface the most common picks: `auto` (server-chooses), composer-2
-    // tiers, the latest Codex variants Cursor wraps, and Anthropic fallback.
-    cursor: ['auto', 'composer-2', 'composer-2-fast', 'gpt-5.3-codex', 'gpt-5.2', 'sonnet-4', 'sonnet-4-thinking'],
+    // Claude — aliases first so the picker tracks Anthropic's "latest"
+    // automatically; concrete names kept as power-user fallback.
+    claude: ['sonnet', 'opus', 'haiku', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
+    // Kiro — live fetch via `kiro-cli chat --list-models`. The fallback
+    // here mirrors what kiro-cli currently exposes for a default-tier
+    // account (verified 2026-05-23) so the picker is usable even if the
+    // live fetch fails.
+    kiro: ['auto', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
+    // Codex — `auto` is the canonical alias (verified via thread/start);
+    // `gpt-5.5` is Codex 0.130's default. Concrete names beyond that change
+    // monthly, so we keep this list short.
+    codex: ['auto', 'gpt-5.5', 'gpt-5.3-codex', 'o3'],
+    // Cursor — live fetch via `cursor-agent models` (115+ entries). The
+    // fallback below covers the most common picks for a Pro account.
+    cursor: ['auto', 'composer-2', 'gpt-5.3-codex', 'claude-opus-4-7-medium', 'claude-4.6-sonnet-medium', 'sonnet-4'],
   };
+
+  /**
+   * Phase v1.2 — per-kind model-list cache. Live `listModels()` is a child-
+   * process spawn (`kiro-cli chat --list-models` / `cursor-agent models`);
+   * each call costs ~0.5–1.5s. Caching for 10 minutes per kind keeps the
+   * `/model` tap latency at ~0ms after the first hit and bounds the spawn
+   * blast-radius if an upstream CLI hangs or starts emitting garbage.
+   *
+   * Cache key = AgentKind. On hit we return the cached array (could be
+   * empty — the caller falls back to MODEL_OPTIONS if so).
+   *
+   * Exposed on the returned object below so the router callback for
+   * `model:more:<kind>` can reach it without reopening the closure.
+   */
+  const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
+  interface ModelCacheEntry { models: string[]; expiresAt: number }
+  const modelCache = new Map<string, ModelCacheEntry>();
+  /**
+   * Resolve the picker list for a session's agent — live fetch via
+   * adapter.listModels() (cached) ⇨ MODEL_OPTIONS fallback. Always returns a
+   * non-empty array (fallback is `['auto']` for unknown kinds).
+   */
+  async function resolveModelList(kind: string): Promise<{ models: string[]; live: boolean }> {
+    const now = Date.now();
+    const cached = modelCache.get(kind);
+    if (cached && cached.expiresAt > now) {
+      return { models: cached.models, live: true };
+    }
+    const adapter = deps.registry.get(kind);
+    if (adapter && typeof adapter.listModels === 'function') {
+      try {
+        const models = await adapter.listModels();
+        if (models && models.length > 0) {
+          modelCache.set(kind, { models, expiresAt: now + MODEL_CACHE_TTL_MS });
+          return { models, live: true };
+        }
+      } catch (err) {
+        logger.warn({ err: String(err), kind }, 'listModels failed — falling back');
+      }
+    }
+    return { models: MODEL_OPTIONS[kind] ?? ['auto'], live: false };
+  }
+
+  /**
+   * Phase v1.2 — pick a usable subset for the inline keyboard when the live
+   * list is long. Mobile keyboards become unreadable past ~12 buttons; we
+   * keep the canonical/common picks at the top so the user finds them
+   * without scrolling.
+   *
+   * Heuristic: for a list >12 entries, surface (in order):
+   *   1. The currently-effective model (always shown).
+   *   2. `auto` if present (server-chooses pick).
+   *   3. Up to 11 entries matching popular patterns: `opus`, `sonnet`,
+   *      `haiku`, `composer`, `gpt-5.5`, `gpt-5.3`, `gpt-5.2-codex`, `o3`.
+   *   4. Fall through to the original order until we hit the cap.
+   *
+   * Returns `{ shown, overflow }` — `shown` is the keyboard list, `overflow`
+   * is the rest (sent as a plain message via the `[More…]` callback).
+   */
+  function shrinkModelList(all: string[], effective: string): { shown: string[]; overflow: string[] } {
+    const MAX_KEYBOARD = 12;
+    if (all.length <= MAX_KEYBOARD) return { shown: all, overflow: [] };
+    const popular = /^(auto$|opus|sonnet|haiku|composer-2($|-fast$)|gpt-5\.5$|gpt-5\.3-codex$|gpt-5\.2-codex$|o3$)/i;
+    const seen = new Set<string>();
+    const shown: string[] = [];
+    const push = (m: string): void => {
+      if (seen.has(m)) return;
+      seen.add(m);
+      shown.push(m);
+    };
+    if (all.includes(effective)) push(effective);
+    for (const m of all) {
+      if (shown.length >= MAX_KEYBOARD) break;
+      if (popular.test(m)) push(m);
+    }
+    for (const m of all) {
+      if (shown.length >= MAX_KEYBOARD) break;
+      push(m);
+    }
+    const overflow = all.filter((m) => !seen.has(m));
+    return { shown, overflow };
+  }
 
   bot.command('model', async (ctx) => {
     const chatId = ctx.chat!.id;
@@ -1169,13 +1263,74 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (!arg) {
       const agentCfg = config.agents[cur.agent as keyof typeof config.agents] as { model?: string } | undefined;
       const effective = cur.model ?? agentCfg?.model ?? t(chatId, 'model.autoServerDefault');
-      const models = MODEL_OPTIONS[cur.agent] ?? ['auto'];
-      const buttons = models.map((m) => [{ text: m === effective ? `● ${m}` : m, callback_data: `model:set:${m}` }]);
-      return ctx.reply(t(chatId, 'model.current', { model: effective }), { reply_markup: { inline_keyboard: buttons } });
+      const { models: allModels, live } = await resolveModelList(cur.agent);
+      const { shown, overflow } = shrinkModelList(allModels, effective);
+      const buttons = shown.map((m) => [{
+        text: m === effective ? `● ${m}` : m,
+        callback_data: `model:set:${m}`,
+      }]);
+      if (overflow.length > 0) {
+        // Encode the kind in the callback so the handler knows which list
+        // to surface. Keep the numeric portion limited — Telegram callback
+        // data caps at 64 bytes.
+        buttons.push([{ text: `📜 More… (+${overflow.length})`, callback_data: `model:more:${cur.agent}` }]);
+      }
+      const header = live
+        ? t(chatId, 'model.current', { model: effective })
+        : `${t(chatId, 'model.current', { model: effective })}\n_(fallback list — live fetch unavailable)_`;
+      return ctx.reply(header, {
+        reply_markup: { inline_keyboard: buttons },
+        parse_mode: 'Markdown',
+      });
     }
     store.setSessionModel(cur.id, arg);
     await ctx.reply(t(chatId, 'model.changed', { model: arg }));
   });
+
+  /**
+   * Phase v1.2 — `model:more:<kind>` callback. Surfaced when the live
+   * model list exceeds the inline-keyboard cap (12 buttons). Replies with
+   * a plain message listing the overflow names so the user can copy-paste
+   * one into `/model <name>` (no inline keyboard — too long anyway).
+   *
+   * Registered before `CallbackRouter.attach` (which runs in router.ts
+   * after `registerCommands`), so this regex handler matches first.
+   *
+   * Guarded by a `typeof === 'function'` check so test scaffolding that
+   * mocks `bot` with only `.command` / `.on` (e.g. `auto-done-summary.test.ts`)
+   * doesn't fail at register time. In production the real grammY Bot
+   * always exposes `.callbackQuery`.
+   */
+  if (typeof (bot as { callbackQuery?: unknown }).callbackQuery === 'function') {
+    bot.callbackQuery(/^model:more:(.+)$/, async (ctx: any) => {
+      const chatId = ctx.chat?.id;
+      if (!chatId) {
+        await ctx.answerCallbackQuery({ text: 'no chat' });
+        return;
+      }
+      const kind = ctx.match?.[1] ?? '';
+      if (!kind) {
+        await ctx.answerCallbackQuery({ text: 'invalid kind' });
+        return;
+      }
+      await ctx.answerCallbackQuery();
+      const cur = activeSession(ctx, store);
+      const agentCfg = config.agents[kind as keyof typeof config.agents] as { model?: string } | undefined;
+      const effective = cur?.model ?? agentCfg?.model ?? 'auto';
+      const { models: allModels } = await resolveModelList(kind);
+      const lines = allModels.map((m) => (m === effective ? `● ${m}` : `  ${m}`));
+      const body =
+        `*All ${kind} models* (${allModels.length})\n\n` +
+        '```\n' + lines.join('\n') + '\n```\n\n' +
+        '_Type `/model <name>` to switch._';
+      try {
+        await ctx.reply(body, { parse_mode: 'Markdown' });
+      } catch (err) {
+        logger.warn({ err: String(err), kind }, 'model:more reply failed — plain fallback');
+        await ctx.reply(`All ${kind} models (${allModels.length}):\n${allModels.join(', ')}`);
+      }
+    });
+  }
 
   // ----- /dashboard (plan P0.5) — live status dashboard ------------------
   // Single editable message refreshed every 2s with daemon state. Stops on:

@@ -705,6 +705,52 @@ export class CursorAdapter implements AgentAdapter {
       }
     }
   }
+
+  /**
+   * Phase v1.2 — live model discovery via `cursor-agent models`.
+   *
+   * The upstream output looks like:
+   *
+   *     Available models
+   *
+   *     auto - Auto
+   *     composer-2-fast - Composer 2 Fast
+   *     composer-2 - Composer 2
+   *     gpt-5.3-codex - Codex 5.3
+   *     ...
+   *
+   * Cursor lists 100+ models for a Pro account; the picker layer caps the
+   * inline keyboard at 12 buttons + a `[More…]` overflow, so returning the
+   * full list is fine.
+   *
+   * Bounded by a 5s timeout. Returns `null` on non-zero exit / parse fail
+   * so the caller can fall back to the hardcoded list.
+   */
+  async listModels(): Promise<string[] | null> {
+    try {
+      const r = await execa(this.opts.command, ['models'], {
+        timeout: 5_000,
+        reject: false,
+        encoding: 'utf8',
+      });
+      if (r.failed || (r.exitCode ?? 0) !== 0) return null;
+      const combined = String(r.stdout ?? '') + String(r.stderr ?? '');
+      const ids: string[] = [];
+      for (const rawLine of combined.split('\n')) {
+        const line = rawLine.trim();
+        if (!line) continue;
+        // Each model row matches "<id> - <displayName>". Header lines like
+        // "Available models" don't contain " - " so they're skipped.
+        const m = line.match(/^([a-z0-9][a-z0-9._-]*)\s+-\s+/);
+        if (!m) continue;
+        ids.push(m[1]!);
+      }
+      return ids.length > 0 ? ids : null;
+    } catch (err) {
+      logger.warn({ err: String(err) }, 'cursor listModels failed');
+      return null;
+    }
+  }
 }
 
 /**

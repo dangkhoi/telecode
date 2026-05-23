@@ -38,6 +38,24 @@ export interface AgentStartOpts {
 export interface AgentAdapter {
   readonly kind: AgentKind;
   run(opts: AgentStartOpts): Promise<void>;
+  /**
+   * Phase v1.2 — optional live model discovery. When implemented, the
+   * `/model` picker calls this to populate the inline keyboard from the
+   * upstream CLI (e.g. `kiro-cli chat --list-models`, `cursor-agent
+   * models`). Returns `null` when the adapter doesn't support live
+   * listing OR a transient error occurred — caller falls back to a
+   * hardcoded `MODEL_OPTIONS[kind]` list.
+   *
+   * Implementations MUST:
+   *   - Be cheap on the hot path (caller may invoke per-tap on `/model`,
+   *     though it caches the result for ~10 minutes).
+   *   - Return model IDs the adapter can pass to `run({ ..., model })`.
+   *   - Time-bound spawned subprocess calls (recommended ≤ 5s) and return
+   *     `null` on timeout rather than throwing.
+   *   - Be safe to call concurrently — the cache layer handles dedup but
+   *     the adapter shouldn't reuse mutable state across calls.
+   */
+  listModels?(): Promise<string[] | null>;
 }
 
 /**
