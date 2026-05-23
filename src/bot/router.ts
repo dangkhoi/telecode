@@ -41,7 +41,7 @@ import { toolCollapseMgr, initProgressManager, progressMgr } from './runtime-sta
 import { getCachedSessionMode } from './commands/index.js';
 import { createSqliteConversationStorage } from './conversation-storage.js';
 import { newSession } from './wizards/new-session.js';
-import { applyCommandsAndMenu } from './commands-registry.js';
+import { applyCommandsAndMenu, pushChatCommands } from './commands-registry.js';
 import { isKeyboardActionText, keyboardActionToCommand } from './keyboard-actions.js';
 import { logger } from '../util/logger.js';
 import { scrubSecrets } from '../util/scrub.js';
@@ -1195,6 +1195,15 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       } catch {
         /* ignore */
       }
+      // Phase v1.2 — push the locale-appropriate slash-command menu to
+      // THIS chat so the Menu button + /-typed list flips immediately.
+      // Non-fatal: a Telegram hiccup here shouldn't break the
+      // language-switch confirmation flow.
+      try {
+        await pushChatCommands(bot, chatId, payload);
+      } catch (err) {
+        logger.warn({ err: String(err), chatId, language: payload }, 'pushChatCommands failed');
+      }
       // Confirmation in the freshly-chosen language.
       try {
         await ctx.reply(i18n.t(chatId, 'language.changed'), { parse_mode: 'Markdown' });
@@ -1244,6 +1253,22 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       { err: String(err) },
       'applyCommandsAndMenu failed at boot — continuing without slash menu sync',
     );
+  }
+  // Phase v1.2 — for each allowed chat that has already picked a language,
+  // push the locale-scoped command list. New chats keep the bot-wide VN
+  // default until they pick via the first-boot language picker. Non-fatal
+  // per-chat failures are logged and skipped.
+  for (const chatId of deps.config.telegram.allowed_user_ids) {
+    if (!deps.store.chatSettingsExists(chatId)) continue;
+    const lang = deps.store.getChatLanguage(chatId);
+    try {
+      await pushChatCommands(bot, chatId, lang);
+    } catch (err) {
+      logger.warn(
+        { err: String(err), chatId, language: lang },
+        'pushChatCommands at boot failed — continuing',
+      );
+    }
   }
 
   return {

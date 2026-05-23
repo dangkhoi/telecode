@@ -315,6 +315,7 @@ export const EN_MESSAGES = {
   'wizard.new.createFailed': '⚠️ Create session failed: {error}',
   'wizard.success.switch': '🔀 Switch other',
   'wizard.success.tailLogs': '📋 Tail logs',
+  'wizard.success.ready': '✓ Ready for your prompt',
 
   // ---- /handoff (executeHandoff) ---------------------------------------
   'handoff.error.notFound': 'session not found',

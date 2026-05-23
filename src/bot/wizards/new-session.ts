@@ -399,7 +399,7 @@ export async function newSession(
   // re-attach the persistent keyboard. Failure here is non-fatal — log and
   // continue. The user's next /start would re-send it anyway.
   try {
-    await ctx.reply('✓ Sẵn sàng nhận prompt', {
+    await ctx.reply(t('wizard.success.ready'), {
       reply_markup: buildPersistentKeyboard(),
     });
   } catch (err) {

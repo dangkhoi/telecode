@@ -313,6 +313,7 @@ export const VI_MESSAGES: EnMessages = {
   'wizard.new.createFailed': '⚠️ Tạo session lỗi: {error}',
   'wizard.success.switch': '🔀 Switch khác',
   'wizard.success.tailLogs': '📋 Tail logs',
+  'wizard.success.ready': '✓ Sẵn sàng nhận prompt',
 
   // ---- /handoff (executeHandoff) ---------------------------------------
   'handoff.error.notFound': 'session không tìm thấy',

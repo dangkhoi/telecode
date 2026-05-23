@@ -7,7 +7,9 @@ import type { BotCommand } from 'grammy/types';
  * Order matters — Telegram clients render the list verbatim. Keep this
  * synced with §4.1 of `docs/plans/ux-telegram-widgets.html`.
  *
- * Descriptions are in Vietnamese (single-user, single-language project).
+ * Default descriptions are in Vietnamese (legacy single-language project);
+ * the bilingual override below ({@link COMMANDS_EN}) is pushed per-chat
+ * when the user picks `/language en`.
  */
 export const COMMANDS: readonly BotCommand[] = [
   { command: 'start', description: 'Welcome + list session' },
@@ -41,13 +43,51 @@ export const COMMANDS: readonly BotCommand[] = [
   { command: 'timeline', description: 'Xem timeline của session (web)' },
   // v1.2 D1 — outbound file sharing
   { command: 'send', description: 'Gửi file từ project về Telegram' },
-  // v1.2 — bilingual UI. Description bilingual nên cả EN + VI users đều
-  // hiểu (Telegram setMyCommands scope = all_private_chats không split per
-  // locale, nên 1 description duy nhất).
-  { command: 'language', description: 'Đổi ngôn ngữ UI / Change UI language (EN / VI)' },
   { command: 'stop', description: 'Dừng task đang chạy' },
   { command: 'screenshot', description: 'Chụp desktop Mac' },
+  // Bilingual UI picker — description bilingual nên cả EN + VI users đều hiểu
+  // (boot push scope=all_private_chats không split per locale).
+  { command: 'language', description: 'Đổi ngôn ngữ UI / Change UI language (EN / VI)' },
   { command: 'help', description: 'Hướng dẫn nhanh' },
+];
+
+/**
+ * Phase v1.2 — English mirror of {@link COMMANDS}, pushed per-chat via
+ * `setMyCommands({ scope: { type: 'chat', chat_id } })` whenever a user
+ * sets `/language en`. Telegram caches the per-chat scope independently
+ * from the bot-wide default, so a chat that picks EN sees this list while
+ * other chats keep the VN one.
+ *
+ * Order MUST match COMMANDS exactly so users who switch back to VI don't
+ * see a re-shuffled menu (Telegram clients animate menu changes; reorders
+ * look like new commands appearing/disappearing).
+ */
+export const COMMANDS_EN: readonly BotCommand[] = [
+  { command: 'start', description: 'Welcome + list sessions' },
+  { command: 'new', description: 'Create a new session (wizard)' },
+  { command: 'sessions', description: 'List + switch + close sessions' },
+  { command: 'projects', description: 'List + pick a project' },
+  { command: 'status', description: 'Active session status' },
+  { command: 'dashboard', description: 'Live dashboard (auto-refresh 2s)' },
+  { command: 'clear', description: "Clear the active session's context" },
+  { command: 'handoff', description: 'Summarize context → clear → inject as next-prompt preamble' },
+  { command: 'mode', description: 'Change verbosity mode of the active session' },
+  { command: 'settings', description: 'Chat-level defaults (default mode, …)' },
+  { command: 'cost', description: 'API cost (today / 7d / 30d)' },
+  { command: 'template', description: 'Save / run a session template' },
+  { command: 'model', description: "View / change the session's AI model" },
+  { command: 'notify', description: 'Quiet hours — silence overnight notifications' },
+  { command: 'schedule', description: 'Schedule automated tasks (cron)' },
+  { command: 'history', description: 'Search past sessions' },
+  { command: 'context', description: 'View / edit pinned context (.telecode/context.md)' },
+  { command: 'chain', description: 'Run a multi-agent pipeline' },
+  { command: 'verify', description: 'Run the verify command manually' },
+  { command: 'timeline', description: 'Open session timeline (web)' },
+  { command: 'send', description: 'Send a file from the project to Telegram' },
+  { command: 'stop', description: 'Stop the running task' },
+  { command: 'screenshot', description: 'Capture macOS desktop' },
+  { command: 'language', description: 'Change UI language / Đổi ngôn ngữ UI (EN / VI)' },
+  { command: 'help', description: 'Quick guide' },
 ];
 
 /**
@@ -75,4 +115,29 @@ export async function applyCommandsAndMenu<C extends Context = Context>(
     scope: { type: 'all_private_chats' },
   });
   await bot.api.setChatMenuButton({ menu_button: { type: 'commands' } });
+}
+
+/**
+ * Phase v1.2 — push the locale-appropriate command list scoped to a single
+ * chat. Called from the `lang:set:*` callback + from `/language` so the
+ * slash menu flips to English (or back to Vietnamese) immediately after the
+ * user picks.
+ *
+ * Telegram caches per-chat scope independently from the bot-wide default,
+ * so passing the EN list with scope=`{ type: 'chat', chat_id }` overrides
+ * the VN default for THAT chat alone — other chats keep VN.
+ *
+ * Idempotent: Telegram replaces the per-chat list on each call. Safe to
+ * call repeatedly. Errors are non-fatal — caller logs + continues so a
+ * Telegram hiccup doesn't break the language-switch confirmation flow.
+ */
+export async function pushChatCommands<C extends Context = Context>(
+  bot: Bot<C, Api>,
+  chatId: number,
+  language: 'en' | 'vi',
+): Promise<void> {
+  const list = language === 'en' ? COMMANDS_EN : COMMANDS;
+  await bot.api.setMyCommands(list as BotCommand[], {
+    scope: { type: 'chat', chat_id: chatId },
+  });
 }

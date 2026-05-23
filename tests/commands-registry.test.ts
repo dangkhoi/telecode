@@ -12,12 +12,13 @@ import {
 } from '../src/bot/keyboard-actions.js';
 
 describe('commands-registry: COMMANDS', () => {
-  it('exports exactly 24 entries', () => {
+  it('exports exactly 25 entries', () => {
     // Phase B (v1.1) added /mode + /settings (was 11 in v1.0).
     // v1.2 D3/D4 added /cost + /template.
     // v1.2 D1/D2/D5/D6/D7/D8/D10/D11 added /send + /notify + /schedule + /history + /context + /timeline + /chain + /verify.
     // Per-session model override added /model.
-    expect(COMMANDS).toHaveLength(24);
+    // v1.2 i18n added /language (24 → 25).
+    expect(COMMANDS).toHaveLength(25);
   });
 
   it('each entry has non-empty command + description', () => {
@@ -66,6 +67,8 @@ describe('commands-registry: COMMANDS', () => {
       'send',
       'stop',
       'screenshot',
+      // v1.2 i18n — bilingual UI picker.
+      'language',
       'help',
     ]);
   });
