@@ -23,6 +23,7 @@ import type { SessionManager } from '../../session/manager.js';
 import type { ApprovalBroker } from '../../approval/broker.js';
 import type { PolicyEngine } from '../../approval/policy.js';
 import type { AgentRegistry } from '../../agents/registry.js';
+import { normalizeModelForAgent } from '../../agents/model-normalize.js';
 import type { Notifier } from '../notifier.js';
 import {
   MODE_METADATA,
@@ -1158,7 +1159,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   const MODEL_OPTIONS: Record<string, string[]> = {
     // Claude — aliases first so the picker tracks Anthropic's "latest"
     // automatically; concrete names kept as power-user fallback.
-    claude: ['sonnet', 'opus', 'haiku', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
+    claude: ['sonnet', 'opus', 'haiku', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
     // Kiro — live fetch via `kiro-cli chat --list-models`. The fallback
     // here mirrors what kiro-cli currently exposes for a default-tier
     // account (verified 2026-05-23) so the picker is usable even if the
@@ -1283,8 +1284,9 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         parse_mode: 'Markdown',
       });
     }
-    store.setSessionModel(cur.id, arg);
-    await ctx.reply(t(chatId, 'model.changed', { model: arg }));
+    const model = normalizeModelForAgent(cur.agent, arg) ?? arg;
+    store.setSessionModel(cur.id, model);
+    await ctx.reply(t(chatId, 'model.changed', { model }));
   });
 
   /**

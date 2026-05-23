@@ -45,6 +45,7 @@ import { applyCommandsAndMenu, pushChatCommands } from './commands-registry.js';
 import { isKeyboardActionText, keyboardActionToCommand } from './keyboard-actions.js';
 import { logger } from '../util/logger.js';
 import { scrubSecrets } from '../util/scrub.js';
+import { normalizeModelForAgent } from '../agents/model-normalize.js';
 import { suggestionAck } from './suggestions.js';
 import { enterWizard, exitWizard, isWizardActive, deferUntilWizardExits } from './wizard-state.js';
 import { DashboardLoop } from './dashboard.js';
@@ -1148,9 +1149,11 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       if (!chatId) { await ctx.answerCallbackQuery({ text: 'no chat' }); return; }
       const st = deps.store.getChatState(chatId);
       if (!st.active_session_id) { await ctx.answerCallbackQuery({ text: 'no active session', show_alert: true }); return; }
-      deps.store.setSessionModel(st.active_session_id, payload);
-      await ctx.answerCallbackQuery({ text: `✓ ${payload}` });
-      try { await ctx.editMessageText(`Model đổi thành: ${payload}`); } catch { /* ignore */ }
+      const session = deps.store.getSession(st.active_session_id);
+      const model = normalizeModelForAgent(session?.agent ?? '', payload) ?? payload;
+      deps.store.setSessionModel(st.active_session_id, model);
+      await ctx.answerCallbackQuery({ text: `✓ ${model}` });
+      try { await ctx.editMessageText(`Model đổi thành: ${model}`); } catch { /* ignore */ }
     })
     // Phase C.3 — diff reveal button.
     .on('diff', 'show', diffShowHandler)

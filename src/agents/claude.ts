@@ -4,6 +4,7 @@ import type { ApprovalBroker } from '../approval/broker.js';
 import type { PolicyEngine } from '../approval/policy.js';
 import type { SessionStore } from '../session/store.js';
 import { logger } from '../util/logger.js';
+import { normalizeModelForAgent } from './model-normalize.js';
 
 /**
  * UI metadata for the Claude adapter (plan P1.1).
@@ -40,6 +41,7 @@ export class ClaudeAdapter implements AgentAdapter {
 
   async run(start: AgentStartOpts): Promise<void> {
     const { broker, policy, store } = this.opts;
+    const model = normalizeModelForAgent(this.kind, start.model);
 
     const canUseTool: CanUseTool = async (toolName, input, _options) => {
       const decision = policy.decide(toolName, input, { projectDir: start.cwd });
@@ -147,7 +149,7 @@ export class ClaudeAdapter implements AgentAdapter {
           hooks: hooks as never,
           settingSources: this.opts.settingSources,
           permissionMode: 'default',
-          ...(start.model ? { model: start.model } : {}),
+          ...(model ? { model } : {}),
           ...(start.resumeId ? { resume: start.resumeId } : {}),
           abortController: ac,
         } as never,

@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { AgentAdapter, AgentStartOpts, AdapterMetadata } from './types.js';
 import { logger } from '../util/logger.js';
 import { stripAnsi } from '../util/ansi.js';
+import { normalizeModelForAgent } from './model-normalize.js';
 
 /**
  * UI metadata for the Kiro adapter (plan P1.1).
@@ -238,7 +239,7 @@ export class KiroAdapter implements AgentAdapter {
 
       const args = ['chat', '--no-interactive', '--agent', this.opts.agent];
       if (start.resumeId) args.push('--resume-id', start.resumeId);
-      const model = start.model ?? this.opts.model;
+      const model = normalizeModelForAgent(this.kind, start.model ?? this.opts.model);
       if (model) args.push('--model', model);
       // `--trust-all-tools` would bypass kiro-cli's built-in confirmation
       // prompts, BUT the custom agent's preToolUse hook (managed by Telecode)
