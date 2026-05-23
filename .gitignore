@@ -23,6 +23,13 @@ Thumbs.db
 coverage/
 .vitest-cache/
 
+# Workspace-local Kiro overrides (security-overrides.md contains the actual
+# sensitive identifiers we BLOCK in scan; tracking it would defeat the
+# purpose. Track only the .example template). Other steering files are
+# personal preference — usually safe to commit if generic, but skip by
+# default to avoid leaking workflow-specific paths.
+.kiro/steering/security-overrides.md
+
 # Runtime state (in case anyone runs daemon from repo dir)
 *.sqlite
 *.sqlite-journal

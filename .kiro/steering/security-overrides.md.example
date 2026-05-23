@@ -1,0 +1,76 @@
+# Security overrides for <workspace-name>
+
+> Workspace-specific extension of `~/.kiro/steering/pre-commit-security.md`.
+> List identifiers that are PII / personal / internal-only for THIS project —
+> agent will block on commit if these strings appear in tracked files outside
+> whitelisted contexts.
+>
+> ⚠️ This file (the REAL one — `security-overrides.md` without `.example`)
+> MUST be gitignored. Tracking it would expose exactly the strings we want
+> to block. The `.example` template here is safe to commit.
+>
+> Setup:
+>   cp .kiro/steering/security-overrides.md.example \
+>      .kiro/steering/security-overrides.md
+>   # Then edit the real file with your project's actual identifiers.
+
+## Sensitive identifiers (block on commit)
+
+### Owner — personal info
+- Telegram handle: `@<your-telegram-username>`
+- Telegram user_id: `<your-numeric-user-id>`
+- Personal email: `<your-email>@<provider>.com`
+- Real machine username path: `/Users/<your-name>/`, `C:\Users\<your-name>\`
+- Real bot username (production): `<your-real-bot-username>`
+
+### Internal infra
+- Internal Git host: `<git.your-company.com>`
+- Internal org path: `<your-org>/`
+- Private API endpoints: `https://<internal>.your-company.com`
+- Production database hosts: `<prod-db>.<region>.rds.amazonaws.com`
+
+### Customer / client confidential (if applicable)
+- Customer codenames: `<ProjectAcme>`, `<CodenameDelta>`
+- Customer-specific feature flags / IDs
+- Vendor license keys for proprietary deps
+
+### Generic placeholders allowed (NOT blocked)
+- `<you>`, `<user>`, `<your-handle>`
+- `your_telecode_bot`, `placeholder_*`, `example_*`
+- Numeric placeholders like `123456789` in `*.example.*` files
+- Test scrubber fake patterns matching shape but synthetic: `1234567890:ABCdef...`
+
+## Workspace-specific .gitignore additions
+Beyond the universal list in the global rule, this workspace's `.gitignore`
+should also cover:
+- `<your specific runtime/cache dirs>`
+- `<your specific config files that hold secrets>`
+
+## Whitelist contexts (allowed match locations)
+
+Files that MAY contain the sensitive patterns above without triggering a block:
+- `tests/scrub*.test.ts` (or equivalent) — verify the scrubber redacts
+  known-shape patterns; the SHAPE must match, LITERAL is always synthetic
+- Markdown code-fence blocks documenting "DO NOT commit X" with explicit
+  warning text upstream
+
+Anything else with a hit → BLOCK.
+
+## Owner override log
+
+Last updated: <YYYY-MM-DD> by <maintainer>. Update when:
+- Owner changes Telegram handle / email / personal accounts
+- New internal hostnames / infra references appear in code / docs
+- New "fake but real-shaped" test fixtures get added
+- New customer engagements bring NDA-bound identifiers
+
+## Verification
+
+```bash
+# Workspace-specific scan script (if present)
+./scripts/security-scan.sh
+# Or via the publish pipeline:
+./scripts/publish-to-github.sh --dry-run
+# Should report: "Security scan passed."
+# If any sensitive identifier slipped back into tracked files, scan FAILS.
+```

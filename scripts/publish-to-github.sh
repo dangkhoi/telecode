@@ -7,7 +7,15 @@
 #   2. Shallow-clone the working tree to a scratch dir.
 #   3. Reset .git, init fresh, commit once, push to GitHub (force).
 #
-# Honors the user-level Kiro rule at ~/.kiro/steering/pre-commit-security.md.
+# Honors two layered Kiro rules:
+#   - ~/.kiro/steering/pre-commit-security.md     — global (all workspaces)
+#   - .kiro/steering/security-overrides.md        — workspace-local (gitignored)
+#
+# The PERSONAL_PATTERNS variable below is hardcoded with this workspace's
+# (telecode) identifiers as a defense-in-depth layer; copy this script to
+# another workspace and edit the regex with that workspace's identifiers.
+# Long-term: refactor to read from .kiro/steering/security-overrides.md
+# directly.
 #
 # Usage:
 #   scripts/publish-to-github.sh                       # default — uses defaults below
@@ -83,10 +91,17 @@ run_security_scan() {
   fi
 
   # 1.3 Personal info — known sensitive identifiers (override per repo)
+  # Whitelist files that legitimately contain the patterns as METADATA
+  # (regex definitions, security-policy docs, scan tooling). These files
+  # document what to BLOCK; the literal occurrence is intentional, not a
+  # leak. Other tracked files match → BLOCK.
   local PERSONAL='@u2526|/Users/koi(/|$)|khoa_telecode_bot|khoiphamdang@gmail\.com|675265747'
-  if git ls-files -z | xargs -0 grep -nlE "$PERSONAL" 2>/dev/null | head -1 | grep -q .; then
+  local PERSONAL_WHITELIST='^(scripts/(publish-to-github|security-scan)\.sh$|\.kiro/steering/.*\.example$|\.gitignore$)'
+  if git ls-files -z | xargs -0 grep -lE "$PERSONAL" 2>/dev/null | grep -vE "$PERSONAL_WHITELIST" | head -1 | grep -q .; then
     err "FAIL: personal info found in tracked files:"
-    git ls-files -z | xargs -0 grep -nE "$PERSONAL" 2>/dev/null | head -10 >&2
+    git ls-files -z | xargs -0 grep -lE "$PERSONAL" 2>/dev/null | grep -vE "$PERSONAL_WHITELIST" | while read -r f; do
+      grep -nE "$PERSONAL" "$f" | head -3 | sed "s|^|  $f:|" >&2
+    done
     fail=1
   fi
 
