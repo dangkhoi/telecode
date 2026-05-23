@@ -136,7 +136,7 @@ describe('P1.2 — util/paths.ts uses path.join', () => {
 describe('P1.2 — reply-builders shortenPath cross-platform', () => {
   it('POSIX-style path shortens to …/last/two', async () => {
     const { buildProjectList } = await import('../src/bot/reply-builders.js');
-    const out = buildProjectList([{ id: 1, name: 'p', path: '/Users/koi/workspaces/proj' }]);
+    const out = buildProjectList([{ id: 1, name: 'p', path: '/Users/<you>/workspaces/proj' }]);
     expect(out.text).toContain('…/workspaces/proj');
   });
 

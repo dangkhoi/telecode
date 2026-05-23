@@ -27,9 +27,9 @@ describe('renderToolUse — Claude tool names', () => {
   });
 
   it('Read collapses to ./relative when path is under project cwd', () => {
-    const cwd = '/Users/koi/proj';
+    const cwd = '/Users/<you>/proj';
     expect(
-      renderToolUse('Read', { file_path: '/Users/koi/proj/src/foo.ts' }, { projectCwd: cwd }),
+      renderToolUse('Read', { file_path: '/Users/<you>/proj/src/foo.ts' }, { projectCwd: cwd }),
     ).toBe('Read · ./src/foo.ts');
   });
 
@@ -61,10 +61,10 @@ describe('renderToolUse — Claude tool names', () => {
   });
 
   it('Grep renders pattern + collapsed path', () => {
-    const cwd = '/Users/koi/proj';
+    const cwd = '/Users/<you>/proj';
     const out = renderToolUse(
       'Grep',
-      { pattern: 'AgentEvent', path: '/Users/koi/proj/src' },
+      { pattern: 'AgentEvent', path: '/Users/<you>/proj/src' },
       { projectCwd: cwd },
     );
     expect(out).toBe('Grep "AgentEvent" in ./src');

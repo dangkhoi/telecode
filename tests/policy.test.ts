@@ -41,10 +41,10 @@ describe('PolicyEngine', () => {
     write('allow:\n  - "Edit({{project_dir}}/**)"\ndeny: []\n');
     const p = new PolicyEngine(path);
     expect(
-      p.decide('Edit', { file_path: '/Users/koi/work/x/foo.ts' }, { projectDir: '/Users/koi/work/x' }).decision,
+      p.decide('Edit', { file_path: '/Users/<you>/work/x/foo.ts' }, { projectDir: '/Users/<you>/work/x' }).decision,
     ).toBe('allow');
     expect(
-      p.decide('Edit', { file_path: '/etc/passwd' }, { projectDir: '/Users/koi/work/x' }).decision,
+      p.decide('Edit', { file_path: '/etc/passwd' }, { projectDir: '/Users/<you>/work/x' }).decision,
     ).toBe('ask');
   });
 

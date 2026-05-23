@@ -138,7 +138,7 @@
   <thead><tr><th>#</th><th>Pain</th><th>Evidence</th></tr></thead>
   <tbody>
     <tr><td>1</td><td>Tool-use spam: 1 message + 1 inline keyboard per call</td><td><code>commands/index.ts:874-893</code> <code>sendPlain</code> per tool, no batch</td></tr>
-    <tr><td>2</td><td>Raw JSON tool params: <code>🔧 Read — {"file_path":"/Users/koi/Documents/.../notifier.ts"}</code></td><td><code>commands/index.ts:876</code> <code>JSON.stringify(input).slice(0,200)</code></td></tr>
+    <tr><td>2</td><td>Raw JSON tool params: <code>🔧 Read — {"file_path":"/Users/<you>/Documents/.../notifier.ts"}</code></td><td><code>commands/index.ts:876</code> <code>JSON.stringify(input).slice(0,200)</code></td></tr>
     <tr><td>3</td><td>Absolute paths không collapse</td><td><code>extractFilePath</code> trả full path</td></tr>
     <tr><td>4</td><td>Thinking blocks: Claude drop silently, Cursor leak unlabeled như text bình thường</td><td><code>claude.ts:188-191</code> filter, <code>cursor.ts:463-470</code> forward without label</td></tr>
     <tr><td>5</td><td>Kiro raw stdout dump: mỗi <code>\n</code> chunk = 1 text event</td><td><code>kiro.ts:278-298</code></td></tr>
@@ -184,10 +184,10 @@
 <div class="compare">
   <div class="col before">
     <h5>Trước (v1.0, verbose firehose)</h5>
-    <pre>[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/notifier.ts"}
-[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/agents/types.ts"}
-[refactor-auth] 🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/telecode/src/bot/reply-builders.ts"}
-[refactor-auth] 🔧 Grep — {"pattern":"AgentEvent","path":"/Users/koi/Documents/workspaces/telecode/src"}</pre>
+    <pre>[refactor-auth] 🔧 Read — {"file_path":"/Users/<you>/Documents/workspaces/telecode/src/bot/notifier.ts"}
+[refactor-auth] 🔧 Read — {"file_path":"/Users/<you>/Documents/workspaces/telecode/src/agents/types.ts"}
+[refactor-auth] 🔧 Read — {"file_path":"/Users/<you>/Documents/workspaces/telecode/src/bot/reply-builders.ts"}
+[refactor-auth] 🔧 Grep — {"pattern":"AgentEvent","path":"/Users/<you>/Documents/workspaces/telecode/src"}</pre>
   </div>
   <div class="col after">
     <h5>Sau (v1.1, summary mode default)</h5>
@@ -200,7 +200,7 @@
 <div class="compare">
   <div class="col before">
     <h5>Trước</h5>
-    <pre>🔧 Edit — {"file_path":"/Users/koi/.../notifier.ts","old_string":"...","new_string":"..."}</pre>
+    <pre>🔧 Edit — {"file_path":"/Users/<you>/.../notifier.ts","old_string":"...","new_string":"..."}</pre>
   </div>
   <div class="col after">
     <h5>Sau (diff stats)</h5>
@@ -291,7 +291,7 @@ Tách validateToken ra file riêng, thêm 5 unit tests, tất cả pass.</pre>
           <li>Fallback: <code>{toolName} · {first arg value truncated 60 chars}</code></li>
         </ul>
       </li>
-      <li><code>collapsePath(absPath): string</code> — convert <code>/Users/koi/...</code> → <code>~/...</code>, project root → <code>./...</code> nếu nằm trong active project's cwd.</li>
+      <li><code>collapsePath(absPath): string</code> — convert <code>/Users/<you>/...</code> → <code>~/...</code>, project root → <code>./...</code> nếu nằm trong active project's cwd.</li>
     </ul>
   </li>
   <li>Tests: snapshot per tool name + path variants.</li>

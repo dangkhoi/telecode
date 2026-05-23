@@ -7,7 +7,7 @@
 Implement Telecode v1.1 Streaming UX Redesign: fix 2 real bugs, add friendly tool render, mode system (4 verbosity levels), smart rendering (MarkdownV2 + code-fence + collapse), agentic compression (AI summarize via session reinjection), và activity indicators (rolling progress message).
 
 ## WORKING DIR
-`/Users/koi/Documents/workspaces/telecode`
+`/Users/<you>/Documents/workspaces/telecode`
 
 ## CONTEXT
 - Telecode = Telegram bot bridge cho AI coding agents (Claude, Codex, Cursor, Kiro)

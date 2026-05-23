@@ -3,7 +3,7 @@
  *
  * Pure functions — no Telegram / SDK imports. Consumed by the dispatch
  * tool_use branch in {@link ./commands/index.ts} to replace the v1.0
- * "🔧 Read — {"file_path":"/Users/koi/Documents/workspaces/.../notifier.ts"}"
+ * "🔧 Read — {"file_path":"/Users/<you>/Documents/workspaces/.../notifier.ts"}"
  * raw JSON dump with a glance-readable form like
  *   `Read · notifier.ts`
  *   `Edit · notifier.ts`

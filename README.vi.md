@@ -35,7 +35,7 @@ Telecode là 1 local daemon chạy nền trên máy bạn, bắc cầu giữa Te
 - **v1.1** — Streaming UX redesign · 717 tests · backward compat 100% (verbose mode = byte-identical v1.0):
   - **4 verbosity modes** (`/mode`, `/settings`): 🎯 Summary (default) / 📝 Normal / 🧠 Thinking / 🔬 Verbose. Per-session + per-chat default. First-boot v1.1 message giải thích migration.
   - **Bug fixes**: duplicate Claude `tool_use` events (was emit 2× per tool), dropped `tool_result` events từ Codex/Cursor (silently invisible).
-  - **Friendly tool rendering**: `Read · notifier.ts` thay `Read — {"file_path":"/Users/koi/..."}`. Path collapse (`~`, `./`, git-root). Diff stats trên Edit: `Edit · auth.ts (-3 +7)`.
+  - **Friendly tool rendering**: `Read · notifier.ts` thay `Read — {"file_path":"/Users/<you>/..."}`. Path collapse (`~`, `./`, git-root). Diff stats trên Edit: `Edit · auth.ts (-3 +7)`.
   - **Smart rendering**: MarkdownV2 auto code-fence (JSON / diff / bash / stack trace), `[📜 Show diff]` clickable viewer, repeated tool collapse (5s window: `Read ×3 · foo.ts, bar.ts, baz.ts`).
   - **Agentic compression** (killer feature): reuse session để AI-summarize long output (>500 chars threshold). Auto done-summary: `Done · 47s · $0.023\nTách validateToken ra file riêng, thêm 5 tests, pass.`. On-demand `[💬 AI summary]` button. `[📜 Full output (200 lines)]` viewer.
   - **Activity indicators**: single rolling progress message per session (edit-only), surface adapter status events (`⏳ Codex thinking...`), idle ping ladder 30s → 1m → 2m → 5m+ cap.
@@ -149,7 +149,7 @@ Mỗi người 1 bot riêng (bot là cổng vào máy bạn, không share đư�
 1. Mở Telegram, search **@BotFather** (icon xanh có tick verified).
 2. Gửi `/newbot`.
 3. BotFather hỏi **display name** → đặt gì cũng được, vd `Telecode (Khoa)`.
-4. BotFather hỏi **username** (bắt buộc kết thúc bằng `bot`) → vd `khoa_telecode_bot`. Nếu trùng thử cái khác.
+4. BotFather hỏi **username** (bắt buộc kết thúc bằng `bot`) → vd `your_telecode_bot`. Nếu trùng thử cái khác.
 5. BotFather reply 1 token dạng `123456789:ABCdefGHI…` (~46 ký tự). **Copy token này**.
 6. (Tuỳ chọn) `/setprivacy` → chọn bot → **Disable** (cho phép bot đọc message trong group sau này nếu cần; DM 1-1 thì không ảnh hưởng).
 
@@ -378,7 +378,7 @@ Bạn nên thấy log kiểu:
 {"level":"info","msg":"lockfile acquired","pid":12345,"path":"~/.telecode/daemon.lock"}
 {"level":"info","msg":"adapter registry initialized","kinds":["claude","kiro","codex","cursor"]}
 {"level":"info","msg":"workspace scan complete","projects":12}
-{"level":"info","msg":"telegram bot connected","username":"khoa_telecode_bot"}
+{"level":"info","msg":"telegram bot connected","username":"your_telecode_bot"}
 ```
 
 Nếu không thấy → xem [Troubleshooting](#troubleshooting).
@@ -387,7 +387,7 @@ Nếu không thấy → xem [Troubleshooting](#troubleshooting).
 
 ## Smoke test đầu tiên
 
-1. Trong Telegram, search bot của bạn theo username (vd `@khoa_telecode_bot`), bấm **Start**.
+1. Trong Telegram, search bot của bạn theo username (vd `@your_telecode_bot`), bấm **Start**.
 2. Gửi `/start`. Bot reply welcome + show **persistent reply keyboard** (6 nút phía dưới ô gõ: 📋 Sessions, 📁 Projects, 📊 Status, 🛑 Stop, 📸 Screen, ❓ Help). Cạnh paperclip có thêm nút **Menu** — bấm vào hiện đủ 8 slash command. Gõ `/` cũng ra cùng menu.
 3. Gửi `/projects` (hoặc tap nút 📁 Projects). Bot list tất cả project nó scan được từ `~/Documents/workspaces/`, mỗi project là 1 nút inline có **tên project**; tap = set project đó làm active. Project hiện đang active có prefix `●` (vd `● telecode`). Pagination tự bật khi >8 project.
 4. Tạo session bằng **wizard** — gõ `/new`. Bot dẫn 3 bước inline:

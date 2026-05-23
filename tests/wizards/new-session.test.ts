@@ -129,8 +129,8 @@ function makeDeps(overrides?: {
   setActiveSession?: (chatId: number, id: string | null) => void;
 }): WizardDeps {
   const projects = overrides?.projects ?? [
-    { id: 1, name: 'telecode', path: '/Users/koi/telecode', created_at: 0 },
-    { id: 2, name: 'api', path: '/Users/koi/api', created_at: 0 },
+    { id: 1, name: 'telecode', path: '/Users/<you>/telecode', created_at: 0 },
+    { id: 2, name: 'api', path: '/Users/<you>/api', created_at: 0 },
   ];
   const store = {
     listProjects: vi.fn().mockReturnValue(projects),

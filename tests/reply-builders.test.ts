@@ -41,7 +41,7 @@ function mkProjects(n: number): ProjectListItem[] {
   return Array.from({ length: n }, (_, i) => ({
     id: i + 1,
     name: `proj-${i + 1}`,
-    path: `/Users/koi/workspaces/proj-${i + 1}`,
+    path: `/Users/<you>/workspaces/proj-${i + 1}`,
   }));
 }
 
@@ -308,7 +308,7 @@ describe('buildProjectList', () => {
   it('keeps project callback_data well under Telegram 64-byte limit', () => {
     // even a 6-digit project_id stays small: "project:cd:999999" = 17 bytes
     const projects: ProjectListItem[] = [
-      { id: 999_999, name: 'huge', path: '/Users/koi/x' },
+      { id: 999_999, name: 'huge', path: '/Users/<you>/x' },
     ];
     const payload = buildProjectList(projects);
     const rows = payload.reply_markup.inline_keyboard;

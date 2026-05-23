@@ -105,7 +105,7 @@ describe('sendFileToChat', () => {
 
 describe('/send path security', () => {
   it('rejects path traversal outside project', () => {
-    const projPath = '/Users/koi/project';
+    const projPath = '/Users/<you>/project';
     // Simulate the security check from the command handler
     const testPaths = [
       { input: '../../../etc/passwd', shouldReject: true },
