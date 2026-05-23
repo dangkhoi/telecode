@@ -63,6 +63,12 @@ export interface CommandDeps {
    */
   registry: AgentRegistry;
   notifierFor: (chatId: number) => Notifier;
+  /**
+   * i18n handle (Phase 1). Optional so test-only call sites that don't
+   * exercise localized strings can omit it; the welcome / language commands
+   * fall back to hard-coded English when missing.
+   */
+  i18n?: import('../../i18n/index.js').I18n;
 }
 
 /**
@@ -556,13 +562,15 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const sessions = store.listSessions(chatId);
     const active = activeSession(ctx, store);
+    const t = (key: import('../../i18n/index.js').MessageKey, vars?: Record<string, string | number>): string =>
+      deps.i18n?.t(chatId, key, vars) ?? fallbackStartLine(key, vars);
     const lines = [
-      '👋 *Telecode* online',
+      t('start.welcome.title'),
       '',
-      `Active: ${active ? '`' + active.label + '`' : '(none — `/session new`)'}`,
-      `Sessions: ${sessions.length}`,
+      active ? t('start.activeSession', { label: active.label }) : t('start.noActiveSession'),
+      t('start.sessionsCount', { count: sessions.length }),
       '',
-      'Commands: `/session`, `/projects`, `/cd`, `/stop`, `/status`, `/allow`, `/deny`, `/screenshot`',
+      t('start.commandsHint'),
     ];
     // Send the persistent reply keyboard alongside the welcome text. Telegram
     // keeps the keyboard visible across subsequent messages until explicitly
@@ -571,6 +579,31 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     await ctx.reply(lines.join('\n'), {
       parse_mode: 'Markdown',
       reply_markup: buildPersistentKeyboard(),
+    });
+  });
+
+  // ----- /language — show current language + offer picker ----------------
+  // Phase 1: i18n setup. The first-boot picker is sent once from src/index.ts
+  // when the chat has no chat_settings row yet; this command is the
+  // anytime-after escape hatch and surfaces the same inline keyboard.
+  bot.command('language', async (ctx) => {
+    const chatId = ctx.chat!.id;
+    const i18n = deps.i18n;
+    if (!i18n) {
+      await ctx.reply('i18n not configured.');
+      return;
+    }
+    const current = i18n.language(chatId);
+    const kb = buildLanguagePickerKeyboard(i18n, chatId);
+    // Send the prompt in the chat's CURRENT language (so a Vietnamese user
+    // sees Vietnamese instructions about how to switch). Buttons are bilingual
+    // by design — a user changing language likely doesn't read the current one.
+    const header = i18n.t(chatId, 'language.current');
+    const prompt = i18n.t(chatId, 'language.picker.prompt');
+    void current; // header already references it via t()
+    await ctx.reply(`${header}\n\n${prompt}`, {
+      parse_mode: 'Markdown',
+      reply_markup: kb,
     });
   });
 
@@ -2875,4 +2908,61 @@ export async function flushBufferedAsCatchUp(
   for (const part of parts) {
     await notifier.sendPlain(part, { silent: true });
   }
+}
+
+
+// ============================================================================
+// i18n helpers (Phase 1 — language picker)
+// ============================================================================
+
+/**
+ * Inline keyboard for the language picker. Used both at first-boot (sent
+ * from `src/index.ts`) and via `/language`. Callback data is `lang:set:en`
+ * / `lang:set:vi`; the handler lives in `src/bot/router.ts` so the
+ * single CallbackRouter instance owns ALL `:` namespaces.
+ *
+ * Buttons stay BILINGUAL (English label + Vietnamese label) regardless of
+ * the chat's current language — a user changing language likely cannot
+ * read the current one, so showing both labels avoids a usability trap.
+ */
+export function buildLanguagePickerKeyboard(
+  i18n: import('../../i18n/index.js').I18n,
+  chatId: number,
+): InlineKeyboard {
+  const kb = new InlineKeyboard();
+  // We deliberately call t() for the LABELS so the rendered string honours
+  // the per-locale catalog (e.g. flag rendering on a client that misrenders
+  // 🇬🇧 could be patched in one place). Both buttons render the SAME label
+  // regardless of which locale is active because both catalogs use the
+  // same emoji+text — the divergence is in the post-set CHANGED message.
+  kb.text(i18n.t(chatId, 'language.picker.button.en'), 'lang:set:en');
+  kb.text(i18n.t(chatId, 'language.picker.button.vi'), 'lang:set:vi');
+  return kb;
+}
+
+/**
+ * Hard-coded English fallback for the `/start` welcome lines when the i18n
+ * handle wasn't injected (older test wiring). Kept here — and not in the
+ * EN catalog — because reading from the catalog would itself require an
+ * i18n handle, defeating the fallback.
+ */
+function fallbackStartLine(
+  key: import('../../i18n/index.js').MessageKey,
+  vars?: Record<string, string | number>,
+): string {
+  const fallbacks: Record<string, string> = {
+    'start.welcome.title': '👋 *Telecode* online',
+    'start.activeSession': 'Active: `{label}`',
+    'start.noActiveSession': 'Active: (none — `/session new`)',
+    'start.sessionsCount': 'Sessions: {count}',
+    'start.commandsHint':
+      'Commands: `/session`, `/projects`, `/cd`, `/stop`, `/status`, `/allow`, `/deny`, `/screenshot`',
+  };
+  let s = fallbacks[key] ?? key;
+  if (vars) {
+    for (const [k, v] of Object.entries(vars)) {
+      s = s.replace(`{${k}}`, String(v));
+    }
+  }
+  return s;
 }

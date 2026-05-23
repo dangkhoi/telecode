@@ -146,6 +146,16 @@ export class SessionStore {
     if (!csColNames.has('quiet_tz')) {
       this.db.exec(`ALTER TABLE chat_settings ADD COLUMN quiet_tz TEXT`);
     }
+    // Phase i18n — per-chat language. SQLite ALTER TABLE cannot add a NOT
+    // NULL column without a default, so we add as nullable then backfill.
+    // Backfill rule: existing rows (pre-i18n users) → 'vi' to preserve the
+    // historical Vietnamese UX; the schema-level DEFAULT 'en' kicks in for
+    // FRESH chats only (new chat_settings inserts via setChatLanguage /
+    // setChatDefaultMode after this migration runs).
+    if (!csColNames.has('language')) {
+      this.db.exec(`ALTER TABLE chat_settings ADD COLUMN language TEXT`);
+      this.db.exec(`UPDATE chat_settings SET language = 'vi' WHERE language IS NULL`);
+    }
   }
 
   // ---------- Projects ----------
@@ -395,6 +405,41 @@ export class SessionStore {
       .prepare(`SELECT 1 AS one FROM chat_settings WHERE chat_id = ?`)
       .get(chatId) as { one: number } | undefined;
     return row != null;
+  }
+
+  // ---------- i18n (Phase 1 — language picker) ----------
+  /**
+   * Resolve the chat's UI language. Returns `'vi'` for chats whose
+   * chat_settings row was migrated from pre-i18n (preserves the historical
+   * Vietnamese UX), `'en'` for fresh installs without a row (matches the
+   * schema-level DEFAULT). Unknown values fall back to `'en'` defensively.
+   *
+   * Pure read — does NOT auto-insert a row, so the `chatSettingsExists`
+   * marker for first-boot detection (plan §B.5 + i18n setup picker) stays
+   * intact.
+   */
+  getChatLanguage(chatId: number): 'en' | 'vi' {
+    const row = this.db
+      .prepare(`SELECT language FROM chat_settings WHERE chat_id = ?`)
+      .get(chatId) as { language: string | null } | undefined;
+    if (!row) return 'en';
+    if (row.language === 'vi' || row.language === 'en') return row.language;
+    return 'en';
+  }
+
+  /**
+   * Idempotent upsert for the chat's UI language. Used by the language
+   * picker callback (`lang:set:*`) and the `/language` command. Inserts a
+   * full chat_settings row on first call (with `default_mode='summary'`),
+   * UPDATEs the language column on subsequent calls.
+   */
+  setChatLanguage(chatId: number, language: 'en' | 'vi'): void {
+    this.db
+      .prepare(
+        `INSERT INTO chat_settings (chat_id, default_mode, language) VALUES (?, 'summary', ?)
+         ON CONFLICT(chat_id) DO UPDATE SET language = excluded.language`,
+      )
+      .run(chatId, language);
   }
 
   // ---------- Cost tracking (v1.2 D3) ----------

@@ -69,6 +69,14 @@ export interface BotDeps {
    * adapter never touches the wizard or router again.
    */
   registry: AgentRegistry;
+  /**
+   * i18n handle (Phase 1). Owns per-chat language cache; passed into command
+   * handlers + callback router so every user-facing string goes through
+   * {@link import('../i18n/index.js').I18n.t}. Optional so existing call
+   * sites (tests that only exercise routing) don't need to wire it; when
+   * absent, callers fall back to hard-coded strings.
+   */
+  i18n?: import('../i18n/index.js').I18n;
 }
 
 export interface StartedBot {
@@ -1150,7 +1158,64 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     .on('diff', 'show', diffShowHandler)
     // Phase D.3 / D.5 — summary buttons.
     .on('summary', 'ai', summaryAiHandler)
-    .on('summary', 'full', summaryFullHandler);
+    .on('summary', 'full', summaryFullHandler)
+    // Phase i18n — language picker callback. Idempotent: clicking the same
+    // button twice writes the same value; clicking the OTHER button updates
+    // the cache + DB and acknowledges in the NEW language. After setting we
+    // remove the inline keyboard so the user can't keep tapping the stale
+    // message and re-send the welcome confirmation in the chosen locale.
+    .on('lang', 'set', async (ctx, payload) => {
+      const chatId = ctx.chat?.id;
+      if (!chatId) {
+        await ctx.answerCallbackQuery({ text: 'no chat' });
+        return;
+      }
+      if (payload !== 'en' && payload !== 'vi') {
+        await ctx.answerCallbackQuery({ text: 'unknown language', show_alert: true });
+        return;
+      }
+      const i18n = deps.i18n;
+      if (!i18n) {
+        // Defensive: if the daemon was started without i18n wiring, write
+        // straight to the store so the user's pick still persists, then
+        // bail with a generic ack. Should be unreachable in production.
+        deps.store.setChatLanguage(chatId, payload);
+        await ctx.answerCallbackQuery({ text: `✓ ${payload}` });
+        return;
+      }
+      // Detect first-pick (no row before our setLanguage call) so we only
+      // emit the verbosity migration note ONCE per chat. Subsequent
+      // `/language` taps shouldn't re-spam the migration help.
+      const isFirstPick = !deps.store.chatSettingsExists(chatId);
+      i18n.setLanguage(chatId, payload);
+      await ctx.answerCallbackQuery({ text: `✓ ${payload}` });
+      // Strip the inline buttons so the previous picker bubble doesn't
+      // keep accepting taps. Failure is non-fatal (e.g. message already
+      // edited / deleted — Telegram returns 400).
+      try {
+        await ctx.editMessageReplyMarkup({ reply_markup: undefined });
+      } catch {
+        /* ignore */
+      }
+      // Confirmation in the freshly-chosen language.
+      try {
+        await ctx.reply(i18n.t(chatId, 'language.changed'), { parse_mode: 'Markdown' });
+      } catch (err) {
+        logger.warn({ err: String(err), chatId }, 'language confirmation send failed');
+      }
+      if (isFirstPick) {
+        // Phase i18n + Phase B (§B.5) — emit the verbosity migration note
+        // in the chosen language exactly once (on the very first language
+        // pick). Subsequent `/language` toggles skip this so we don't spam.
+        try {
+          await ctx.reply(i18n.t(chatId, 'verbosity.migrationNote'), {
+            parse_mode: 'Markdown',
+          });
+        } catch (err) {
+          logger.warn({ err: String(err), chatId }, 'verbosity migration note send failed');
+        }
+      }
+    });
 
   // B2: project picker callbacks (`project:cd`, `project:new`, `project:page`).
   // Implementation in src/bot/callbacks/projects.ts so the handlers can be

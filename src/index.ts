@@ -183,6 +183,10 @@ async function main(): Promise<void> {
     bufferCapBytes: config.notifier.buffer_cap_bytes,
   });
 
+  // Phase 1 i18n — single instance per boot, owns per-chat language cache.
+  const { createI18n } = await import('./i18n/index.js');
+  const i18n = createI18n({ store });
+
   // Workspace scan → auto-register projects
   const scanned = scanWorkspaces({
     roots: config.daemon.workspace_scan.roots,
@@ -195,47 +199,47 @@ async function main(): Promise<void> {
   // Crash-recovery: mark stale sessions interrupted, notify.
   const stale = store.markRunningAsInterrupted();
 
-  const started = await startBot({ config, store, manager, broker, policy, registry });
+  const started = await startBot({ config, store, manager, broker, policy, registry, i18n });
 
   // v1.2 D9 — Timeline HTTP server (loopback only).
   const { startTimelineServer } = await import('./bot/timeline.js');
   const timeline = await startTimelineServer({ store, port: config.daemon.timeline_port });
   (globalThis as any).__telecode_timeline_port = timeline.port;
 
-  // Phase B (plan §B.5) — first-boot of v1.1 announcement per allowed chat.
+  // Phase i18n + Phase B (plan §B.5) — first-boot picker per allowed chat.
   //
-  // Detection rule: chat has NO row in `chat_settings` yet. This is the
-  // cleanest "haven't seen v1.1 boot before for this chat" marker — schema
-  // change (v1.1 added the table), and the migration helpers never auto-
-  // insert rows on read. After sending, we INSERT the default `summary` row
-  // so the message fires exactly once even across daemon restarts.
+  // Detection rule: chat has NO row in `chat_settings` yet. (Same marker as
+  // before — pre-i18n the v1.1 verbosity migration message used this; with
+  // i18n we send a LANGUAGE PICKER instead and the post-pick callback
+  // (router.ts `lang:set:*`) writes the row + emits the verbosity migration
+  // note in the chosen language.)
+  //
+  // We deliberately DO NOT insert the chat_settings row here — if the user
+  // closes Telegram before tapping a language button and the daemon restarts,
+  // the picker re-fires next boot rather than silently locking them into the
+  // schema-default 'en'. Idempotent / safe to re-run.
   //
   // Failure handling: a Telegram send error must NOT block boot. We log
   // and skip — the announcement is helpful, not critical, and the user can
-  // discover the mode system via the slash menu (`/mode`, `/settings`).
+  // discover the language switch via `/language` once they're online.
   for (const chatId of config.telegram.allowed_user_ids) {
     if (store.chatSettingsExists(chatId)) continue;
     try {
+      const { buildLanguagePickerKeyboard } = await import('./bot/commands/index.js');
       await started.bot.api.sendMessage(
         chatId,
-        '📢 *Telecode v1.1* — verbosity modes\n\n' +
-          'Mode mặc định giờ là 🎯 *Summary* — chỉ show approval + done + errors.\n\n' +
-          'Muốn behavior cũ (verbose firehose):\n' +
-          '  • `/mode verbose`           — chỉ áp dụng cho session active\n' +
-          '  • `/settings mode verbose`  — đặt làm default cho cả chat\n\n' +
-          'Đổi mode bất kỳ lúc nào qua slash menu (`/mode`, `/settings`).',
-        { parse_mode: 'Markdown' },
+        i18n.t(chatId, 'language.picker.prompt'),
+        {
+          parse_mode: 'Markdown',
+          reply_markup: buildLanguagePickerKeyboard(i18n, chatId),
+        },
       );
     } catch (err) {
       logger.warn(
         { err: String(err), chatId },
-        'v1.1 announcement send failed — continuing without it',
+        'language picker send failed — continuing without it',
       );
     }
-    // Mark sent: insert the default row so we don't re-spam on restart.
-    // Idempotent (ON CONFLICT updates) — safe if a race somehow created the
-    // row between the existence check and now.
-    store.setChatDefaultMode(chatId, 'summary');
   }
 
   for (const s of stale) {

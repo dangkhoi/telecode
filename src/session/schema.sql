@@ -64,7 +64,11 @@ CREATE TABLE IF NOT EXISTS chat_settings (
   default_mode  TEXT NOT NULL DEFAULT 'summary',
   quiet_start   INTEGER,  -- minute-of-day (0-1439) when quiet hours begin, NULL = disabled
   quiet_end     INTEGER,  -- minute-of-day (0-1439) when quiet hours end
-  quiet_tz      TEXT      -- IANA timezone string, default 'Asia/Ho_Chi_Minh'
+  quiet_tz      TEXT,     -- IANA timezone string, default 'Asia/Ho_Chi_Minh'
+  -- Phase i18n: per-chat UI language ('en' | 'vi'). Default 'en' for new
+  -- installs; existing pre-i18n rows are backfilled to 'vi' by the
+  -- migration in store.ts to preserve the historical Vietnamese-only UX.
+  language      TEXT NOT NULL DEFAULT 'en'
 );
 
 -- Persisted state for the @grammyjs/conversations plugin (v0.7 wizards).
