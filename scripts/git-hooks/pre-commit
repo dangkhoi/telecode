@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# pre-commit — universal secret/PII scan, layer-1 mechanical enforcement.
+#
+# Honors ~/.kiro/steering/pre-commit-security.md (global) + the workspace's
+# own .kiro/steering/security-overrides.md (optional, gitignored).
+#
+# Runs on EVERY git commit (unless `--no-verify` is passed). Blocks commit
+# if any pattern hits the STAGED diff.
+#
+# Bypass policy: `git commit --no-verify` skips this hook by design (git's
+# behavior). Document the override per the steering rule's §9 if you use it.
+#
+# Install (per repo):
+#   cp ~/.git-template/hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+#
+# Install (global default for new repos):
+#   git config --global init.templateDir ~/.git-template
+#   # New `git init` / `git clone` will inherit the hook automatically.
+
+set -euo pipefail
+
+# ---- Helpers ----
+red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+yellow() { printf '\033[33m%s\033[0m\n' "$*" >&2; }
+green()  { printf '\033[32m%s\033[0m\n' "$*" >&2; }
+cyan()   { printf '\033[36m%s\033[0m\n' "$*" >&2; }
+
+# ---- Get staged diff (text only — skip binaries) ----
+# `--diff-filter=ACMR` = Added/Copied/Modified/Renamed (skip Deleted).
+# `-U0` = no context (focus on real changes).
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR)"
+if [[ -z "$STAGED_FILES" ]]; then
+  exit 0
+fi
+DIFF="$(git diff --cached -U0 --diff-filter=ACMR)"
+
+FAIL=0
+report_fail() {
+  local label="$1"; shift
+  red "BLOCKED: $label"
+  for line in "$@"; do
+    printf '  %s\n' "$line" >&2
+  done
+  FAIL=1
+}
+
+# ---- §2.1 Secret patterns ----
+# (Subset of the catalog — focus on highest-frequency leak shapes. Full
+# catalog is in ~/.kiro/steering/pre-commit-security.md §2 — agent should
+# follow that when reviewing code.)
+SECRETS_PATTERN='sk-ant-[a-zA-Z0-9_-]{30,}|sk-proj-[a-zA-Z0-9_-]{40,}|sk-[a-zA-Z0-9]{40,}|AIza[0-9A-Za-z_-]{35}|hf_[A-Za-z0-9]{30,}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82}|gho_[A-Za-z0-9]{36}|glpat-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ASIA[0-9A-Z]{16}|sk_live_[A-Za-z0-9]{24,}|sk_test_[A-Za-z0-9]{24,}|whsec_[A-Za-z0-9]{32,}|xoxb-[A-Za-z0-9-]{40,}|xoxp-[A-Za-z0-9-]{40,}|SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}|do_[a-f0-9]{64}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+HITS="$(printf '%s\n' "$DIFF" | grep -nE "$SECRETS_PATTERN" || true)"
+if [[ -n "$HITS" ]]; then
+  report_fail "secret pattern detected in staged changes" "$HITS"
+fi
+
+# Telegram bot tokens (excluded via shape since may overlap with database
+# port:password URLs — separate scan to avoid noise).
+TG_HITS="$(printf '%s\n' "$DIFF" | grep -nE '(^|[^A-Za-z0-9])[0-9]{8,11}:[A-Za-z0-9_-]{30,40}([^A-Za-z0-9]|$)' || true)"
+if [[ -n "$TG_HITS" ]]; then
+  # Soft warn for test scrubber files (these intentionally embed FAKE shapes).
+  if printf '%s\n' "$STAGED_FILES" | grep -qE 'tests/(scrub|console-scrub)\.test\.'; then
+    yellow "NOTE: telegram-token shape in test/scrub fixture — verify literal is synthetic before commit."
+  else
+    report_fail "possible Telegram bot token in staged changes" "$TG_HITS"
+  fi
+fi
+
+# ---- §2.8 Generic env-var assignment shape ----
+# Matches `KEY=value` / `key: value` shapes for words that strongly imply
+# secrets, when value looks like a high-entropy / long base64-ish blob.
+GENERIC_PATTERN='(api[_-]?key|secret[_-]?(key|token)?|access[_-]?token|auth[_-]?token|credential|private[_-]?key)["'\'']*\s*[:=]\s*["'\'']?[A-Za-z0-9_/+=.\-]{20,}["'\'']?'
+GENERIC_HITS="$(printf '%s\n' "$DIFF" | grep -niE "$GENERIC_PATTERN" | grep -vE '\.example\.|\.template\.|\.sample\.' || true)"
+if [[ -n "$GENERIC_HITS" ]]; then
+  report_fail "generic key/token assignment with value detected" "$GENERIC_HITS"
+fi
+
+# ---- §3.1 Universal sensitive content ----
+# Real personal email (consumer providers — work/corporate emails on
+# generic domain are NOT auto-blocked).
+EMAIL_PATTERN='[A-Za-z0-9._%+-]+@(gmail|yahoo|hotmail|outlook|icloud|proton|protonmail|me|fastmail|aol|yandex|mail)\.[A-Za-z]{2,}'
+EMAIL_HITS="$(printf '%s\n' "$DIFF" | grep -nE "$EMAIL_PATTERN" || true)"
+if [[ -n "$EMAIL_HITS" ]]; then
+  report_fail "personal email address detected" "$EMAIL_HITS"
+fi
+
+# Real machine username paths (`/Users/<name>/`, `C:\Users\<name>\`, `/home/<name>/`).
+# Whitelist generic placeholders.
+PATH_PATTERN='(/Users/|/home/|C:\\\\Users\\\\)[a-z][a-z0-9_-]{1,30}[/\\]'
+PATH_HITS="$(printf '%s\n' "$DIFF" | grep -nE "$PATH_PATTERN" \
+  | grep -viE '/Users/<(you|user|name)>|/home/<(you|user|name)>|C:\\\\Users\\\\<(you|user|name)>|/(Users|home)/(example|test|demo|placeholder)/' \
+  || true)"
+if [[ -n "$PATH_HITS" ]]; then
+  report_fail "real machine username path detected — replace with placeholder" "$PATH_HITS"
+fi
+
+# ---- §3.2 Workspace-specific overrides ----
+# Read the workspace's overrides file if it exists. Extract literal patterns
+# from "block on commit" section, escape regex metas, build a pipe-joined
+# pattern. Skip whitelisted files for this regex (regex defs are metadata).
+OVERRIDES=".kiro/steering/security-overrides.md"
+if [[ -f "$OVERRIDES" ]]; then
+  # Extract backtick-wrapped literals from the file (markdown convention
+  # for inline code = sensitive identifier).
+  WORKSPACE_TOKENS="$(awk '/^## Sensitive identifiers/,/^## /' "$OVERRIDES" \
+    | grep -oE '`[^`]{4,}`' \
+    | sed 's/^`//; s/`$//' \
+    | grep -vE '^(<.*>|placeholder|example|generic)' \
+    || true)"
+  if [[ -n "$WORKSPACE_TOKENS" ]]; then
+    # Build OR-pattern, escape regex metachars per token.
+    WORKSPACE_PATTERN=""
+    while IFS= read -r tok; do
+      [[ -z "$tok" ]] && continue
+      esc="$(printf '%s' "$tok" | sed 's/[][\.*^$/+?(){}|]/\\&/g')"
+      [[ -n "$WORKSPACE_PATTERN" ]] && WORKSPACE_PATTERN="$WORKSPACE_PATTERN|"
+      WORKSPACE_PATTERN="$WORKSPACE_PATTERN$esc"
+    done <<< "$WORKSPACE_TOKENS"
+    if [[ -n "$WORKSPACE_PATTERN" ]]; then
+      WS_HITS="$(printf '%s\n' "$DIFF" | grep -nE "$WORKSPACE_PATTERN" || true)"
+      if [[ -n "$WS_HITS" ]]; then
+        report_fail "workspace-specific sensitive identifier detected (.kiro/steering/security-overrides.md)" "$WS_HITS"
+      fi
+    fi
+  fi
+fi
+
+# ---- §2.2 Tracked-file leak (forbidden file types) ----
+FORBIDDEN_RE='^(\.env$|\.env\.[^e]|.*\.key$|.*\.pem$|.*\.p12$|.*\.pfx$|state\.db$|.*\.sqlite$|daemon\.lock$|.*service-account.*\.json$|.*-adminsdk-.*\.json$)'
+NEW_FORBIDDEN="$(printf '%s\n' "$STAGED_FILES" | grep -E "$FORBIDDEN_RE" || true)"
+if [[ -n "$NEW_FORBIDDEN" ]]; then
+  report_fail "forbidden file type being added — should be in .gitignore" "$NEW_FORBIDDEN"
+fi
+
+# ---- External tool integration (opportunistic) ----
+# If gitleaks is installed, run it for additional coverage. Don't fail if
+# tool itself errors — just log.
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --no-banner -v --redact 2>&1 | tail -20 >&2; then
+    cyan "gitleaks reported issues — review above"
+    FAIL=1
+  fi
+fi
+
+# ---- Result ----
+if [[ $FAIL -ne 0 ]]; then
+  red ""
+  red "Pre-commit security scan FAILED."
+  red "Review hits above, scrub the secrets/PII, then re-stage and re-commit."
+  red ""
+  red "Bypass policy:"
+  red "  - 'git commit --no-verify' skips this hook (intentional escape hatch)."
+  red "  - Per ~/.kiro/steering/pre-commit-security.md §9, document the override"
+  red "    in the commit message body when bypassing."
+  exit 1
+fi
+
+# Soft summary (only when not silent/CI).
+if [[ -t 2 ]]; then
+  green "✓ pre-commit security scan passed ($(printf '%s\n' "$STAGED_FILES" | wc -l | tr -d ' ') files)"
+fi
+exit 0
