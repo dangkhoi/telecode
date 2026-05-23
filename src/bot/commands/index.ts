@@ -135,10 +135,17 @@ function autoSummarizeThreshold(): number {
 
 /**
  * Phase D.2 — instruction injected at the head of the auto-summarize prompt
- * for long `tool_result` previews. Vietnamese to match the user's locale
- * (plan §13 lists multi-language as out of scope for v1.1).
+ * for long `tool_result` previews.
+ *
+ * Phase 3 i18n: locale-aware via {@link i18nT}. The string is fetched at the
+ * call site (in `dispatchPromptToActiveSession`) using the chat's language
+ * so the agent's reply lands in the user's preferred locale.
+ *
+ * The original Vietnamese constant below is kept for the rare fallback path
+ * where i18n isn't wired (deep test scaffolding); production always goes
+ * through `t(chatId, 'llm.summarize.toolResult')`.
  */
-const AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION =
+const AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION_VI =
   'Tóm tắt output dưới đây trong 1-2 dòng tiếng Việt ngắn gọn, ' +
   'tập trung vào kết quả chính (pass/fail, số lượng, lỗi cụ thể). ' +
   'Không cần giải thích, không markdown nặng — chỉ summary thuần text.';
@@ -146,8 +153,10 @@ const AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION =
 /**
  * Phase D.4 — instruction for auto done-summary. Asks the agent to summarize
  * what it just did across the entire turn. 1-2 câu giữ ngắn để fit phone glance.
+ *
+ * Phase 3 i18n: see {@link AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION_VI} note.
  */
-const AUTO_DONE_SUMMARIZE_INSTRUCTION =
+const AUTO_DONE_SUMMARIZE_INSTRUCTION_VI =
   'Viết bản tóm tắt TỰ-CHỨA bằng tiếng Việt cho câu trả lời / công việc vừa rồi, ' +
   'đủ thông tin để người đọc NẮM ĐƯỢC KẾT QUẢ mà không cần xem lại chi tiết. ' +
   'Giữ lại các điểm chính, kết luận, con số và đường dẫn quan trọng. ' +
@@ -347,22 +356,39 @@ function activeSession(
 
 /**
  * Synthetic prompt the agent receives when the user runs `/handoff` (or taps
- * the [🤝] button in `/sessions`). Designed so the response is a compact
- * note suitable as preamble for a fresh context window.
+ * the [🤝] button in `/sessions`).
  *
- * Exported so the callback handler in router.ts shares the exact wording.
+ * Phase 3 i18n: locale-aware. The wording lives in the catalog under
+ * `llm.handoff` so an EN-locale chat gets the agent's reply in English.
+ *
+ * The Vietnamese constant below is the legacy fallback when no i18n handle
+ * is wired (rare — only test scaffolding without full router setup).
  */
-export const HANDOFF_PROMPT =
+const HANDOFF_PROMPT_VI =
   'Tóm tắt context của session hiện tại (5–15 dòng): chúng ta đang làm gì, ' +
   'đã đi đến đâu, các file/module/lệnh quan trọng đã đụng vào, và bước tiếp ' +
   'theo. Mục đích: dùng làm starting context cho 1 instance mới (sau khi ' +
   'clear context window). Output thuần text, không markdown nặng, không list ' +
   'dài; viết như note ngắn cho chính mình.';
 
+/**
+ * Backward-compat re-export. Old call sites that imported `HANDOFF_PROMPT`
+ * still get the VI constant; new sites should call `executeHandoff` and
+ * receive a locale-aware prompt via the injected i18n handle.
+ */
+export const HANDOFF_PROMPT = HANDOFF_PROMPT_VI;
+
 export interface HandoffDeps {
   store: SessionStore;
   manager: SessionManager;
   notifier: Notifier;
+  /**
+   * Phase 3 i18n — optional locale-aware text rendering. When present, the
+   * agent's handoff prompt + every notifier message goes through it so the
+   * user sees their chosen language. When absent, falls back to the VI
+   * constants for backward compat.
+   */
+  i18n?: import('../../i18n/index.js').I18n;
 }
 
 /**
@@ -384,23 +410,36 @@ export function executeHandoff(
   deps: HandoffDeps,
 ): { ok: boolean; message: string } {
   const { store, manager, notifier } = deps;
+  /**
+   * Local i18n shorthand — falls back to EN catalog via {@link _i18nTStatic}
+   * when no handle is wired. The handoff messages are heavily formatted
+   * (label prefix, line breaks) so we route through `t()` for parity with
+   * the rest of the codebase.
+   */
+  const t = (
+    key: import('../../i18n/index.js').MessageKey,
+    vars?: Record<string, string | number>,
+  ): string => {
+    if (deps.i18n) return deps.i18n.t(chatId, key, vars);
+    return _i18nTStatic('en', key, vars);
+  };
   const cur = store.getSession(sessionId);
   if (!cur || cur.chat_id !== chatId) {
-    return { ok: false, message: 'session not found' };
+    return { ok: false, message: t('handoff.error.notFound') };
   }
   if (cur.status === 'closed') {
-    return { ok: false, message: `[${cur.label}] session đã closed — không handoff được.` };
+    return { ok: false, message: t('handoff.error.closed', { label: cur.label }) };
   }
   if (manager.isBusy(sessionId)) {
     return {
       ok: false,
-      message: `[${cur.label}] session đang busy — /stop xong rồi /handoff lại.`,
+      message: t('handoff.error.busy', { label: cur.label }),
     };
   }
   if (!cur.sdk_session_id) {
     return {
       ok: false,
-      message: `[${cur.label}] chưa có resume id (session fresh, chưa chạy prompt nào) — không có context để handoff.`,
+      message: t('handoff.error.noResume', { label: cur.label }),
     };
   }
 
@@ -415,6 +454,9 @@ export function executeHandoff(
 
   const labelPrefix = `[${cur.label}] `;
   const summaryChunks: string[] = [];
+  // Phase 3 — locale-aware handoff prompt; fall back to the legacy VI
+  // wording when no i18n handle was injected.
+  const handoffPrompt = deps.i18n ? deps.i18n.t(chatId, 'llm.handoff') : HANDOFF_PROMPT_VI;
 
   // Fire-and-forget; manager.dispatch handles per-session mutex internally.
   void manager
@@ -425,7 +467,7 @@ export function executeHandoff(
       cwd,
       agent: cur.agent,
       resumeId: cur.sdk_session_id,
-      prompt: HANDOFF_PROMPT,
+      prompt: handoffPrompt,
       onEvent: (e) => {
         // Re-read active id each event — session can flip mid-summarize.
         const activeId = store.getChatState(chatId).active_session_id;
@@ -444,14 +486,12 @@ export function executeHandoff(
           // Summarize prompt shouldn't tool-use; if it does, ignore.
         } else if (e.type === 'error') {
           void notifier.sendPlain(
-            `${labelPrefix}❌ handoff failed: ${e.error}\nContext KHÔNG bị clear (an toàn).`,
+            t('handoff.dispatchFailed', { labelPrefix, error: e.error }),
           );
         } else if (e.type === 'done') {
           const summary = summaryChunks.join('').trim();
           if (!summary) {
-            void notifier.sendPlain(
-              `${labelPrefix}⚠️ handoff: agent trả về empty summary, không clear context.`,
-            );
+            void notifier.sendPlain(t('handoff.empty', { labelPrefix }));
             return;
           }
           // Save summary + wipe sdk_session_id + transcript_tail in one update
@@ -463,8 +503,7 @@ export function executeHandoff(
           });
           void notifier.closeStream(`s:${sessionId}`).then(() =>
             notifier.sendPlain(
-              `${labelPrefix}🤝 handoff complete — ${summary.length} chars saved.\n` +
-                `Context window đã clear. Gõ prompt tiếp theo, summary sẽ inject làm preamble (1-shot).`,
+              t('handoff.complete', { labelPrefix, chars: summary.length }),
             ),
           );
         }
@@ -476,9 +515,7 @@ export function executeHandoff(
 
   return {
     ok: true,
-    message:
-      `🤝 [${cur.label}] requesting handoff summary từ agent…\n` +
-      `Khi xong, context sẽ clear + summary lưu cho prompt kế tiếp.`,
+    message: t('handoff.requesting', { label: cur.label }),
   };
 }
 
@@ -863,6 +900,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       store,
       manager,
       notifier: notifierFor(chatId),
+      i18n: deps.i18n,
     });
     if (result.ok) {
       await ctx.reply(result.message, { disable_notification: true });
@@ -2401,7 +2439,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                         store,
                         sessionId: cur.id,
                         content: fullPreview,
-                        instruction: AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION,
+                        instruction: t(chatId, 'llm.summarize.toolResult') || AUTO_TOOL_RESULT_SUMMARIZE_INSTRUCTION_VI,
                         kind: 'auto-tool-result',
                       });
                       const lineCount = fullPreview.split('\n').length;
@@ -2697,7 +2735,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
                 store,
                 sessionId: cur.id,
                 content: summarizePromptContent,
-                instruction: AUTO_DONE_SUMMARIZE_INSTRUCTION,
+                instruction: t(chatId, 'llm.summarize.done') || AUTO_DONE_SUMMARIZE_INSTRUCTION_VI,
                 kind: 'auto-done',
               });
               if (!summary) {

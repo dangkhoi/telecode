@@ -6,6 +6,20 @@ import type { SessionManager } from '../../src/session/manager.js';
 import { AgentRegistry } from '../../src/agents/registry.js';
 import type { AgentAdapter } from '../../src/agents/types.js';
 import { newSession, PROJECTS_PER_PAGE, type WizardDeps } from '../../src/bot/wizards/new-session.js';
+import { createI18n } from '../../src/i18n/index.js';
+
+/**
+ * VI-locale i18n handle for tests. Wizard assertions historically check
+ * Vietnamese substrings; threading this in keeps the assertions stable
+ * across the i18n migration. (The wizard's own EN-fallback path is
+ * exercised by separate Phase 1 i18n unit tests.)
+ */
+const viI18n = createI18n({
+  store: {
+    getChatLanguage: () => 'vi' as const,
+    setChatLanguage: () => {},
+  },
+});
 
 /**
  * Build a registry pre-populated with stub claude + kiro adapters. The stubs
@@ -154,7 +168,7 @@ function makeDeps(overrides?: {
     createSession: createSessionSpy,
   } as unknown as SessionManager;
 
-  return { store, manager, registry: makeStubRegistry() };
+  return { store, manager, registry: makeStubRegistry(), i18n: viI18n };
 }
 
 // ---------------------------------------------------------------------------

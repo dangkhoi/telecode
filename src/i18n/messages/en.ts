@@ -255,6 +255,115 @@ export const EN_MESSAGES = {
   // ---- Wizard / dispatch shared ----------------------------------------
   'dispatch.dispatching': '[{label}] dispatching…',
   'dispatch.handoffInjected': '📥 [{label}] injecting handoff context ({chars} chars) into prompt — runs only once.',
+
+  // ---- Router / approval flow -------------------------------------------
+  'router.wizard.busy': 'A wizard is already running — finish it or /cancel first.',
+  'router.help':
+    '*Telecode — quick guide*\n' +
+    '\n' +
+    '*Keyboard (6 buttons below):*\n' +
+    '• 📋 Sessions — list + switch sessions\n' +
+    '• 📁 Projects — pick a project\n' +
+    '• 📊 Status — active session status\n' +
+    '• 🛑 Stop — stop the running task\n' +
+    '• 📸 Screen — capture macOS desktop\n' +
+    '• ❓ Help — this screen\n' +
+    '\n' +
+    '*Slash commands:*\n' +
+    '• `/new` — wizard to create a session (3 steps: agent → project → label)\n' +
+    '• `/sessions` — list + switch sessions\n' +
+    '• `/projects` — list projects + change cwd\n' +
+    '• `/status` — active session status\n' +
+    '• `/stop` — stop the running task\n' +
+    '• `/screenshot` — capture macOS desktop\n' +
+    '\n' +
+    'Type a plain prompt to send it to the active session.',
+  'router.session.closedBadge': '🗑 closed [{label}]',
+  'router.approval.foreverConfirmTitle': '⚠️ *Persist this permission?*',
+  'router.approval.foreverConfirmTool': 'Tool: `{tool}`',
+  'router.approval.foreverConfirmArgs': 'Args: `{args}`',
+  'router.approval.foreverConfirmNote': 'Rule will apply to every future session (even after restart).',
+  'router.approval.foreverWriteError': '⚠️ Failed to write policy — try again later',
+  'router.approval.foreverApplied':
+    '📌 Permanent permission added:\n```\n{pattern}\n```\nEdit `~/.telecode/policy.yaml` if needed.',
+  'router.approval.body':
+    '🛡 *Approval needed*\nSession: `{sessionLabel}`\nTool: `{tool}`\nInput: `{input}`',
+  'router.approval.cancelToast': 'cancel',
+  'router.diff.cacheMiss': '📜 Diff cache expired (TTL 15 minutes). Re-edit to view.',
+  'router.summary.cacheMissAi': '💬 Summary cache expired (TTL 1 hour). Run the tool again to view.',
+  'router.summary.cacheMissFull': '📜 Full-output cache expired (TTL 1 hour).',
+  'router.summary.cacheExpired': 'cache expired',
+  'router.summary.summarizing': '💬 Summarizing…',
+  'router.summary.placeholder': '[{label}] ⏳ Summarizing on demand…',
+  'router.summary.fallbackHint': '(summarize failed — tap to retry)',
+
+  // ---- Wizard (new-session) --------------------------------------------
+  'wizard.new.noAdapters': '⚠️ No agent is registered — check your config.',
+  'wizard.new.pickAgent': 'Create a new session — pick an agent:',
+  'wizard.new.cancel': '❌ Wizard cancelled',
+  'wizard.new.cancelRestart': '↩️ Cancelled — type /new to start again',
+  'wizard.new.pickProject': 'Agent: {agent} ✓\nPick a project:',
+  'wizard.new.noProjects': '⚠️ No projects found — run /add <path> first, then /new again.',
+  'wizard.new.invalidProject': 'Invalid project',
+  'wizard.new.askLabel':
+    'Agent: {agent}, Project: {project} ✓\nEnter a label for this session (e.g. refactor-auth):\n(type /cancel to abort)',
+  'wizard.new.labelInvalid':
+    'Label allows letters/digits/_/- only, max 40 chars. Try again or /cancel to abort.',
+  'wizard.new.labelTaken': 'Label "{label}" already exists — pick another name or /cancel.',
+  'wizard.new.created':
+    '✓ Session [{label}] created OK\nAgent: {agent} · Project: {project}\nType a prompt to start',
+  'wizard.new.createFailed': '⚠️ Create session failed: {error}',
+  'wizard.success.switch': '🔀 Switch other',
+  'wizard.success.tailLogs': '📋 Tail logs',
+
+  // ---- /handoff (executeHandoff) ---------------------------------------
+  'handoff.error.notFound': 'session not found',
+  'handoff.error.closed': '[{label}] session is closed — cannot handoff.',
+  'handoff.error.busy': '[{label}] session is busy — /stop first, then /handoff again.',
+  'handoff.error.noResume':
+    '[{label}] no resume id (session is fresh, no prompt has run) — no context to handoff.',
+  'handoff.dispatchFailed':
+    '{labelPrefix}❌ handoff failed: {error}\nContext was NOT cleared (safe).',
+  'handoff.empty':
+    '{labelPrefix}⚠️ handoff: agent returned empty summary, context not cleared.',
+  'handoff.complete':
+    '{labelPrefix}🤝 handoff complete — {chars} chars saved.\n' +
+    'Context window cleared. Send the next prompt; the summary will be injected as a preamble (1-shot).',
+  'handoff.requesting':
+    '🤝 [{label}] requesting handoff summary from the agent…\n' +
+    'Once done, context will be cleared and the summary saved for the next prompt.',
+
+  // ---- Approval / suggestions / projects callbacks ---------------------
+  'callback.noChat': 'no chat',
+  'callback.notFound': 'not found',
+  'callback.expired': 'expired',
+  'callback.invalidId': 'invalid id',
+  'callback.badProjectId': 'bad project id',
+  'callback.projectActivated': '📁 Active project → `{name}`',
+
+  // ---- LLM prompt instructions (locale-aware) --------------------------
+  // These are NOT shown to the user — they're injected into the LLM context
+  // so the agent's reply is in the user's chosen language. Keep wording
+  // direct and non-prescriptive about format so the agent doesn't pad with
+  // boilerplate.
+  'llm.summarize.toolResult':
+    'Summarize the output below in 1-2 short English sentences. ' +
+    'Focus on the key result. No heavy markdown — plain summary text only.',
+  'llm.summarize.done':
+    'Write a SELF-CONTAINED summary in English of the answer / work just completed, ' +
+    'enough information for a reader to GRASP THE RESULT without reviewing details. ' +
+    'Keep main points, conclusions, numbers, and important paths. ' +
+    'For code tasks: state what was done, files/features/tests touched, results (pass/fail/blocked). ' +
+    'For Q&A / explanations: convey the main ideas and conclusions. ' +
+    'Adaptive length: a few sentences for small tasks, bullet points for large ones. ' +
+    'Do NOT add a preamble like "Here is a summary" — go straight to the content.',
+  'llm.summarize.onDemand':
+    'Summarize the output below in 1-2 short English sentences, ' +
+    'focused on the key result. No heavy markdown, plain summary text only.',
+  'llm.handoff':
+    'Summarize the work in this session so far in 5-15 lines: ' +
+    'where we have gotten, the important files/modules/commands touched, and the next intended step. ' +
+    'No preamble — go straight to the content. Plain text, no heavy markdown.',
 };
 
 /**

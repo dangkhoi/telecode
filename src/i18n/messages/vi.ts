@@ -253,4 +253,112 @@ export const VI_MESSAGES: EnMessages = {
   // ---- Wizard / dispatch shared ----------------------------------------
   'dispatch.dispatching': '[{label}] dispatching…',
   'dispatch.handoffInjected': '📥 [{label}] inject handoff context ({chars} chars) vào prompt — sẽ chỉ chạy 1 lần.',
+
+  // ---- Router / approval flow -------------------------------------------
+  'router.wizard.busy': 'Đang có wizard chạy — hoàn tất hoặc /cancel trước.',
+  'router.help':
+    '*Telecode — hướng dẫn nhanh*\n' +
+    '\n' +
+    '*Keyboard (6 nút phía dưới):*\n' +
+    '• 📋 Sessions — list + switch session\n' +
+    '• 📁 Projects — chọn project\n' +
+    '• 📊 Status — trạng thái session active\n' +
+    '• 🛑 Stop — dừng task đang chạy\n' +
+    '• 📸 Screen — chụp desktop Mac\n' +
+    '• ❓ Help — màn hình này\n' +
+    '\n' +
+    '*Slash commands:*\n' +
+    '• `/new` — wizard tạo session (3 bước: agent → project → label)\n' +
+    '• `/sessions` — list session + switch\n' +
+    '• `/projects` — list project + chuyển cwd\n' +
+    '• `/status` — trạng thái session active\n' +
+    '• `/stop` — dừng task đang chạy\n' +
+    '• `/screenshot` — chụp desktop Mac\n' +
+    '\n' +
+    'Gõ prompt thường để gửi cho session active.',
+  'router.session.closedBadge': '🗑 đã đóng [{label}]',
+  'router.approval.foreverConfirmTitle': '⚠️ *Ghi vĩnh viễn quyền?*',
+  'router.approval.foreverConfirmTool': 'Tool: `{tool}`',
+  'router.approval.foreverConfirmArgs': 'Args: `{args}`',
+  'router.approval.foreverConfirmNote': 'Rule sẽ apply cho mọi session sau (kể cả sau restart).',
+  'router.approval.foreverWriteError': '⚠️ Lỗi ghi policy — thử lại sau',
+  'router.approval.foreverApplied':
+    '📌 Đã thêm quyền vĩnh viễn:\n```\n{pattern}\n```\nSửa tại `~/.telecode/policy.yaml` nếu cần.',
+  'router.approval.body':
+    '🛡 *Approval needed*\nSession: `{sessionLabel}`\nTool: `{tool}`\nInput: `{input}`',
+  'router.approval.cancelToast': 'hủy',
+  'router.diff.cacheMiss': '📜 Diff hết cache (TTL 15 phút). Edit lại để xem.',
+  'router.summary.cacheMissAi': '💬 Summary cache hết (TTL 1 giờ). Chạy lại tool để xem lại.',
+  'router.summary.cacheMissFull': '📜 Full-output cache hết (TTL 1 giờ).',
+  'router.summary.cacheExpired': 'cache hết hạn',
+  'router.summary.summarizing': '💬 Summarizing…',
+  'router.summary.placeholder': '[{label}] ⏳ Summarizing on demand…',
+  'router.summary.fallbackHint': '(summarize failed — tap to retry)',
+
+  // ---- Wizard (new-session) --------------------------------------------
+  'wizard.new.noAdapters': '⚠️ Không có agent nào được đăng ký — kiểm tra config.',
+  'wizard.new.pickAgent': 'Tạo session mới — chọn agent:',
+  'wizard.new.cancel': '❌ Wizard hủy',
+  'wizard.new.cancelRestart': '↩️ Đã hủy — gõ /new để bắt đầu lại',
+  'wizard.new.pickProject': 'Agent: {agent} ✓\nChọn project:',
+  'wizard.new.noProjects': '⚠️ Không có project nào — dùng /add <path> trước, rồi /new lại.',
+  'wizard.new.invalidProject': 'Project không hợp lệ',
+  'wizard.new.askLabel':
+    'Agent: {agent}, Project: {project} ✓\nNhập label cho session (vd: refactor-auth):\n(gõ /cancel để hủy)',
+  'wizard.new.labelInvalid':
+    'Label chỉ chứa chữ-số-_-, tối đa 40 ký tự. Thử lại hoặc /cancel để hủy.',
+  'wizard.new.labelTaken': 'Label "{label}" đã tồn tại — chọn tên khác hoặc /cancel.',
+  'wizard.new.created':
+    '✓ Session [{label}] tạo OK\nAgent: {agent} · Project: {project}\nGõ prompt để bắt đầu',
+  'wizard.new.createFailed': '⚠️ Tạo session lỗi: {error}',
+  'wizard.success.switch': '🔀 Switch khác',
+  'wizard.success.tailLogs': '📋 Tail logs',
+
+  // ---- /handoff (executeHandoff) ---------------------------------------
+  'handoff.error.notFound': 'session không tìm thấy',
+  'handoff.error.closed': '[{label}] session đã closed — không handoff được.',
+  'handoff.error.busy': '[{label}] session đang busy — /stop xong rồi /handoff lại.',
+  'handoff.error.noResume':
+    '[{label}] chưa có resume id (session fresh, chưa chạy prompt nào) — không có context để handoff.',
+  'handoff.dispatchFailed':
+    '{labelPrefix}❌ handoff failed: {error}\nContext KHÔNG bị clear (an toàn).',
+  'handoff.empty':
+    '{labelPrefix}⚠️ handoff: agent trả về empty summary, không clear context.',
+  'handoff.complete':
+    '{labelPrefix}🤝 handoff complete — {chars} chars saved.\n' +
+    'Context window đã clear. Gõ prompt tiếp theo, summary sẽ inject làm preamble (1-shot).',
+  'handoff.requesting':
+    '🤝 [{label}] requesting handoff summary từ agent…\n' +
+    'Khi xong, context sẽ clear + summary lưu cho prompt kế tiếp.',
+
+  // ---- Approval / suggestions / projects callbacks ---------------------
+  'callback.noChat': 'no chat',
+  'callback.notFound': 'không tìm thấy',
+  'callback.expired': 'expired',
+  'callback.invalidId': 'invalid id',
+  'callback.badProjectId': 'bad project id',
+  'callback.projectActivated': '📁 Active project → `{name}`',
+
+  // ---- LLM prompt instructions (locale-aware) --------------------------
+  // Các string này KHÔNG hiển thị cho user — inject vào LLM context để agent
+  // trả lời bằng đúng locale user đã chọn. Giữ wording trực tiếp, không
+  // prescriptive về format để agent không pad boilerplate.
+  'llm.summarize.toolResult':
+    'Tóm tắt output dưới đây trong 1-2 câu tiếng Việt ngắn gọn, ' +
+    'tập trung vào kết quả chính. Không cần markdown nặng — chỉ summary thuần text.',
+  'llm.summarize.done':
+    'Viết bản tóm tắt TỰ-CHỨA bằng tiếng Việt cho câu trả lời / công việc vừa rồi, ' +
+    'đủ thông tin để người đọc NẮM ĐƯỢC KẾT QUẢ mà không cần xem lại chi tiết. ' +
+    'Giữ lại các điểm chính, kết luận, con số và đường dẫn quan trọng. ' +
+    'Nếu là tác vụ code: nêu đã làm gì, file/feature/test nào đụng, kết quả (pass/fail/blocked). ' +
+    'Nếu là câu trả lời/giải thích: truyền tải các ý chính và kết luận. ' +
+    'Độ dài thích ứng: việc nhỏ vài câu, việc lớn dùng gạch đầu dòng. ' +
+    'Không thêm lời mở đầu kiểu "Đây là tóm tắt" — đi thẳng vào nội dung.',
+  'llm.summarize.onDemand':
+    'Tóm tắt output dưới đây trong 1-2 dòng tiếng Việt ngắn gọn, ' +
+    'tập trung vào kết quả chính. Không cần markdown nặng, chỉ summary thuần text.',
+  'llm.handoff':
+    'Tóm tắt công việc đã làm trong session này 5-15 dòng tiếng Việt: ' +
+    'đã đi đến đâu, các file/module/lệnh quan trọng đã đụng vào, và bước tiếp theo dự kiến. ' +
+    'Không lời mở đầu — đi thẳng vào nội dung. Plain text, không markdown nặng.',
 };

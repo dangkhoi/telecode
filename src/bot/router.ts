@@ -48,6 +48,7 @@ import { scrubSecrets } from '../util/scrub.js';
 import { suggestionAck } from './suggestions.js';
 import { enterWizard, exitWizard, isWizardActive, deferUntilWizardExits } from './wizard-state.js';
 import { DashboardLoop } from './dashboard.js';
+import { tStatic as _routerT } from '../i18n/index.js';
 
 /**
  * Outside-middleware context flavor. Adds `ctx.conversation` (enter/exit/active
@@ -88,6 +89,23 @@ export interface StartedBot {
 export async function startBot(deps: BotDeps): Promise<StartedBot> {
   const bot = new Bot<BotContext>(deps.config.telegram.bot_token);
   const allowed = new Set(deps.config.telegram.allowed_user_ids);
+
+  /**
+   * Phase 3 i18n shorthand (router.ts). Captures `deps.i18n` so the router-
+   * level callbacks and `/help` / `/new` / approval flow can share the
+   * single per-chat-cached lookup. Falls back to `tStatic('en', key, vars)`
+   * when no i18n handle is wired (test seam) so existing assertions keep
+   * matching English substrings.
+   */
+  const t = (
+    chatId: number | null | undefined,
+    key: import('../i18n/index.js').MessageKey,
+    vars?: Record<string, string | number>,
+  ): string => {
+    if (deps.i18n && chatId != null) return deps.i18n.t(chatId, key, vars);
+    return _routerT('en', key, vars);
+  };
+  void t;
 
   // global whitelist middleware
   bot.use(async (ctx, next) => {
@@ -215,6 +233,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
           store: deps.store,
           manager: deps.manager,
           registry: deps.registry,
+          i18n: deps.i18n,
         }),
       'newSession',
     ),
@@ -270,42 +289,23 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
   // (or the same) conversation is already active for the chat. Catch + tell
   // the user rather than letting the throw bubble to `bot.catch` (silent UX).
   bot.command('new', async (ctx) => {
+    const chatId = ctx.chat?.id;
     try {
       await ctx.conversation.enter('newSession');
     } catch (err) {
       logger.warn({ err: String(err) }, '/new: enter failed');
-      await ctx.reply('Đang có wizard chạy — hoàn tất hoặc /cancel trước.');
+      await ctx.reply(t(chatId, 'router.wizard.busy'));
     }
   });
 
-  // `/help` — short Vietnamese guide listing the 6 keyboard buttons and the
+  // `/help` — short bilingual guide listing the 6 keyboard buttons and the
   // discoverable slash commands. Registered separately from registerCommands
   // because the slash-menu listing (commands-registry.ts) names it explicitly
   // — every entry there must have a matching handler or Telegram clients
   // surface a "no response" warning on tap.
   bot.command('help', async (ctx) => {
-    const lines = [
-      '*Telecode — hướng dẫn nhanh*',
-      '',
-      '*Keyboard (6 nút phía dưới):*',
-      '• 📋 Sessions — list + switch session',
-      '• 📁 Projects — chọn project',
-      '• 📊 Status — trạng thái session active',
-      '• 🛑 Stop — dừng task đang chạy',
-      '• 📸 Screen — chụp desktop Mac',
-      '• ❓ Help — màn hình này',
-      '',
-      '*Slash commands:*',
-      '• `/new` — wizard tạo session (3 bước: agent → project → label)',
-      '• `/sessions` — list session + switch',
-      '• `/projects` — list project + chuyển cwd',
-      '• `/status` — trạng thái session active',
-      '• `/stop` — dừng task đang chạy',
-      '• `/screenshot` — chụp desktop Mac',
-      '',
-      'Gõ prompt thường để gửi cho session active.',
-    ];
-    await ctx.reply(lines.join('\n'), { parse_mode: 'Markdown' });
+    const chatId = ctx.chat?.id;
+    await ctx.reply(t(chatId, 'router.help'), { parse_mode: 'Markdown' });
   });
 
   registerCommands(bot, { ...deps, notifierFor });
@@ -524,6 +524,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       store: deps.store,
       manager: deps.manager,
       notifier: notifierFor(chatId),
+      i18n: deps.i18n,
     });
     // Short answer in the cbq toast (Telegram caps at ~200 chars for alerts);
     // the user-visible progress / completion arrives via notifier.sendPlain.
@@ -546,7 +547,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       await ctx.conversation.enter('newSession');
     } catch (err) {
       logger.warn({ err: String(err) }, 'wizard new-start: enter failed');
-      await ctx.reply('Đang có wizard chạy — hoàn tất hoặc /cancel trước.');
+      await ctx.reply(t(ctx.chat?.id, 'router.wizard.busy'));
     }
   };
 
@@ -631,11 +632,12 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       return;
     }
     await ctx.answerCallbackQuery();
+    const chatId = ctx.chat?.id;
     const text =
-      `⚠️ *Ghi vĩnh viễn quyền?*\n` +
-      `Tool: \`${req.toolName}\`\n` +
-      `Args: \`${req.inputPreview}\`\n` +
-      `Rule sẽ apply cho mọi session sau (kể cả sau restart).`;
+      `${t(chatId, 'router.approval.foreverConfirmTitle')}\n` +
+      `${t(chatId, 'router.approval.foreverConfirmTool', { tool: req.toolName })}\n` +
+      `${t(chatId, 'router.approval.foreverConfirmArgs', { args: req.inputPreview })}\n` +
+      t(chatId, 'router.approval.foreverConfirmNote');
     try {
       await ctx.editMessageText(scrubSecrets(text), {
         parse_mode: 'Markdown',
@@ -667,7 +669,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     } catch (err) {
       logger.error({ err: String(err), requestId }, 'apv:forever-confirm appendRule failed');
       await ctx.answerCallbackQuery({
-        text: '⚠️ Lỗi ghi policy — thử lại sau',
+        text: t(ctx.chat?.id, 'router.approval.foreverWriteError'),
         show_alert: true,
       });
       return;
@@ -686,11 +688,9 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     // The persisted pattern may contain backticks (e.g. shell command with
     // `` ` ``). Wrap inside a triple-backtick block — Telegram's legacy
     // Markdown allows literal backticks inside a fenced code block.
-    await ctx.reply(
-      `📌 Đã thêm quyền vĩnh viễn:\n\`\`\`\n${pattern}\n\`\`\`\n` +
-        `Sửa tại \`~/.telecode/policy.yaml\` nếu cần.`,
-      { parse_mode: 'Markdown' },
-    );
+    await ctx.reply(t(ctx.chat?.id, 'router.approval.foreverApplied', { pattern }), {
+      parse_mode: 'Markdown',
+    });
   };
 
   // Step 2b: user taps `❌ Hủy` — restore the original 4-button keyboard so
@@ -706,12 +706,13 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       await ctx.answerCallbackQuery({ text: 'expired' });
       return;
     }
-    await ctx.answerCallbackQuery({ text: 'hủy' });
+    await ctx.answerCallbackQuery({ text: t(ctx.chat?.id, 'router.approval.cancelToast') });
     const text = scrubSecrets(
-      `🛡 *Approval needed*\n` +
-        `Session: \`${req.sessionLabel}\`\n` +
-        `Tool: \`${req.toolName}\`\n` +
-        `Input: \`${req.inputPreview}\``,
+      t(ctx.chat?.id, 'router.approval.body', {
+        sessionLabel: req.sessionLabel,
+        tool: req.toolName,
+        input: req.inputPreview,
+      }),
     );
     try {
       await ctx.editMessageText(text, {
@@ -905,7 +906,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       // TTL expired (15min default) — friendly message rather than silently
       // swallowing the tap.
       try {
-        await ctx.reply('📜 Diff hết cache (TTL 15 phút). Edit lại để xem.');
+        await ctx.reply(t(chatId, 'router.diff.cacheMiss'));
       } catch (err) {
         logger.warn({ err: String(err) }, 'diff:show miss-reply failed');
       }
@@ -946,9 +947,6 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
   // Both verify chat ownership via the cached `sessionId` (mirrors the
   // diff:show security pattern from Phase C senior review [P1]).
   const MAX_FULL_OUTPUT_CHARS = 3500;
-  const SUMMARIZE_ON_DEMAND_INSTRUCTION =
-    'Tóm tắt output dưới đây trong 1-2 dòng tiếng Việt ngắn gọn, ' +
-    'tập trung vào kết quả chính. Không cần markdown nặng, chỉ summary thuần text.';
 
   const summaryAiHandler = async (
     ctx: Parameters<Parameters<typeof callbackRouter.on>[2]>[0],
@@ -957,19 +955,19 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     // payload = "<messageId>"
     const msgId = parseInt(payload, 10);
     if (!Number.isFinite(msgId)) {
-      await ctx.answerCallbackQuery({ text: 'invalid id' });
+      await ctx.answerCallbackQuery({ text: t(ctx.chat?.id, 'callback.invalidId') });
       return;
     }
     const chatId = ctx.chat?.id;
     if (!chatId) {
-      await ctx.answerCallbackQuery({ text: 'no chat' });
+      await ctx.answerCallbackQuery({ text: t(null, 'callback.noChat') });
       return;
     }
     const cached = summaryCache.get(msgId);
     if (!cached) {
-      await ctx.answerCallbackQuery({ text: 'cache hết hạn', show_alert: false });
+      await ctx.answerCallbackQuery({ text: t(chatId, 'router.summary.cacheExpired'), show_alert: false });
       try {
-        await ctx.reply('💬 Summary cache hết (TTL 1 giờ). Chạy lại tool để xem lại.');
+        await ctx.reply(t(chatId, 'router.summary.cacheMissAi'));
       } catch (err) {
         logger.warn({ err: String(err) }, 'summary:ai miss-reply failed');
       }
@@ -978,13 +976,13 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     // Ownership check — same pattern as diff:show.
     const sess = deps.store.getSession(cached.sessionId);
     if (!sess || sess.chat_id !== chatId) {
-      await ctx.answerCallbackQuery({ text: 'not found' });
+      await ctx.answerCallbackQuery({ text: t(chatId, 'callback.notFound') });
       return;
     }
-    await ctx.answerCallbackQuery({ text: '💬 Summarizing…' });
+    await ctx.answerCallbackQuery({ text: t(chatId, 'router.summary.summarizing') });
     // Edit a small "⏳" placeholder so user sees feedback while we wait for
     // the session mutex + agent reply.
-    const placeholder = `[${sess.label}] ⏳ Summarizing on demand…`;
+    const placeholder = t(chatId, 'router.summary.placeholder', { label: sess.label });
     try {
       await ctx.api.editMessageText(chatId, msgId, placeholder);
     } catch (err) {
@@ -995,7 +993,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       store: deps.store,
       sessionId: cached.sessionId,
       content: cached.fullText,
-      instruction: SUMMARIZE_ON_DEMAND_INSTRUCTION,
+      instruction: t(chatId, 'llm.summarize.onDemand'),
       kind: 'on-demand',
     });
     const labelPrefix = `[${sess.label}] `;
@@ -1006,7 +1004,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       const truncated = cached.fullText.slice(0, 240);
       const body =
         `${labelPrefix}✅ ${cached.toolLabel}\n${truncated}\n` +
-        `(summarize failed — tap to retry)`;
+        t(chatId, 'router.summary.fallbackHint');
       try {
         await ctx.api.editMessageText(chatId, msgId, body, {
           reply_markup: {
@@ -1047,19 +1045,19 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
   ): Promise<void> => {
     const msgId = parseInt(payload, 10);
     if (!Number.isFinite(msgId)) {
-      await ctx.answerCallbackQuery({ text: 'invalid id' });
+      await ctx.answerCallbackQuery({ text: t(ctx.chat?.id, 'callback.invalidId') });
       return;
     }
     const chatId = ctx.chat?.id;
     if (!chatId) {
-      await ctx.answerCallbackQuery({ text: 'no chat' });
+      await ctx.answerCallbackQuery({ text: t(null, 'callback.noChat') });
       return;
     }
     const cached = summaryCache.get(msgId);
     if (!cached) {
-      await ctx.answerCallbackQuery({ text: 'cache hết hạn' });
+      await ctx.answerCallbackQuery({ text: t(chatId, 'router.summary.cacheExpired') });
       try {
-        await ctx.reply('📜 Full-output cache hết (TTL 1 giờ).');
+        await ctx.reply(t(chatId, 'router.summary.cacheMissFull'));
       } catch (err) {
         logger.warn({ err: String(err) }, 'summary:full miss-reply failed');
       }
@@ -1067,7 +1065,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     }
     const sess = deps.store.getSession(cached.sessionId);
     if (!sess || sess.chat_id !== chatId) {
-      await ctx.answerCallbackQuery({ text: 'not found' });
+      await ctx.answerCallbackQuery({ text: t(chatId, 'callback.notFound') });
       return;
     }
     await ctx.answerCallbackQuery();

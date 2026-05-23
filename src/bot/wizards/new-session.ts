@@ -8,6 +8,7 @@ import type { AdapterMetadata } from '../../agents/types.js';
 import type { AgentRegistry } from '../../agents/registry.js';
 import { buildPersistentKeyboard } from '../reply-builders.js';
 import { logger } from '../../util/logger.js';
+import { tStatic as _wizardT } from '../../i18n/index.js';
 
 /**
  * Dependencies injected into the conversation builder. Router curries these in
@@ -27,6 +28,12 @@ export interface WizardDeps {
    * register at boot and surface here without a wizard-side edit.
    */
   registry: AgentRegistry;
+  /**
+   * Phase 3 — i18n handle. Optional so existing tests that construct a bare
+   * deps don't have to wire it; the wizard falls back to EN catalog when
+   * absent.
+   */
+  i18n?: import('../../i18n/index.js').I18n;
 }
 
 /** Projects per page in the picker step. Plan §5.1 step 3 calls for paginate-if->8. */
@@ -132,11 +139,17 @@ function projectKeyboard(
  *
  * The [🔀 Switch khác] button intentionally carries NO payload; it always
  * renders the chat's full session list (plan P0.1).
+ *
+ * Phase 3 i18n: button labels go through `t()` so the keyboard renders in the
+ * user's chosen language. `t` is the wizard-local helper (see `newSession`).
  */
-export function successKeyboard(sessionId: string): InlineKeyboard {
+export function successKeyboard(
+  sessionId: string,
+  t: (key: import('../../i18n/index.js').MessageKey) => string,
+): InlineKeyboard {
   return new InlineKeyboard()
-    .text('🔀 Switch khác', 'session:list-trigger')
-    .text('📋 Tail logs', `session:logs-trigger:${sessionId}`);
+    .text(t('wizard.success.switch'), 'session:list-trigger')
+    .text(t('wizard.success.tailLogs'), `session:logs-trigger:${sessionId}`);
 }
 
 /** Acknowledge the callback so Telegram clears the spinner. Swallows errors. */
@@ -179,18 +192,30 @@ export async function newSession(
     return;
   }
 
+  /**
+   * Phase 3 i18n shorthand. Resolves through `deps.i18n` if present, else
+   * falls back to EN via `tStatic` (test seam).
+   */
+  const t = (
+    key: import('../../i18n/index.js').MessageKey,
+    vars?: Record<string, string | number>,
+  ): string => {
+    if (deps.i18n) return deps.i18n.t(chatId, key, vars);
+    return _wizardT('en', key, vars);
+  };
+
   // ---- Step 1: agent (plan P1.1 — picker dynamic from registry) ----
   const adapterMetadata = deps.registry.list();
   if (adapterMetadata.length === 0) {
     // Defensive: should never happen at runtime (daemon registers built-ins
     // at boot), but tests that construct a bare registry would surface here.
-    await ctx.reply('⚠️ Không có agent nào được đăng ký — kiểm tra config.');
+    await ctx.reply(t('wizard.new.noAdapters'));
     return;
   }
   const validKinds = new Set(adapterMetadata.map((m) => m.kind));
   const agentCbPrefix = 'wizard:new-agent:';
 
-  await ctx.reply('Tạo session mới — chọn agent:', {
+  await ctx.reply(t('wizard.new.pickAgent'), {
     reply_markup: agentKeyboard(adapterMetadata),
   });
 
@@ -200,7 +225,7 @@ export async function newSession(
     const data = cbCtx.callbackQuery.data;
     if (data === 'wizard:new-cancel') {
       await safeAck(cbCtx);
-      await cbCtx.editMessageText('❌ Wizard hủy');
+      await cbCtx.editMessageText(t('wizard.new.cancel'));
       return;
     }
     if (data.startsWith(agentCbPrefix)) {
@@ -228,9 +253,7 @@ export async function newSession(
     // add one. Skipping straight to label with project_id=null is allowed by
     // the schema, but the plan §5.1 step 3 always shows a picker; if the
     // picker is empty, the wizard has nothing to render. Easier to bail.
-    await ctx.reply(
-      '⚠️ Không có project nào — dùng /add <path> trước, rồi /new lại.',
-    );
+    await ctx.reply(t('wizard.new.noProjects'));
     return;
   }
 
@@ -242,17 +265,16 @@ export async function newSession(
   // first paint we *edit* via the cb ctx that selected the agent above.)
   // Build the first project payload using ctx.reply so non-cb resume paths
   // (rare) still surface UI; subsequent paints reuse cb ctx editMessageText.
-  await ctx.reply(
-    `Agent: ${labelFor(adapterMetadata, agent)} ✓\nChọn project:`,
-    { reply_markup: projectKeyboard(projects, page).kb },
-  );
+  await ctx.reply(t('wizard.new.pickProject', { agent: labelFor(adapterMetadata, agent) }), {
+    reply_markup: projectKeyboard(projects, page).kb,
+  });
 
   while (projectId === null) {
     const cbCtx = (await conversation.waitFor('callback_query:data')) as unknown as CbCtx;
     const data = cbCtx.callbackQuery.data;
     if (data === 'wizard:new-cancel') {
       await safeAck(cbCtx);
-      await cbCtx.editMessageText('❌ Wizard hủy');
+      await cbCtx.editMessageText(t('wizard.new.cancel'));
       return;
     }
     if (data === 'wizard:new-back') {
@@ -261,7 +283,7 @@ export async function newSession(
       // dance that's overkill for v0.7. Acceptable per plan §5.1: "back:
       // simpler — just cancel and restart".
       await safeAck(cbCtx);
-      await cbCtx.editMessageText('↩️ Đã hủy — gõ /new để bắt đầu lại');
+      await cbCtx.editMessageText(t('wizard.new.cancelRestart'));
       return;
     }
     if (data === 'wizard:new-page:current') {
@@ -275,7 +297,7 @@ export async function newSession(
       await safeAck(cbCtx);
       try {
         await cbCtx.editMessageText(
-          `Agent: ${labelFor(adapterMetadata, agent)} ✓\nChọn project:`,
+          t('wizard.new.pickProject', { agent: labelFor(adapterMetadata, agent) }),
           { reply_markup: projectKeyboard(projects, page).kb },
         );
       } catch (err) {
@@ -287,7 +309,7 @@ export async function newSession(
     if (projMatch) {
       const candidate = Number(projMatch[1]);
       if (!projects.some((p) => p.id === candidate)) {
-        await safeAck(cbCtx, 'Project không hợp lệ');
+        await safeAck(cbCtx, t('wizard.new.invalidProject'));
         continue;
       }
       projectId = candidate;
@@ -302,29 +324,26 @@ export async function newSession(
 
   // ---- Step 3: label ----
   await ctx.reply(
-    `Agent: ${labelFor(adapterMetadata, agent)}, Project: ${project.name} ✓\n` +
-      `Nhập label cho session (vd: refactor-auth):\n` +
-      `(gõ /cancel để hủy)`,
+    t('wizard.new.askLabel', {
+      agent: labelFor(adapterMetadata, agent),
+      project: project.name,
+    }),
   );
 
   let label: string | null = null;
   while (label === null) {
     const text = await conversation.form.text({
       otherwise: async (otherwiseCtx) => {
-        await otherwiseCtx.reply(
-          'Label chỉ chứa chữ-số-_-, tối đa 40 ký tự. Thử lại hoặc /cancel để hủy.',
-        );
+        await otherwiseCtx.reply(t('wizard.new.labelInvalid'));
       },
     });
     const trimmed = text.trim();
     if (trimmed === '/cancel') {
-      await ctx.reply('❌ Wizard hủy');
+      await ctx.reply(t('wizard.new.cancel'));
       return;
     }
     if (!LABEL_PATTERN.test(trimmed)) {
-      await ctx.reply(
-        'Label chỉ chứa chữ-số-_-, tối đa 40 ký tự. Thử lại hoặc /cancel để hủy.',
-      );
+      await ctx.reply(t('wizard.new.labelInvalid'));
       continue;
     }
     // Reject duplicate labels at this stage so we don't surface an opaque
@@ -334,7 +353,7 @@ export async function newSession(
       () => deps.store.findSessionByLabel(chatId, trimmed) !== undefined,
     );
     if (taken) {
-      await ctx.reply(`Label "${trimmed}" đã tồn tại — chọn tên khác hoặc /cancel.`);
+      await ctx.reply(t('wizard.new.labelTaken', { label: trimmed }));
       continue;
     }
     label = trimmed;
@@ -356,7 +375,7 @@ export async function newSession(
     );
   } catch (err) {
     logger.error({ err: String(err) }, 'wizard: createSession failed');
-    await ctx.reply(`⚠️ Tạo session lỗi: ${String(err).slice(0, 160)}`);
+    await ctx.reply(t('wizard.new.createFailed', { error: String(err).slice(0, 160) }));
     return;
   }
 
@@ -365,10 +384,12 @@ export async function newSession(
   });
 
   await ctx.reply(
-    `✓ Session [${created.label}] tạo OK\n` +
-      `Agent: ${labelFor(adapterMetadata, finalAgent)} · Project: ${project.name}\n` +
-      `Gõ prompt để bắt đầu`,
-    { reply_markup: successKeyboard(created.id) },
+    t('wizard.new.created', {
+      label: created.label,
+      agent: labelFor(adapterMetadata, finalAgent),
+      project: project.name,
+    }),
+    { reply_markup: successKeyboard(created.id, t) },
   );
 
   // Restore the 6-button persistent reply keyboard (plan §4.2 "khôi phục sau
