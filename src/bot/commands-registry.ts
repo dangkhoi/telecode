@@ -41,6 +41,10 @@ export const COMMANDS: readonly BotCommand[] = [
   { command: 'timeline', description: 'Xem timeline của session (web)' },
   // v1.2 D1 — outbound file sharing
   { command: 'send', description: 'Gửi file từ project về Telegram' },
+  // v1.2 — bilingual UI. Description bilingual nên cả EN + VI users đều
+  // hiểu (Telegram setMyCommands scope = all_private_chats không split per
+  // locale, nên 1 description duy nhất).
+  { command: 'language', description: 'Đổi ngôn ngữ UI / Change UI language (EN / VI)' },
   { command: 'stop', description: 'Dừng task đang chạy' },
   { command: 'screenshot', description: 'Chụp desktop Mac' },
   { command: 'help', description: 'Hướng dẫn nhanh' },
