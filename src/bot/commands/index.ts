@@ -48,6 +48,7 @@ import { DashboardLoop, type DashboardEditor } from '../dashboard.js';
 import { wizardState } from '../wizard-state.js';
 import { loadPinnedContext, hasPinnedContext, pinnedContextPath, clearPinnedContext } from '../pinned-context.js';
 import { runVerifyCommand, shouldAutoVerify, buildRetryPrompt } from '../auto-verify.js';
+import { tStatic as _i18nTStatic } from '../../i18n/index.js';
 import { logger } from '../../util/logger.js';
 
 export interface CommandDeps {
@@ -546,6 +547,26 @@ function projectPathOf(session: SessionRow, store: SessionStore, fallback: strin
 export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   const { store, manager, policy, config, notifierFor, broker } = deps;
 
+  /**
+   * Phase 2 i18n shorthand. Captures `deps.i18n` so call sites can write
+   * `t(chatId, 'key', vars)` without threading the handle through every
+   * helper. When `deps.i18n` is missing (test seam without full wiring),
+   * falls back to the EN catalog via `tStatic` so existing test assertions
+   * that look for English substrings (e.g. "Summary", "Verbose") still pass
+   * and a missing handle never crashes the bot.
+   */
+  const t = (
+    chatId: number,
+    key: import('../../i18n/index.js').MessageKey,
+    vars?: Record<string, string | number>,
+  ): string => {
+    if (deps.i18n) return deps.i18n.t(chatId, key, vars);
+    // Lazy import via require-style dynamic import would force this fn to
+    // become async; instead, statically import `tStatic` at module top.
+    return _i18nTStatic('en', key, vars);
+  };
+  void t;
+
   // Per-chat dashboard registry (plan P0.5). Only one /dashboard message per
   // chat — re-running /dashboard while one is live no-ops with a hint. The
   // map is kept private to this scope; cleanup happens automatically when
@@ -590,7 +611,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const i18n = deps.i18n;
     if (!i18n) {
-      await ctx.reply('i18n not configured.');
+      await ctx.reply(t(chatId, 'error.i18nNotConfigured'));
       return;
     }
     const current = i18n.language(chatId);
@@ -641,19 +662,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         const agent: AgentKind = args[1] || config.defaults.agent;
         const label = args[2];
         const pathArg = args[3];
-        if (!label) return ctx.reply('Usage: /session new <agent> <label> [path]');
+        if (!label) return ctx.reply(t(chatId, 'session.usage.new'));
         // Plan P1.1: validate against the live registry instead of hardcoded
         // 'claude | kiro'. Gives users a helpful list of valid kinds.
         if (!deps.registry.has(agent)) {
-          const known = deps.registry.kinds().join(', ') || '(none registered)';
-          return ctx.reply(`agent '${agent}' chưa được đăng ký. Available: ${known}`);
+          const known = deps.registry.kinds().join(', ') || t(chatId, 'session.error.agentNoneRegistered');
+          return ctx.reply(t(chatId, 'session.error.agentNotRegistered', { agent, known }));
         }
-        if (store.findSessionByLabel(chatId, label)) return ctx.reply(`session "${label}" already exists`);
+        if (store.findSessionByLabel(chatId, label)) return ctx.reply(t(chatId, 'session.error.alreadyExists', { label }));
 
         let projectId: number | null = null;
         if (pathArg) {
           const p = expandHome(pathArg);
-          if (!existsSync(p)) return ctx.reply(`path not found: ${p}`);
+          if (!existsSync(p)) return ctx.reply(t(chatId, 'error.pathNotFound', { path: p }));
           const row = store.upsertProject(basename(p), p);
           projectId = row.id;
         } else {
@@ -662,14 +683,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         }
         const row = manager.createSession({ chatId, agent, label, projectId });
         store.setActiveSession(chatId, row.id);
-        await ctx.reply(`📍 [${label}] — agent=\`${agent}\``, { parse_mode: 'Markdown' });
+        await ctx.reply(t(chatId, 'session.created', { label, agent }), { parse_mode: 'Markdown' });
         break;
       }
       case 'list': {
         const rows = store.listSessions(chatId);
-        if (!rows.length) return ctx.reply('no sessions');
+        if (!rows.length) return ctx.reply(t(chatId, 'session.list.empty'));
         const lines = rows.map(
-          (r) => `• \`${r.label}\` — ${r.agent} · ${r.status}${r.sdk_session_id ? ' · resumable' : ''}`,
+          (r) => t(chatId, 'session.list.entry', {
+            label: r.label,
+            agent: r.agent,
+            status: r.status,
+            resumable: r.sdk_session_id ? t(chatId, 'session.list.resumable') : '',
+          }),
         );
         await ctx.reply(lines.join('\n'), {
           parse_mode: 'Markdown',
@@ -687,9 +713,9 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         //       silently truncated past 4096 chars,
         //   (c) catch-up of incoming session's buffered background events.
         const label = args[1];
-        if (!label) return ctx.reply('Usage: /session switch <label>');
+        if (!label) return ctx.reply(t(chatId, 'session.usage.switch'));
         const row = store.findSessionByLabel(chatId, label);
-        if (!row) return ctx.reply(`unknown: ${label}`);
+        if (!row) return ctx.reply(t(chatId, 'session.error.unknown', { label }));
         const notifier = notifierFor(chatId);
         // (a1) Drain the outgoing session's debounced text stream so the last
         // partial reply lands BEFORE focus moves. closeStream is a no-op if
@@ -729,7 +755,10 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
           .slice(-config.session_switch_preview_lines)
           .join('\n');
         await notifier.sendChunked(
-          `📍 [${row.label}]\n${tail || '(no transcript yet)'}`,
+          t(chatId, 'session.switched.preview', {
+            label: row.label,
+            tail: tail || t(chatId, 'session.switched.noTranscript'),
+          }),
         );
         // (c) catch-up of incoming session's buffered background events.
         if (manager.hasBuffered(row.id)) {
@@ -755,16 +784,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       case 'rename': {
         const newLabel = args[1];
         const cur = activeSession(ctx, store);
-        if (!newLabel || !cur) return ctx.reply('Usage: /session rename <new-label>');
-        if (store.findSessionByLabel(chatId, newLabel)) return ctx.reply('label taken');
+        if (!newLabel || !cur) return ctx.reply(t(chatId, 'session.usage.rename'));
+        if (store.findSessionByLabel(chatId, newLabel)) return ctx.reply(t(chatId, 'session.error.labelTaken'));
         store.updateSession(cur.id, { label: newLabel });
-        await ctx.reply(`✏️ ${cur.label} → ${newLabel}`);
+        await ctx.reply(t(chatId, 'session.renamed', { oldLabel: cur.label, newLabel }));
         break;
       }
       case 'close': {
         const label = args[1];
         const target = label ? store.findSessionByLabel(chatId, label) : activeSession(ctx, store);
-        if (!target) return ctx.reply('no session');
+        if (!target) return ctx.reply(t(chatId, 'session.error.noSession'));
         manager.interrupt(target.id);
         store.updateSession(target.id, { status: 'closed' });
         // v0.8 P2: drop the per-session output buffer so a long-lived daemon
@@ -786,7 +815,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         progressMgr?.clear(target.id);
         const st = store.getChatState(chatId);
         if (st.active_session_id === target.id) store.setActiveSession(chatId, null);
-        await ctx.reply(`🗑 closed [${target.label}]`);
+        await ctx.reply(t(chatId, 'session.closed', { label: target.label }));
         break;
       }
       // `clear` is the AI-agentic terminology — wipes the agent's context
@@ -796,25 +825,24 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       case 'clear':
       case 'reset': {
         const cur = activeSession(ctx, store);
-        if (!cur) return ctx.reply('no active session');
+        if (!cur) return ctx.reply(t(chatId, 'error.noActiveSession'));
         store.updateSession(cur.id, { sdk_session_id: null, transcript_tail: '' });
-        await ctx.reply(`🧹 cleared [${cur.label}] — context wiped, gõ prompt mới`);
+        await ctx.reply(t(chatId, 'session.cleared', { label: cur.label }));
         break;
       }
       default:
-        await ctx.reply(
-          'session subcommands: new <agent> <label> [path] | list | switch <label> | rename <label> | close [label] | clear',
-        );
+        await ctx.reply(t(chatId, 'session.usage.subcommands'));
     }
   });
 
   // Top-level `/clear` — shortcut for `/session clear` on the active session.
   // AI-agentic muscle memory: most LLM CLIs use "/clear" to drop context.
   bot.command('clear', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
-    if (!cur) return ctx.reply('no active session');
+    if (!cur) return ctx.reply(t(chatId, 'error.noActiveSession'));
     store.updateSession(cur.id, { sdk_session_id: null, transcript_tail: '' });
-    await ctx.reply(`🧹 cleared [${cur.label}] — context wiped, gõ prompt mới`);
+    await ctx.reply(t(chatId, 'session.cleared', { label: cur.label }));
   });
 
   // ----- /handoff — AI-agentic context handoff -----
@@ -830,7 +858,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   bot.command('handoff', async (ctx) => {
     const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
-    if (!cur) return ctx.reply('no active session — /new để tạo');
+    if (!cur) return ctx.reply(t(chatId, 'handoff.error.noActive'));
     const result = executeHandoff(cur.id, chatId, {
       store,
       manager,
@@ -855,24 +883,25 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply(
-        'Chưa có session active — /new tạo session rồi mới đổi mode được.',
-      );
+      await ctx.reply(t(chatId, 'mode.error.noActive'));
       return;
     }
     const arg = (ctx.match || '').trim().toLowerCase();
     if (arg) {
       if (!isVerbosityMode(arg)) {
         const known = VERBOSITY_MODES.join(' | ');
-        await ctx.reply(
-          `❓ Mode '${arg}' không hợp lệ. Chọn: ${known}`,
-        );
+        await ctx.reply(t(chatId, 'mode.error.invalid', { mode: arg, known }));
         return;
       }
       store.setSessionMode(cur.id, arg);
       const meta = MODE_METADATA[arg];
       await ctx.reply(
-        `${meta.icon} [${cur.label}] mode → *${meta.displayName}* (${meta.description})`,
+        t(chatId, 'mode.changed', {
+          icon: meta.icon,
+          label: cur.label,
+          displayName: meta.displayName,
+          description: meta.description,
+        }),
         { parse_mode: 'Markdown' },
       );
       return;
@@ -883,14 +912,14 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const effective = resolveMode(sessionMode, chatDefault);
     const meta = MODE_METADATA[effective];
     const sourceLabel = sessionMode
-      ? 'session override'
-      : `chat default → ${MODE_METADATA[chatDefault].displayName}`;
+      ? t(chatId, 'mode.status.sourceSession')
+      : t(chatId, 'mode.status.sourceChat', { displayName: MODE_METADATA[chatDefault].displayName });
     const lines = [
-      `*Mode hiện tại của [${cur.label}]:* ${meta.icon} ${meta.displayName}`,
-      `_${meta.description}_`,
+      t(chatId, 'mode.status.title', { label: cur.label, icon: meta.icon, displayName: meta.displayName }),
+      t(chatId, 'mode.status.description', { description: meta.description }),
       ``,
-      `Source: ${sourceLabel}`,
-      `Tap để đổi mode (chỉ áp dụng cho session này):`,
+      t(chatId, 'mode.status.source', { source: sourceLabel }),
+      t(chatId, 'mode.status.tap'),
     ];
     await ctx.reply(lines.join('\n'), {
       parse_mode: 'Markdown',
@@ -911,38 +940,43 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (sub === 'mode') {
       const name = (args[1] ?? '').toLowerCase();
       if (!name) {
-        await ctx.reply('Usage: /settings mode <summary|normal|thinking|verbose>');
+        await ctx.reply(t(chatId, 'settings.usage.modeUnset'));
         return;
       }
       if (!isVerbosityMode(name)) {
         const known = VERBOSITY_MODES.join(' | ');
-        await ctx.reply(`❓ Mode '${name}' không hợp lệ. Chọn: ${known}`);
+        await ctx.reply(t(chatId, 'mode.error.invalid', { mode: name, known }));
         return;
       }
       store.setChatDefaultMode(chatId, name);
       const meta = MODE_METADATA[name];
       await ctx.reply(
-        `${meta.icon} Chat default → *${meta.displayName}* (${meta.description})\n` +
-          `Áp dụng cho session mới + session chưa set override.`,
+        t(chatId, 'settings.modeChanged', {
+          icon: meta.icon,
+          displayName: meta.displayName,
+          description: meta.description,
+        }),
         { parse_mode: 'Markdown' },
       );
       return;
     }
     if (sub && sub !== 'mode') {
-      await ctx.reply(
-        'Usage: /settings | /settings mode <summary|normal|thinking|verbose>',
-      );
+      await ctx.reply(t(chatId, 'settings.usage.unknown'));
       return;
     }
     // No-arg → show chat defaults + picker.
     const chatDefault = store.getChatDefaultMode(chatId);
     const meta = MODE_METADATA[chatDefault];
     const lines = [
-      `*Chat settings*`,
+      t(chatId, 'settings.title'),
       ``,
-      `*Default mode:* ${meta.icon} ${meta.displayName} — _${meta.description}_`,
+      t(chatId, 'settings.defaultMode', {
+        icon: meta.icon,
+        displayName: meta.displayName,
+        description: meta.description,
+      }),
       ``,
-      `Tap để đổi default cho cả chat (session mới sẽ dùng):`,
+      t(chatId, 'settings.tap'),
     ];
     await ctx.reply(lines.join('\n'), {
       parse_mode: 'Markdown',
@@ -971,37 +1005,39 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   });
 
   bot.command('add', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const args = ctx.match.trim().split(/\s+/).filter(Boolean);
-    if (!args[0]) return ctx.reply('Usage: /add <path> [name]');
+    if (!args[0]) return ctx.reply(t(chatId, 'add.usage'));
     const p = expandHome(args[0]);
-    if (!existsSync(p)) return ctx.reply(`path not found: ${p}`);
+    if (!existsSync(p)) return ctx.reply(t(chatId, 'error.pathNotFound', { path: p }));
     const name = args[1] ?? basename(p);
     const row = store.upsertProject(name, p);
-    await ctx.reply(`📁 ${row.name} → ${row.path}`);
+    await ctx.reply(t(chatId, 'add.created', { name: row.name, path: row.path }));
   });
 
   bot.command('cd', async (ctx) => {
     const chatId = ctx.chat!.id;
     const arg = ctx.match.trim();
-    if (!arg) return ctx.reply('Usage: /cd <name|path>');
+    if (!arg) return ctx.reply(t(chatId, 'cd.usage'));
     let proj = store.findProject(arg);
     if (!proj) {
       const p = expandHome(arg);
       if (existsSync(p)) proj = store.upsertProject(basename(p), p);
     }
-    if (!proj) return ctx.reply('not found');
+    if (!proj) return ctx.reply(t(chatId, 'error.notFound'));
     store.setActiveProject(chatId, proj.id);
     const cur = activeSession(ctx, store);
     if (cur) store.updateSession(cur.id, { project_id: proj.id });
-    await ctx.reply(`📁 cwd → ${proj.path}`);
+    await ctx.reply(t(chatId, 'cd.changed', { path: proj.path }));
   });
 
   // ----- control -----
   bot.command('stop', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
-    if (!cur) return ctx.reply('no active session');
+    if (!cur) return ctx.reply(t(chatId, 'error.noActiveSession'));
     const ok = manager.interrupt(cur.id);
-    await ctx.reply(ok ? `🛑 stopping [${cur.label}]` : 'nothing to stop');
+    await ctx.reply(ok ? t(chatId, 'stop.stopping', { label: cur.label }) : t(chatId, 'stop.nothing'));
   });
 
   bot.command('status', async (ctx) => {
@@ -1010,9 +1046,9 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (args[0] === 'logs') {
       const n = Math.min(200, Math.max(1, Number(args[1] ?? 20)));
       const cur = activeSession(ctx, store);
-      if (!cur) return ctx.reply('no active session');
+      if (!cur) return ctx.reply(t(chatId, 'error.noActiveSession'));
       const rows = store.tailToolLog(cur.id, n);
-      if (!rows.length) return ctx.reply('no logs');
+      if (!rows.length) return ctx.reply(t(chatId, 'status.noLogs'));
       const txt = rows
         .map(
           (r) =>
@@ -1025,15 +1061,17 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const cur = activeSession(ctx, store);
     const all = store.listSessions(chatId);
     const lines = [
-      `Active: ${cur ? '[' + cur.label + '] ' + cur.agent + ' · ' + cur.status : '(none)'}`,
-      `Resume id: ${cur?.sdk_session_id ?? '—'}`,
-      `Sessions: ${all.length}`,
+      cur
+        ? t(chatId, 'status.lineActive', { label: cur.label, agent: cur.agent, status: cur.status })
+        : t(chatId, 'status.lineActiveNone'),
+      t(chatId, 'status.lineResumeId', { id: cur?.sdk_session_id ?? '—' }),
+      t(chatId, 'status.lineSessions', { count: all.length }),
     ];
     if (cur) {
       const tools = store.tailToolLog(cur.id, 5);
       if (tools.length) {
-        lines.push('Last tools:');
-        for (const t of tools) lines.push(`  - ${t.tool_name} ${t.decision ?? ''}`);
+        lines.push(t(chatId, 'status.lineLastTools'));
+        for (const tl of tools) lines.push(`  - ${tl.tool_name} ${tl.decision ?? ''}`);
       }
       const usage = sessionUsage.get(cur.id) ?? store.getSessionUsage(cur.id);
       if (usage && usage.contextWindow > 0) {
@@ -1042,11 +1080,23 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         const maxK = usage.contextWindow >= 1_000_000
           ? `${(usage.contextWindow / 1_000_000).toFixed(0)}M`
           : `${Math.round(usage.contextWindow / 1000)}K`;
-        lines.push(`Context: ${usedK}K/${maxK} (${pct}%)${usage.model ? ' · ' + usage.model : ''}`);
-        if (pct >= 70) lines.push('⚠️ Context window >70% — cân nhắc /handoff');
+        lines.push(
+          t(chatId, 'status.lineContext', {
+            used: `${usedK}K`,
+            max: maxK,
+            pct,
+            model: usage.model ? ' · ' + usage.model : '',
+          }),
+        );
+        if (pct >= 70) lines.push(t(chatId, 'status.warnContext'));
       } else if (usage) {
         const usedK = Math.round(usage.inputTokens / 1000);
-        lines.push(`Tokens used: ${usedK}K${usage.model ? ' · ' + usage.model : ''}`);
+        lines.push(
+          t(chatId, 'status.lineTokens', {
+            used: `${usedK}K`,
+            model: usage.model ? ' · ' + usage.model : '',
+          }),
+        );
       }
     }
     await ctx.reply(lines.join('\n'));
@@ -1061,18 +1111,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   };
 
   bot.command('model', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
-    if (!cur) return ctx.reply('Không có session active — /new để tạo.');
+    if (!cur) return ctx.reply(t(chatId, 'error.noActiveSessionWithHint'));
     const arg = (ctx.match || '').trim();
     if (!arg) {
       const agentCfg = config.agents[cur.agent as keyof typeof config.agents] as { model?: string } | undefined;
-      const effective = cur.model ?? agentCfg?.model ?? 'auto (server default)';
+      const effective = cur.model ?? agentCfg?.model ?? t(chatId, 'model.autoServerDefault');
       const models = MODEL_OPTIONS[cur.agent] ?? ['auto'];
       const buttons = models.map((m) => [{ text: m === effective ? `● ${m}` : m, callback_data: `model:set:${m}` }]);
-      return ctx.reply(`Model hiện tại: ${effective}`, { reply_markup: { inline_keyboard: buttons } });
+      return ctx.reply(t(chatId, 'model.current', { model: effective }), { reply_markup: { inline_keyboard: buttons } });
     }
     store.setSessionModel(cur.id, arg);
-    await ctx.reply(`✓ Model đổi thành: ${arg}`);
+    await ctx.reply(t(chatId, 'model.changed', { model: arg }));
   });
 
   // ----- /dashboard (plan P0.5) — live status dashboard ------------------
@@ -1087,16 +1138,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const existing = dashboards.get(chatId);
     if (arg === 'stop') {
       if (!existing) {
-        await ctx.reply('Không có dashboard nào đang chạy.');
+        await ctx.reply(t(chatId, 'dashboard.error.notRunning'));
         return;
       }
       await existing.stop('manual');
       dashboards.delete(chatId);
-      await ctx.reply('🛑 Đã tắt dashboard.');
+      await ctx.reply(t(chatId, 'dashboard.stopped'));
       return;
     }
     if (existing?.isRunning()) {
-      await ctx.reply('Dashboard đã chạy — gõ `/dashboard stop` để tắt trước khi mở mới.', {
+      await ctx.reply(t(chatId, 'dashboard.alreadyRunning'), {
         parse_mode: 'Markdown',
       });
       return;
@@ -1160,7 +1211,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       await loop.start((reason) => {
         dashboards.delete(chatId);
         if (reason === 'idle') {
-          void ctx.reply('💤 Dashboard auto-tắt sau 5 phút idle.').catch(() => undefined);
+          void ctx.reply(t(chatId, 'dashboard.idleAutoStop')).catch(() => undefined);
         } else if (reason === 'deleted') {
           // Message gone — no follow-up reply (would only spam).
         }
@@ -1171,7 +1222,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       dashboards.delete(chatId);
       logger.warn({ err: String(err), chatId }, 'dashboard start failed');
       try {
-        await ctx.reply('⚠️ Không mở được dashboard — thử lại sau.');
+        await ctx.reply(t(chatId, 'dashboard.startFailed'));
       } catch {
         /* best-effort */
       }
@@ -1179,16 +1230,18 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   });
 
   bot.command('allow', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const pat = ctx.match.trim();
-    if (!pat) return ctx.reply('Usage: /allow <pattern>');
+    if (!pat) return ctx.reply(t(chatId, 'allow.usage'));
     policy.appendAllow(pat);
-    await ctx.reply(`✅ allow += \`${pat}\``, { parse_mode: 'Markdown' });
+    await ctx.reply(t(chatId, 'allow.added', { pattern: pat }), { parse_mode: 'Markdown' });
   });
   bot.command('deny', async (ctx) => {
+    const chatId = ctx.chat!.id;
     const pat = ctx.match.trim();
-    if (!pat) return ctx.reply('Usage: /deny <pattern>');
+    if (!pat) return ctx.reply(t(chatId, 'deny.usage'));
     policy.appendDeny(pat);
-    await ctx.reply(`🚫 deny += \`${pat}\``, { parse_mode: 'Markdown' });
+    await ctx.reply(t(chatId, 'deny.added', { pattern: pat }), { parse_mode: 'Markdown' });
   });
 
   // ----- /notify (v1.2 D2) — quiet hours -----
@@ -1200,33 +1253,39 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       // Show current status
       const qh = store.getQuietHours(chatId);
       if (!qh) {
-        await ctx.reply('🔔 Quiet hours: OFF\n\nUsage:\n/notify quiet 22:00-08:00\n/notify quiet off');
+        await ctx.reply(t(chatId, 'notify.statusOff'));
       } else {
         const startH = String(Math.floor(qh.start / 60)).padStart(2, '0');
         const startM = String(qh.start % 60).padStart(2, '0');
         const endH = String(Math.floor(qh.end / 60)).padStart(2, '0');
         const endM = String(qh.end % 60).padStart(2, '0');
-        await ctx.reply(`🔕 Quiet hours: ${startH}:${startM}–${endH}:${endM} (${qh.tz})\n\nMessages vẫn đến nhưng không kêu trong khung giờ này.\n/notify quiet off — tắt`);
+        await ctx.reply(
+          t(chatId, 'notify.statusOn', {
+            start: `${startH}:${startM}`,
+            end: `${endH}:${endM}`,
+            tz: qh.tz,
+          }),
+        );
       }
       return;
     }
 
     if (arg === 'quiet off') {
       store.clearQuietHours(chatId);
-      await ctx.reply('🔔 Quiet hours disabled.');
+      await ctx.reply(t(chatId, 'notify.disabled'));
       return;
     }
 
     // Parse "quiet HH:MM-HH:MM" or "quiet HH:MM-HH:MM TZ"
     const m = arg.match(/^quiet\s+(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})(?:\s+(.+))?$/);
     if (!m) {
-      await ctx.reply('Usage: /notify quiet 22:00-08:00 [timezone]\nExample: /notify quiet 23:00-07:00 Asia/Ho_Chi_Minh');
+      await ctx.reply(t(chatId, 'notify.usage'));
       return;
     }
     const startMinute = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
     const endMinute = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
     if (startMinute >= 1440 || endMinute >= 1440) {
-      await ctx.reply('❌ Invalid time — hours must be 0-23, minutes 0-59.');
+      await ctx.reply(t(chatId, 'notify.invalidTime'));
       return;
     }
     const tz = m[5]?.trim() || 'Asia/Ho_Chi_Minh';
@@ -1234,13 +1293,13 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     try {
       new Intl.DateTimeFormat('en-US', { timeZone: tz });
     } catch {
-      await ctx.reply(`❌ Invalid timezone: ${tz}`);
+      await ctx.reply(t(chatId, 'notify.invalidTz', { tz }));
       return;
     }
     store.setQuietHours(chatId, startMinute, endMinute, tz);
     const startStr = `${m[1].padStart(2, '0')}:${m[2]}`;
     const endStr = `${m[3].padStart(2, '0')}:${m[4]}`;
-    await ctx.reply(`🔕 Quiet hours set: ${startStr}–${endStr} (${tz})\nMessages vẫn đến nhưng silent trong khung giờ này.`);
+    await ctx.reply(t(chatId, 'notify.set', { start: startStr, end: endStr, tz }));
   });
 
   // ----- /context (v1.2 D7) — pinned context -----
@@ -1249,30 +1308,30 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const arg = (ctx.match ?? '').trim();
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply('No active session — /session new <agent> <label> [path]');
+      await ctx.reply(t(chatId, 'error.noActiveSessionForPrompt'));
       return;
     }
     const projPath = projectPathOf(cur, store, process.cwd());
 
     if (arg === 'edit') {
       const fp = pinnedContextPath(projPath);
-      await ctx.reply(`📝 Pinned context file:\n\`${fp}\`\n\nEdit this file to change the context injected into prompts.`, { parse_mode: 'Markdown' });
+      await ctx.reply(t(chatId, 'context.editFile', { path: fp }), { parse_mode: 'Markdown' });
       return;
     }
 
     if (arg === 'clear') {
       const removed = clearPinnedContext(projPath);
-      await ctx.reply(removed ? '🗑 Pinned context cleared.' : 'No pinned context file found.');
+      await ctx.reply(removed ? t(chatId, 'context.cleared') : t(chatId, 'context.noFile'));
       return;
     }
 
     // Default: show current context
     const content = loadPinnedContext(projPath);
     if (!content) {
-      await ctx.reply(`No pinned context found.\n\nCreate \`${pinnedContextPath(projPath)}\` to inject context into every prompt.`, { parse_mode: 'Markdown' });
+      await ctx.reply(t(chatId, 'context.empty', { path: pinnedContextPath(projPath) }), { parse_mode: 'Markdown' });
     } else {
       const preview = content.length > 3000 ? content.slice(0, 3000) + '\n…(truncated)' : content;
-      await ctx.reply(`📌 Pinned context (${content.length} chars):\n\n${preview}`);
+      await ctx.reply(t(chatId, 'context.show', { chars: content.length, preview }));
     }
   });
 
@@ -1281,19 +1340,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const arg = (ctx.match ?? '').trim();
     if (!arg) {
-      await ctx.reply('Usage: /send <path>\nGửi file từ project về Telegram. Path relative to active project.');
+      await ctx.reply(t(chatId, 'send.usage'));
       return;
     }
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply('No active session — /session new <agent> <label> [path]');
+      await ctx.reply(t(chatId, 'error.noActiveSessionForPrompt'));
       return;
     }
     const projPath = projectPathOf(cur, store, process.cwd());
     const resolved = path.resolve(projPath, arg);
     // Security: only allow files within the project directory
     if (!resolved.startsWith(projPath + path.sep) && resolved !== projPath) {
-      await ctx.reply('❌ Path traversal không được phép — chỉ gửi file trong project.');
+      await ctx.reply(t(chatId, 'send.errorTraversal'));
       return;
     }
     const result = await sendFileToChat(
@@ -1301,11 +1360,12 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       { chatId, filePath: resolved, caption: path.basename(resolved) },
     );
     if (!result.success) {
-      await ctx.reply(`❌ ${result.error}`);
+      await ctx.reply(t(chatId, 'send.error', { error: result.error ?? 'unknown' }));
     }
   });
 
   bot.command('screenshot', async (ctx) => {
+    const chatId = ctx.chat!.id;
     // Plan P1.3: platform-gated capture. Output path uses `os.tmpdir()` so
     // Windows resolves it to `%TEMP%`, Linux/macOS to `/tmp` (or `$TMPDIR` on
     // macOS) — never the hardcoded POSIX `/tmp` literal.
@@ -1329,17 +1389,15 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       if (size < 1024) {
         await ctx.reply(
           process.platform === 'darwin'
-            ? '📸 screencapture failed or returned empty image.\n' +
-                'Most often this means *Screen Recording* permission is missing.\n' +
-                'System Settings → Privacy & Security → Screen & System Audio Recording → enable the binary running the daemon (Terminal / node / launchd) → restart daemon.'
-            : '📸 capture returned empty image — check daemon permissions or X server access.',
+            ? t(chatId, 'screenshot.emptyDarwin')
+            : t(chatId, 'screenshot.emptyOther'),
           { parse_mode: 'Markdown' },
         );
         return;
       }
       await ctx.replyWithPhoto(new InputFile(tmp));
     } catch (err) {
-      await ctx.reply(`screenshot error: ${String(err).slice(0, 200)}`);
+      await ctx.reply(t(chatId, 'screenshot.error', { error: String(err).slice(0, 200) }));
     }
   });
 
@@ -1350,10 +1408,10 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
     if (args.startsWith('search ')) {
       const query = args.slice(7).trim();
-      if (!query) { await ctx.reply('Usage: /history search <query>'); return; }
+      if (!query) { await ctx.reply(t(chatId, 'history.searchUsage')); return; }
       const results = store.searchSessions(chatId, query, 5);
-      if (results.length === 0) { await ctx.reply(`🔍 Không tìm thấy kết quả cho "${query}".`); return; }
-      let msg = `🔍 Kết quả tìm kiếm "${query}":\n`;
+      if (results.length === 0) { await ctx.reply(t(chatId, 'history.searchEmpty', { query })); return; }
+      let msg = t(chatId, 'history.searchTitle', { query }) + '\n';
       for (let i = 0; i < results.length; i++) {
         const r = results[i]!;
         const session = store.getSession(r.sessionId);
@@ -1370,8 +1428,8 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (lastMatch) {
       const days = parseInt(lastMatch[1]!, 10);
       const sessions = store.getRecentSessions(chatId, days);
-      if (sessions.length === 0) { await ctx.reply(`📋 Không có session nào trong ${days} ngày qua.`); return; }
-      let msg = `📋 Sessions (${days} ngày qua): ${sessions.length}\n`;
+      if (sessions.length === 0) { await ctx.reply(t(chatId, 'history.lastEmpty', { days })); return; }
+      let msg = t(chatId, 'history.lastTitle', { days, count: sessions.length }) + '\n';
       for (const s of sessions.slice(0, 20)) {
         const date = new Date(s.created_at).toLocaleDateString('vi-VN');
         msg += `\n• [${s.label}] ${s.agent} · ${s.status} · ${date}`;
@@ -1382,13 +1440,13 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
     // Default: show last 7 days
     const sessions = store.getRecentSessions(chatId, 7);
-    if (sessions.length === 0) { await ctx.reply('📋 Không có session nào trong 7 ngày qua.'); return; }
-    let msg = `📋 Sessions (7 ngày qua): ${sessions.length}\n`;
+    if (sessions.length === 0) { await ctx.reply(t(chatId, 'history.defaultEmpty')); return; }
+    let msg = t(chatId, 'history.defaultTitle', { count: sessions.length }) + '\n';
     for (const s of sessions.slice(0, 10)) {
       const date = new Date(s.created_at).toLocaleDateString('vi-VN');
       msg += `\n• [${s.label}] ${s.agent} · ${s.status} · ${date}`;
     }
-    msg += '\n\n💡 /history search <query> — tìm kiếm\n💡 /history last <N>d — xem N ngày qua';
+    msg += t(chatId, 'history.hint');
     await ctx.reply(msg);
   });
 
@@ -1401,15 +1459,18 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       // /cost <session-label>
       const session = store.findSessionByLabel(chatId, arg);
       if (!session) {
-        await ctx.reply(`❌ Session "${arg}" không tìm thấy.`);
+        await ctx.reply(t(chatId, 'cost.errorSessionNotFound', { label: arg }));
         return;
       }
       const c = store.getCostBySession(session.id);
       await ctx.reply(
-        `💰 Cost — [${session.label}] (${session.agent})\n` +
-        `├ Input: ${c.input_tokens.toLocaleString()} tokens\n` +
-        `├ Output: ${c.output_tokens.toLocaleString()} tokens\n` +
-        `└ Total: $${c.total_cost.toFixed(4)}`,
+        t(chatId, 'cost.session', {
+          label: session.label,
+          agent: session.agent,
+          input: c.input_tokens.toLocaleString(),
+          output: c.output_tokens.toLocaleString(),
+          total: c.total_cost.toFixed(4),
+        }),
       );
       return;
     }
@@ -1419,16 +1480,21 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const month = store.getCostByChat(chatId, 30);
     const breakdown = store.getCostBreakdown(chatId, 30);
 
-    let msg =
-      `💰 Cost summary\n` +
-      `├ Today:  $${today.total_cost.toFixed(4)}\n` +
-      `├ 7 days: $${week.total_cost.toFixed(4)}\n` +
-      `└ 30 days: $${month.total_cost.toFixed(4)}`;
+    let msg = t(chatId, 'cost.summary', {
+      today: today.total_cost.toFixed(4),
+      week: week.total_cost.toFixed(4),
+      month: month.total_cost.toFixed(4),
+    });
 
     if (breakdown.length > 0) {
-      msg += `\n\n📊 Per-agent (30d):`;
+      msg += t(chatId, 'cost.breakdownTitle');
       for (const b of breakdown) {
-        msg += `\n  ${b.agent}: $${b.total_cost.toFixed(4)} (${b.input_tokens.toLocaleString()} in / ${b.output_tokens.toLocaleString()} out)`;
+        msg += t(chatId, 'cost.breakdownEntry', {
+          agent: b.agent,
+          total: b.total_cost.toFixed(4),
+          input: b.input_tokens.toLocaleString(),
+          output: b.output_tokens.toLocaleString(),
+        });
       }
     }
 
@@ -1442,16 +1508,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     let sessionId: string | null = null;
     if (arg) {
       const found = store.findSessionByLabel(chatId, arg);
-      if (!found) { await ctx.reply(`❌ Session "${arg}" không tìm thấy.`); return; }
+      if (!found) { await ctx.reply(t(chatId, 'timeline.errorSessionNotFound', { label: arg })); return; }
       sessionId = found.id;
     } else {
       const cur = activeSession(ctx, store);
-      if (!cur) { await ctx.reply('No active session — /timeline <label> hoặc switch session trước.'); return; }
+      if (!cur) { await ctx.reply(t(chatId, 'timeline.errorNoActive')); return; }
       sessionId = cur.id;
     }
     const port = (globalThis as any).__telecode_timeline_port as number | undefined;
-    if (!port) { await ctx.reply('❌ Timeline server chưa khởi động.'); return; }
-    await ctx.reply(`📜 http://localhost:${port}/timeline/${sessionId}`);
+    if (!port) { await ctx.reply(t(chatId, 'timeline.errorServer')); return; }
+    await ctx.reply(t(chatId, 'timeline.url', { port, sessionId }));
   });
 
   // ---- v1.2 D11: /verify command ----
@@ -1462,11 +1528,12 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (arg === 'status') {
       const av = config.auto_verify;
       await ctx.reply(
-        `🔍 Auto-verify config:\n` +
-        `├ Enabled: ${av.enabled}\n` +
-        `├ Command: \`${av.command}\`\n` +
-        `├ Max retries: ${av.max_retries}\n` +
-        `└ Agents: ${av.agents.length === 0 ? '(all)' : av.agents.join(', ')}`,
+        t(chatId, 'verify.status', {
+          enabled: String(av.enabled),
+          command: av.command,
+          maxRetries: av.max_retries,
+          agents: av.agents.length === 0 ? t(chatId, 'verify.agentsAll') : av.agents.join(', '),
+        }),
         { parse_mode: 'Markdown' },
       );
       return;
@@ -1474,20 +1541,20 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply('No active session — /session new <agent> <label> [path]');
+      await ctx.reply(t(chatId, 'verify.errorNoActive'));
       return;
     }
     const projPath = projectPathOf(cur, store, process.cwd());
     const command = config.auto_verify.command;
-    await ctx.reply(`🔍 Running: \`${command}\`…`, { parse_mode: 'Markdown' });
+    await ctx.reply(t(chatId, 'verify.running', { command }), { parse_mode: 'Markdown' });
     const result = await runVerifyCommand(command, projPath);
     if (result.passed) {
-      await ctx.reply(`✅ Verify passed.`);
+      await ctx.reply(t(chatId, 'verify.passed'));
     } else {
       const output = (result.stdout + '\n' + result.stderr).trim();
       const truncated = output.length > 2000 ? '…' + output.slice(-2000) : output;
       await ctx.reply(
-        `❌ Verify failed (exit ${result.exitCode}):\n\`\`\`\n${truncated}\n\`\`\``,
+        t(chatId, 'verify.failed', { exitCode: result.exitCode ?? -1, output: truncated }),
         { parse_mode: 'Markdown' },
       );
     }
@@ -1501,30 +1568,34 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const name = args.slice(1).join(' ').trim();
 
     if (sub === 'save') {
-      if (!name) { await ctx.reply('Usage: /template save <name>'); return; }
+      if (!name) { await ctx.reply(t(chatId, 'template.usage.save')); return; }
       const cur = activeSession(ctx, store);
-      if (!cur) { await ctx.reply('❌ Không có active session.'); return; }
+      if (!cur) { await ctx.reply(t(chatId, 'template.error.noActive')); return; }
       const lastPrompt = cur.last_message ?? '';
       store.saveTemplate(chatId, name, cur.agent, lastPrompt, cur.project_id);
-      await ctx.reply(`✅ Template "${name}" saved (agent=${cur.agent}).`);
+      await ctx.reply(t(chatId, 'template.saved', { name, agent: cur.agent }));
       return;
     }
 
     if (sub === 'list') {
       const templates = store.listTemplates(chatId);
-      if (templates.length === 0) { await ctx.reply('📋 Chưa có template nào. Dùng /template save <name>'); return; }
-      let msg = '📋 Templates:\n';
-      for (const t of templates) {
-        msg += `• ${t.name} — ${t.agent} — "${t.prompt.slice(0, 50)}${t.prompt.length > 50 ? '…' : ''}"\n`;
+      if (templates.length === 0) { await ctx.reply(t(chatId, 'template.listEmpty')); return; }
+      let msg = t(chatId, 'template.listTitle') + '\n';
+      for (const tpl of templates) {
+        msg += t(chatId, 'template.listEntry', {
+          name: tpl.name,
+          agent: tpl.agent,
+          prompt: tpl.prompt.slice(0, 50) + (tpl.prompt.length > 50 ? '…' : ''),
+        }) + '\n';
       }
       await ctx.reply(msg);
       return;
     }
 
     if (sub === 'run') {
-      if (!name) { await ctx.reply('Usage: /template run <name>'); return; }
+      if (!name) { await ctx.reply(t(chatId, 'template.usage.run')); return; }
       const tpl = store.getTemplate(chatId, name);
-      if (!tpl) { await ctx.reply(`❌ Template "${name}" không tìm thấy.`); return; }
+      if (!tpl) { await ctx.reply(t(chatId, 'template.error.notFound', { name })); return; }
       // Create a new session from template
       const label = `${name}-${Date.now() % 100000}`;
       const sessionId = randomUUID();
@@ -1538,7 +1609,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         status: 'idle',
       });
       store.setActiveSession(chatId, sessionId);
-      await ctx.reply(`📍 [${label}] created from template "${name}" (agent=${tpl.agent})`);
+      await ctx.reply(t(chatId, 'template.created', { label, name, agent: tpl.agent }));
       // Dispatch the saved prompt
       if (tpl.prompt) {
         await dispatchPromptToActiveSession(ctx, tpl.prompt);
@@ -1547,19 +1618,13 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     }
 
     if (sub === 'delete') {
-      if (!name) { await ctx.reply('Usage: /template delete <name>'); return; }
+      if (!name) { await ctx.reply(t(chatId, 'template.usage.delete')); return; }
       const deleted = store.deleteTemplate(chatId, name);
-      await ctx.reply(deleted ? `🗑 Template "${name}" deleted.` : `❌ Template "${name}" không tìm thấy.`);
+      await ctx.reply(deleted ? t(chatId, 'template.deleted', { name }) : t(chatId, 'template.error.notFound', { name }));
       return;
     }
 
-    await ctx.reply(
-      '📋 /template commands:\n' +
-      '• /template save <name> — lưu session hiện tại\n' +
-      '• /template list — liệt kê templates\n' +
-      '• /template run <name> — tạo session mới từ template\n' +
-      '• /template delete <name> — xóa template',
-    );
+    await ctx.reply(t(chatId, 'template.help'));
   });
 
   // ---- /schedule (v1.2 D5) ----
@@ -1572,7 +1637,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (sub === 'add') {
       // /schedule add <name> <min> <hour> <dom> <mon> <dow> <prompt...>
       if (args.length < 8) {
-        await ctx.reply('Usage: /schedule add <name> <min> <hour> <dom> <mon> <dow> <prompt>');
+        await ctx.reply(t(chatId, 'schedule.usage.add'));
         return;
       }
       const name = args[1]!;
@@ -1586,19 +1651,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         store.createSchedule(chatId, name, cron, agent, prompt, projectId);
       } catch (err: any) {
         if (String(err).includes('UNIQUE')) {
-          await ctx.reply(`❌ Schedule "${name}" đã tồn tại. Xóa trước rồi tạo lại.`);
+          await ctx.reply(t(chatId, 'schedule.error.alreadyExists', { name }));
           return;
         }
         throw err;
       }
-      await ctx.reply(`✅ Schedule "${name}" created\n⏰ ${cron} · ${agent}\n📝 ${prompt}`);
+      await ctx.reply(t(chatId, 'schedule.added', { name, cron, agent, prompt }));
       return;
     }
 
     if (sub === 'list') {
       const schedules = store.listSchedules(chatId);
-      if (schedules.length === 0) { await ctx.reply('📋 Chưa có schedule nào. Dùng /schedule add <name> ...'); return; }
-      let msg = '📋 Schedules:\n';
+      if (schedules.length === 0) { await ctx.reply(t(chatId, 'schedule.listEmpty')); return; }
+      let msg = t(chatId, 'schedule.listTitle') + '\n';
       for (const s of schedules) {
         const status = s.enabled ? '✅' : '⏸';
         msg += `${status} ${s.name} — ${s.cron} — ${s.agent} — "${s.prompt.slice(0, 40)}${s.prompt.length > 40 ? '…' : ''}"\n`;
@@ -1609,37 +1674,29 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
     if (sub === 'delete') {
       const name = args[1] ?? '';
-      if (!name) { await ctx.reply('Usage: /schedule delete <name>'); return; }
+      if (!name) { await ctx.reply(t(chatId, 'schedule.usage.delete')); return; }
       const deleted = store.deleteSchedule(chatId, name);
-      await ctx.reply(deleted ? `🗑 Schedule "${name}" deleted.` : `❌ Schedule "${name}" không tìm thấy.`);
+      await ctx.reply(deleted ? t(chatId, 'schedule.deleted', { name }) : t(chatId, 'schedule.error.notFound', { name }));
       return;
     }
 
     if (sub === 'enable') {
       const name = args[1] ?? '';
-      if (!name) { await ctx.reply('Usage: /schedule enable <name>'); return; }
+      if (!name) { await ctx.reply(t(chatId, 'schedule.usage.enable')); return; }
       store.toggleSchedule(chatId, name, true);
-      await ctx.reply(`✅ Schedule "${name}" enabled.`);
+      await ctx.reply(t(chatId, 'schedule.enabled', { name }));
       return;
     }
 
     if (sub === 'disable') {
       const name = args[1] ?? '';
-      if (!name) { await ctx.reply('Usage: /schedule disable <name>'); return; }
+      if (!name) { await ctx.reply(t(chatId, 'schedule.usage.disable')); return; }
       store.toggleSchedule(chatId, name, false);
-      await ctx.reply(`⏸ Schedule "${name}" disabled.`);
+      await ctx.reply(t(chatId, 'schedule.disabled', { name }));
       return;
     }
 
-    await ctx.reply(
-      '⏰ /schedule commands:\n' +
-      '• /schedule add <name> <cron 5-field> <prompt>\n' +
-      '• /schedule list — liệt kê schedules\n' +
-      '• /schedule enable <name>\n' +
-      '• /schedule disable <name>\n' +
-      '• /schedule delete <name>\n\n' +
-      'Ví dụ: /schedule add daily-test 0 9 * * * pnpm test',
-    );
+    await ctx.reply(t(chatId, 'schedule.help'));
   });
 
   // ---- v1.2 D10: /chain command — multi-agent pipeline ----
@@ -1648,14 +1705,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const arg = (ctx.match ?? '').trim();
 
     if (!arg) {
-      await ctx.reply(
-        '⛓️ /chain — multi-agent pipeline\n\n' +
-        'Syntax: /chain agent1: prompt1 | agent2: prompt2\n' +
-        'Token `{{prev}}` = output bước trước.\n\n' +
-        'Ví dụ:\n' +
-        '/chain claude: viết unit test cho auth.ts | kiro: review code {{prev}} và suggest fixes\n\n' +
-        'Max 5 steps, phân cách bằng |.',
-      );
+      await ctx.reply(t(chatId, 'chain.help'));
       return;
     }
 
@@ -1663,13 +1713,13 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const defaultAgent = config.defaults.agent;
     const parsed = parseChain(arg, defaultAgent);
     if ('error' in parsed) {
-      await ctx.reply(`❌ ${parsed.error}`);
+      await ctx.reply(t(chatId, 'chain.error', { error: parsed.error }));
       return;
     }
 
     const agentError = validateChainAgents(parsed, deps.registry.kinds());
     if (agentError) {
-      await ctx.reply(`❌ ${agentError}`);
+      await ctx.reply(t(chatId, 'chain.error', { error: agentError }));
       return;
     }
 
@@ -1680,7 +1730,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
       : process.cwd();
 
     const total = parsed.length;
-    await ctx.reply(`⛓️ Starting chain (${total} steps)…`);
+    await ctx.reply(t(chatId, 'chain.starting', { total }));
 
     let prevOutput = '';
     let lastSessionId: string | null = null;
@@ -1731,16 +1781,16 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
 
       prevOutput = textChunks.join('');
       lastSessionId = session.id;
-      await ctx.reply(`⛓️ Step ${i + 1}/${total} (${step.agent}) complete`);
+      await ctx.reply(t(chatId, 'chain.stepDone', { step: i + 1, total, agent: step.agent }));
     }
 
     // Send final output
     const notifier = notifierFor(chatId);
     const finalOutput = prevOutput.trim();
     if (finalOutput) {
-      await notifier.sendChunked(`⛓️ Chain result:\n\n${finalOutput}`, { silent: false });
+      await notifier.sendChunked(t(chatId, 'chain.result', { output: finalOutput }), { silent: false });
     } else {
-      await ctx.reply('⛓️ Chain complete (no text output).');
+      await ctx.reply(t(chatId, 'chain.empty'));
     }
 
     // Close intermediate sessions, keep last one active
@@ -1779,7 +1829,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     if (dashLoop) dashLoop.markUserActivity();
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply('no active session — /session new <agent> <label> [path]');
+      await ctx.reply(t(chatId, 'error.noActiveSessionForPrompt'));
       return;
     }
     const projPath = projectPathOf(cur, store, process.cwd());
@@ -1799,7 +1849,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         `User prompt mới:\n${text}`;
       store.updateSession(cur.id, { handoff_context: null });
       await ctx.reply(
-        `📥 [${cur.label}] inject handoff context (${cur.handoff_context.length} chars) vào prompt — sẽ chỉ chạy 1 lần.`,
+        t(chatId, 'dispatch.handoffInjected', { label: cur.label, chars: cur.handoff_context.length }),
         { disable_notification: true },
       );
     }
@@ -1815,7 +1865,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     }
 
     store.appendTranscript(cur.id, `> ${text.slice(0, 200)}`);
-    await ctx.reply(`[${cur.label}] dispatching…`);
+    await ctx.reply(t(chatId, 'dispatch.dispatching', { label: cur.label }));
 
     // Phase B — resolve the effective verbosity mode ONCE per dispatch turn
     // and cache it (per plan §B.4 — avoid hitting SQLite per event). The
@@ -2713,9 +2763,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply(
-        '📸 Nhận được ảnh nhưng không có active session — /session new <agent> <label> [path] rồi gửi lại.',
-      );
+      await ctx.reply(t(chatId, 'attachment.photo.noActive'));
       return;
     }
     // Telegram delivers a `PhotoSize[]` sorted small → large. Largest is
@@ -2723,10 +2771,10 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const photos = ctx.message.photo;
     const largest = photos[photos.length - 1];
     if (!largest) {
-      await ctx.reply('📸 message:photo nhưng photo[] empty — không tải được.');
+      await ctx.reply(t(chatId, 'attachment.photo.empty'));
       return;
     }
-    await ctx.reply(`📥 [${cur.label}] downloading photo…`);
+    await ctx.reply(t(chatId, 'attachment.photo.downloading', { label: cur.label }));
     const result = await downloadTelegramAttachment(
       // Senior-review (Opus 4.7) [P3] — grammy exposes `bot.token` as a
       // public readonly (Bot.d.ts §106), so no `unknown` cast needed. The
@@ -2768,17 +2816,15 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply(
-        '📎 Nhận được file nhưng không có active session — /session new <agent> <label> [path] rồi gửi lại.',
-      );
+      await ctx.reply(t(chatId, 'attachment.document.noActive'));
       return;
     }
     const doc = ctx.message.document;
     if (!doc) {
-      await ctx.reply('📎 message:document nhưng document object missing — không tải được.');
+      await ctx.reply(t(chatId, 'attachment.document.missing'));
       return;
     }
-    await ctx.reply(`📥 [${cur.label}] downloading ${doc.file_name ?? 'file'}…`);
+    await ctx.reply(t(chatId, 'attachment.document.downloading', { label: cur.label, name: doc.file_name ?? 'file' }));
     // Build optional allowlist override from config — empty array means
     // "use default safe set" inside the attachments module.
     const overrideExts = config.telegram.attachment_allowed_exts;
@@ -2825,19 +2871,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     const chatId = ctx.chat!.id;
     const cur = activeSession(ctx, store);
     if (!cur) {
-      await ctx.reply('🎵 Nhận được voice nhưng không có active session — /new rồi gửi lại.');
+      await ctx.reply(t(chatId, 'voice.noActive'));
       return;
     }
     const apiKey = config.voice.openai_api_key || process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      await ctx.reply('🎵 Voice-to-prompt chưa được cấu hình. Thêm OPENAI_API_KEY vào .env.');
+      await ctx.reply(t(chatId, 'voice.notConfigured'));
       return;
     }
     // Download voice file to temp
     const file = await bot.api.getFile(fileId);
     const filePath = file.file_path;
     if (!filePath) {
-      await ctx.reply('🎵 Không lấy được file path từ Telegram.');
+      await ctx.reply(t(chatId, 'voice.noFilePath'));
       return;
     }
     const fileUrl = `https://api.telegram.org/file/bot${bot.token}/${filePath}`;
@@ -2845,7 +2891,7 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
     try {
       const resp = await fetch(fileUrl);
       if (!resp.ok) {
-        await ctx.reply(`🎵 Download voice thất bại (${resp.status}).`);
+        await ctx.reply(t(chatId, 'voice.downloadFailed', { status: resp.status }));
         return;
       }
       const { writeFile, unlink } = await import('node:fs/promises');
@@ -2861,12 +2907,12 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
         return;
       }
       const preview = result.text.length > 50 ? result.text.slice(0, 50) + '…' : result.text;
-      await ctx.reply(`🎵 "${preview}"`);
+      await ctx.reply(t(chatId, 'voice.preview', { preview }));
       await dispatchPromptToActiveSession(ctx, result.text);
     } catch (err) {
       await import('node:fs/promises').then((fs) => fs.unlink(tmpPath).catch(() => {}));
       logger.warn({ err: String(err) }, 'voice handler error');
-      await ctx.reply(`🎵 Lỗi xử lý voice: ${String(err).slice(0, 200)}`);
+      await ctx.reply(t(chatId, 'voice.error', { error: String(err).slice(0, 200) }));
     }
   };
 
