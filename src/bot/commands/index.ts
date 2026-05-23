@@ -1141,11 +1141,24 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   });
 
   // ----- /model — view/change model for active session --------------------
+  // Picker options reflect what the upstream CLIs actually support. Codex /
+  // Cursor accept arbitrary model strings via -m / --model — the picker is
+  // just a convenience for the most common picks; users can still type
+  // `/model <any-name>` to override.
   const MODEL_OPTIONS: Record<string, string[]> = {
     claude: ['claude-sonnet-4', 'claude-opus-4.7', 'claude-haiku-4.5'],
     kiro: ['auto', 'claude-sonnet-4', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
-    codex: ['gpt-5.1-codex', 'o3', 'o4-mini'],
-    cursor: ['auto', 'claude-sonnet-4', 'gpt-5.2'],
+    // Codex 0.130 defaults to `gpt-5.5`; the legacy `gpt-5.1-codex` still
+    // works as an alias. The five entries here cover the current production
+    // tiers without overwhelming the inline keyboard on mobile (3 cells
+    // wide × 2 rows max). Source: `codex app-server` thread/start default
+    // response on Codex 0.130 + Cursor's `cursor-agent models` listing
+    // (Cursor's listing names the underlying OpenAI models too).
+    codex: ['gpt-5.5', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.1-codex', 'o3'],
+    // Cursor 2026.05 supports a wide list (see `cursor-agent models`). We
+    // surface the most common picks: `auto` (server-chooses), composer-2
+    // tiers, the latest Codex variants Cursor wraps, and Anthropic fallback.
+    cursor: ['auto', 'composer-2', 'composer-2-fast', 'gpt-5.3-codex', 'gpt-5.2', 'sonnet-4', 'sonnet-4-thinking'],
   };
 
   bot.command('model', async (ctx) => {

@@ -63,9 +63,12 @@ const codexOverlay = z.object({
   // Path or name of the `codex` binary. Default 'codex' so the daemon picks
   // it up from PATH (the recommended Codex install path).
   command: z.string().default('codex'),
-  // Model passed via `turn/start.model`. 'gpt-5.1-codex' is the latest
-  // documented Codex coding model (per Codex 0.75 docs).
-  model: z.string().default('gpt-5.1-codex'),
+  // Model passed via `turn/start.model`. Codex 0.130's default is `gpt-5.5`;
+  // legacy `gpt-5.1-codex` still works as an alias (the server accepts any
+  // model string the account is entitled to). We default to `gpt-5.5` so a
+  // fresh install works out of the box without the user knowing the magic
+  // string. Override in `~/.telecode/config.yaml` if needed.
+  model: z.string().default('gpt-5.5'),
   // Reasoning effort — Codex accepts 'low' | 'medium' | 'high'.
   effort: z.enum(['low', 'medium', 'high']).default('medium'),
 });

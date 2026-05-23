@@ -654,7 +654,13 @@ export class CodexAdapter implements AgentAdapter {
         threadId,
         input: [{ type: 'text', text: start.initialPrompt }],
         cwd: start.cwd,
-        approvalPolicy: 'unlessTrusted',
+        // Codex 0.130 renamed the approval-policy enum: the old `unlessTrusted`
+        // value is gone; the closest equivalent that asks for permission per
+        // tool is `on-request` (see `codex app-server` thread/start defaults
+        // — `approvalPolicy: 'on-request'`). Sending the legacy value crashes
+        // turn/start with `unknown variant 'unlessTrusted', expected one of
+        // 'untrusted', 'on-failure', 'on-request', 'granular', 'never'`.
+        approvalPolicy: 'on-request',
         sandboxPolicy: {
           type: 'workspaceWrite',
           writableRoots: [start.cwd],

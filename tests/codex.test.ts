@@ -161,7 +161,7 @@ describe('CodexAdapter — lifecycle (plan P3.2)', () => {
     expect(turnStart?.params).toMatchObject({
       threadId: 'thr_test_1',
       cwd: '/tmp/codex-test',
-      approvalPolicy: 'unlessTrusted',
+      approvalPolicy: 'on-request',
       model: 'gpt-5.1-codex',
       effort: 'medium',
       sandboxPolicy: {
