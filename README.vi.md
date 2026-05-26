@@ -16,29 +16,18 @@ Telecode là 1 local daemon chạy nền trên máy bạn, bắc cầu giữa Te
 - 🔄 **Resume session**: mỗi session có UUID riêng, context không mất khi bot restart.
 - 🔐 **Secret-safe**: tự scrub Telegram token, Anthropic key, GitHub PAT, Bearer headers khỏi mọi log + outbound message. Per-boot HMAC token bảo vệ Kiro hook server khỏi same-user spoof. Daemon singleton lockfile chống race giữa dev + launchd / systemd / NSSM.
 - 🌐 **Cross-platform native**: macOS (launchd), Linux (systemd `--user`), Windows 11 (NSSM service). Không cần WSL.
+- 🌍 **UI song ngữ** *(v1.2)*: chọn English / Tiếng Việt ở first boot; đổi bất kỳ lúc nào bằng `/language`. Ngôn ngữ reply của agent follow lựa chọn này (LLM summarize prompt locale-aware).
 
-**Status**: **v1.1** — streaming UX redesign. 717 passing tests. Multi-version log:
+**Status**: **v1.2** — bilingual UI · streaming UX · 949 passing tests. Multi-version log:
 - v0.4 — M0–M5 ship: core daemon + Claude adapter + multi-session + canUseTool.
 - v0.5 — Kiro chuyển sang `kiro-cli` headless (stream stdout, resume by UUID).
 - v0.6 — Kiro mid-session approval qua `preToolUse` hook bridge → cùng inline-button UX với Claude.
 - v0.6.1 — P0 fix: scrub bot token khỏi raw stderr (grammY runner error path).
 - v0.7 — Telegram UX widgets: slash-command menu, persistent reply keyboard (6 nút), Menu button, `/new` wizard, inline project picker, `/sessions` enhanced.
 - v0.8 — Multi-session view discipline: chỉ session active stream live, background → RAM buffer; auto-switch on approval; catch-up flush; session strip; silent stream.
-- **v1.0** — Cross-platform + multi-agent:
-  - **T3 carry-over**: `🔀 Switch khác` / `📋 Tail logs` wizard success buttons wired thật; `📌 Forever` 2-step confirm; `/dashboard` live edit-loop; follow-up suggestions; wizard-aware auto-switch (defer khi đang trong wizard).
-  - **Foundation refactor**: adapter registry open-set (`registry.register(kind, factory)`), `AgentKind = string` mở rộng tự do. Path portability sweep (`path.delimiter`, `path.isAbsolute`, `os.tmpdir()`).
-  - **Linux**: `scripts/install-systemd.sh` (`--user` unit, `--dry-run`, atomic writes, lingering hint). `/screenshot` Linux qua `grim` / `gnome-screenshot` / `scrot`.
-  - **Codex adapter**: OpenAI Codex CLI qua JSON-RPC app-server (`turn/start` với `approvalPolicy: unlessTrusted` + `sandboxPolicy.workspaceWrite`).
-  - **Cursor adapter**: Cursor CLI qua ACP (`agent acp` JSON-RPC over stdio, `session/request_permission` routing).
-  - **Windows 11**: `scripts/install-windows.ps1` (NSSM service, owner-only ACL, dry-run, env pre-fill, `SIGBREAK` graceful stop). `/screenshot` Windows qua PowerShell `[Screen]::PrimaryScreen`.
-  - **Hardening**: per-boot 32-byte CSPRNG gate token (`Authorization: Bearer`), KiroHookServer drain (30s timeout), daemon singleton lockfile (`~/.telecode/daemon.lock`), `kiro-cli --list-sessions` per-cwd 30s cache.
-- **v1.1** — Streaming UX redesign · 717 tests · backward compat 100% (verbose mode = byte-identical v1.0):
-  - **4 verbosity modes** (`/mode`, `/settings`): 🎯 Summary (default) / 📝 Normal / 🧠 Thinking / 🔬 Verbose. Per-session + per-chat default. First-boot v1.1 message giải thích migration.
-  - **Bug fixes**: duplicate Claude `tool_use` events (was emit 2× per tool), dropped `tool_result` events từ Codex/Cursor (silently invisible).
-  - **Friendly tool rendering**: `Read · notifier.ts` thay `Read — {"file_path":"/Users/<you>/..."}`. Path collapse (`~`, `./`, git-root). Diff stats trên Edit: `Edit · auth.ts (-3 +7)`.
-  - **Smart rendering**: MarkdownV2 auto code-fence (JSON / diff / bash / stack trace), `[📜 Show diff]` clickable viewer, repeated tool collapse (5s window: `Read ×3 · foo.ts, bar.ts, baz.ts`).
-  - **Agentic compression** (killer feature): reuse session để AI-summarize long output (>500 chars threshold). Auto done-summary: `Done · 47s · $0.023\nTách validateToken ra file riêng, thêm 5 tests, pass.`. On-demand `[💬 AI summary]` button. `[📜 Full output (200 lines)]` viewer.
-  - **Activity indicators**: single rolling progress message per session (edit-only), surface adapter status events (`⏳ Codex thinking...`), idle ping ladder 30s → 1m → 2m → 5m+ cap.
+- **v1.0** — Cross-platform + multi-agent: adapter registry open-set, Linux (systemd) + Windows (NSSM) installers, Codex + Cursor adapters, per-boot HMAC gate token, daemon singleton lockfile.
+- **v1.1** — Streaming UX redesign: 4 verbosity modes (`/mode`, `/settings`), friendly tool rendering, MarkdownV2 auto code-fence, repeated tool collapse, agentic compression (auto-summarize long output), rolling progress message, idle ping ladder.
+- **v1.2** — UI song ngữ (EN / VI) với locale-aware LLM prompts; first-boot language picker; lệnh `/language`; bảng `chat_settings` thêm cột `language`.
 
 ---
 
@@ -55,6 +44,10 @@ Telecode là 1 local daemon chạy nền trên máy bạn, bắc cầu giữa Te
 - [Daily workflow](#daily-workflow)
 - [Multi-session UX](#multi-session-ux)
 - [Live dashboard](#live-dashboard)
+- [Verbosity modes (v1.1)](#verbosity-modes-v11)
+- [Agentic compression (v1.1)](#agentic-compression-v11)
+- [Smart rendering (v1.1)](#smart-rendering-v11)
+- [Thiết lập ngôn ngữ (v1.2)](#thiết-lập-ngôn-ngữ-v12)
 - [Bảng lệnh đầy đủ](#bảng-lệnh-đầy-đủ)
 - [Policy & Approval](#policy--approval)
 - [Adapter registry — thêm agent mới](#adapter-registry--thêm-agent-mới)
@@ -374,7 +367,7 @@ Get-Content $env:USERPROFILE\.telecode\logs\stderr.log -Tail 30 -Wait
 
 Bạn nên thấy log kiểu:
 ```
-{"level":"info","msg":"telecode starting","version":"1.0.0"}
+{"level":"info","msg":"telecode starting","version":"1.2.0"}
 {"level":"info","msg":"lockfile acquired","pid":12345,"path":"~/.telecode/daemon.lock"}
 {"level":"info","msg":"adapter registry initialized","kinds":["claude","kiro","codex","cursor"]}
 {"level":"info","msg":"workspace scan complete","projects":12}
@@ -388,20 +381,21 @@ Nếu không thấy → xem [Troubleshooting](#troubleshooting).
 ## Smoke test đầu tiên
 
 1. Trong Telegram, search bot của bạn theo username (vd `@your_telecode_bot`), bấm **Start**.
-2. Gửi `/start`. Bot reply welcome + show **persistent reply keyboard** (6 nút phía dưới ô gõ: 📋 Sessions, 📁 Projects, 📊 Status, 🛑 Stop, 📸 Screen, ❓ Help). Cạnh paperclip có thêm nút **Menu** — bấm vào hiện đủ 8 slash command. Gõ `/` cũng ra cùng menu.
-3. Gửi `/projects` (hoặc tap nút 📁 Projects). Bot list tất cả project nó scan được từ `~/Documents/workspaces/`, mỗi project là 1 nút inline có **tên project**; tap = set project đó làm active. Project hiện đang active có prefix `●` (vd `● telecode`). Pagination tự bật khi >8 project.
-4. Tạo session bằng **wizard** — gõ `/new`. Bot dẫn 3 bước inline:
+2. **Language picker first-boot (v1.2)**: bot reply picker `[🇬🇧 English] [🇻🇳 Tiếng Việt]`. Chọn 1 ngôn ngữ. Bot gửi welcome + note migration verbosity v1.1 bằng ngôn ngữ đã chọn. Có thể đổi sau bằng `/language`.
+3. Sau khi chọn ngôn ngữ, gửi `/start`. Bot reply welcome + show **persistent reply keyboard** (6 nút phía dưới ô gõ: 📋 Sessions, 📁 Projects, 📊 Status, 🛑 Stop, 📸 Screen, ❓ Help). Cạnh paperclip có thêm nút **Menu** — bấm vào hiện đủ 8 slash command. Gõ `/` cũng ra cùng menu.
+4. Gửi `/projects` (hoặc tap nút 📁 Projects). Bot list tất cả project nó scan được từ `~/Documents/workspaces/`, mỗi project là 1 nút inline có **tên project**; tap = set project đó làm active. Project hiện đang active có prefix `●` (vd `● telecode`). Pagination tự bật khi >8 project.
+5. Tạo session bằng **wizard** — gõ `/new`. Bot dẫn 3 bước inline:
    1. Chọn agent → keyboard render dynamic từ adapter registry. Mặc định: `[🤖 Claude] [⚡ Kiro] [🅒 Codex] [✦ Cursor] [✖ Cancel]` (chỉ hiện adapter có config trong `~/.telecode/config.yaml`).
    2. Chọn project → inline list (paginate 8/page nếu nhiều)
    3. Gõ label → validate `/^[a-zA-Z0-9_-]{1,40}$/`
 
    Bot reply: `📍 [smoke] — agent=claude` kèm 2 inline buttons `[🔀 Switch khác] [📋 Tail logs]` để jump nhanh. Legacy syntax vẫn chạy: `/session new claude smoke ~/Documents/workspaces/telecode`.
-5. Gửi prompt thường:
+6. Gửi prompt thường:
    ```
    list 3 files in src
    ```
    Bot reply (sau vài giây): `[smoke] 🔧 Read src/index.ts ...` và stream output.
-6. Test approval: gửi:
+7. Test approval: gửi:
    ```
    chạy `git status` xem repo trạng thái gì
    ```
@@ -670,29 +664,6 @@ Mỗi summarize call log structured pino: `{ sessionId, kind: 'auto-tool-result'
 
 Conservative defaults (500-char threshold, per-session mutex chống burst spam, verbose mode opt-out) giữ cost story honest.
 
----
-
-## Activity indicators (v1.1)
-
-Trong mode `summary`/`normal`/`thinking`, bot maintain **1 message progress edit-only per session** showing current activity:
-
-```
-⏳ [refactor-auth] Starting Claude...
-        ↓ (after first tool_use)
-⏳ [refactor-auth] Running Read...
-        ↓ (after tool_result)
-⏳ [refactor-auth] Generating response...
-        ↓ (done event)
-✅ Done · 47s · $0.0231
-{auto-summary}
-```
-
-**Idle ping ladder** (mode summary chỉ): 30s → 1m → 2m → 3m → 4m → 5m+ cap. Message updates `⏳ Working... (1m)` để user biết bot vẫn alive, không hang.
-
-Mode `verbose` SKIP progress message hoàn toàn (preserve raw firehose UX cho debugging).
-
----
-
 ## Smart rendering (v1.1)
 
 ### Friendly tool rendering
@@ -726,9 +697,37 @@ Bot tự detect + wrap content trong text events:
 
 Plain text fallback nếu Telegram parse fail (400 bad markdown).
 
-### Allow forever 2-step confirm
+## Thiết lập ngôn ngữ (v1.2)
 
-(v1.0 feature, recap): nút `📌 Forever` trên approval → tap 1 → "⚠️ Ghi vĩnh viễn?" confirm dialog → tap 2 → atomic write rule vào `~/.telecode/policy.yaml`.
+Telecode v1.2 thêm language switch theo từng chat:
+
+- **First boot**: khi bạn tap `/start` lần đầu, bot gửi picker `[🇬🇧 English] [🇻🇳 Tiếng Việt]`. Lựa chọn được lưu vào `chat_settings.language`; welcome + verbosity migration note sẽ gửi bằng ngôn ngữ đã chọn.
+- **Đổi sau này**: gõ `/language` → bot hiển thị ngôn ngữ hiện tại kèm cùng picker EN/VI. Tap để đổi.
+- **Ảnh hưởng tới gì**: mọi command reply, wizard step, approval flow text, dashboard, và **ngôn ngữ LLM summarize-prompt** (auto-summary của agent cũng theo ngôn ngữ bạn chọn).
+- **User đang dùng từ trước**: chat đã có row trong `chat_settings` trước v1.2 sẽ auto-backfill `'vi'` ở lần boot đầu tiên — UX hiện tại vẫn là tiếng Việt cho tới khi bạn đổi.
+
+Source-of-truth của catalog là `src/i18n/messages/en.ts`; `src/i18n/messages/vi.ts` phải implement cùng key set (compile-time gated). Thêm locale mới: tạo file dưới `src/i18n/messages/`, rồi extend union `Language` trong `src/i18n/index.ts`.
+
+---
+
+## Activity indicators (v1.1)
+
+Trong mode `summary` / `normal` / `thinking`, bot maintain **1 message progress edit-only per session** showing current activity:
+
+```
+⏳ [refactor-auth] Starting Claude...
+        ↓ (after first tool_use)
+⏳ [refactor-auth] Running Read...
+        ↓ (after tool_result)
+⏳ [refactor-auth] Generating response...
+        ↓ (done event)
+✅ Done · 47s · $0.0231
+{auto-summary}
+```
+
+**Idle ping ladder** (mode summary chỉ): 30s → 1m → 2m → 3m → 4m → 5m+ cap. Message updates `⏳ Working... (1m)` để user biết bot vẫn alive, không hang.
+
+Mode `verbose` SKIP progress message hoàn toàn (preserve raw firehose UX cho debugging).
 
 ---
 
@@ -751,6 +750,7 @@ Gõ `/` trong Telegram chat sẽ hiện danh sách top-level commands (cùng lis
 | `/dashboard` | *(v1.0)* Live dashboard edit-loop 2s. `/dashboard stop` để tắt. |
 | `/mode` | *(v1.1)* Show current verbosity mode + 4-button picker. `/mode <name>` set per-session: `summary` (default) / `normal` / `thinking` / `verbose`. |
 | `/settings` | *(v1.1)* Show chat-level settings. `/settings mode <name>` đặt default mode cho chat (apply session mới sau này). |
+| `/language` | *(v1.2)* Show ngôn ngữ hiện tại + picker EN/VI. Ảnh hưởng mọi bot message và ngôn ngữ LLM summarize-prompt. |
 | `/help` | Hướng dẫn nhanh — list 6 nút keyboard + slash commands. |
 | **Session (legacy `/session ...` — vẫn hoạt động)** | |
 | `/session new <agent> <label> [path]` | `claude` / `kiro` / `codex` / `cursor`. Path mặc định = project active. |
@@ -1131,6 +1131,18 @@ nssm restart Telecode
 
 Config + policy + DB + lockfile ở `~/.telecode/` (`%USERPROFILE%\.telecode\` trên Windows) giữ nguyên qua update.
 
+### Migration v1.1 → v1.2 (bilingual UI)
+
+Không cần config thủ công. `~/.telecode/config.yaml`, `.env`, policy và sessions hiện có đều giữ nguyên.
+
+**Lần đầu boot v1.2**, daemon chạy migration idempotent:
+1. `ALTER TABLE chat_settings ADD COLUMN language TEXT` (DEFAULT `'en'` cho fresh install).
+2. Backfill row đã có: `UPDATE chat_settings SET language = 'vi' WHERE language IS NULL` để chat hiện tại giữ UX tiếng Việt cho tới khi bạn đổi bằng `/language`.
+
+**Với brand-new chat**: verbosity announcement v1.1 được thay bằng language picker. Chọn 1 lần → row `chat_settings` được tạo với ngôn ngữ đã chọn → verbosity migration note gửi bằng ngôn ngữ đó.
+
+Nếu bạn muốn đổi lại: `/language`.
+
 ### Migration v0.4 → v0.6 (Kiro config schema thay đổi)
 
 Nếu bạn đã có config từ trước v0.5, cần edit `~/.telecode/config.yaml`:
@@ -1275,7 +1287,7 @@ Tóm tắt stack:
 - `async-mutex` `0.5.0` (per-session serialization)
 - `zod` `4.4.3` + `yaml` `2.9.0` (config validation, `z.record` open-set adapter schema)
 - `execa` `9.6.1` (cross-platform child process)
-- `vitest` `4.1.7` (432 passing tests)
+- `vitest` `4.1.7` (949 passing tests)
 
 ---
 
@@ -1288,7 +1300,7 @@ Tóm tắt stack:
 - **`/screenshot` Linux** cần ít nhất 1 trong: `grim` (Wayland) / `gnome-screenshot` / `scrot`. Cài qua package manager.
 - **Antigravity adapter chưa có** — Google ra mắt 19/05/2026 nhưng CLI **GUI-first**, headless mode chưa support. Đợi 6 tháng review lại. Registry open-set ở v1.0 đủ để add sau không phải re-plan.
 
-Roadmap (v1.1+):
+Roadmap (v1.3+):
 - Gemini CLI adapter (Google ecosystem nhánh, ACP-like protocol).
 - Antigravity adapter khi headless mode mature.
 - VPS relay mode cho 24/7 (bypass máy sleep).
