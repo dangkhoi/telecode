@@ -296,7 +296,7 @@ code ~/.telecode/config.yaml
 nano ~/.telecode/config.yaml
 ```
 
-Edit two places:
+Edit the key sections:
 
 ```yaml
 telegram:
@@ -305,7 +305,22 @@ telegram:
 daemon:
   workspace_scan:
     roots: [~/Documents/workspaces]  # ← path to your project root
+
+agents:
+  claude:
+    binary: claude
+    setting_sources: [user, project, local]
+  kiro:
+    binary: kiro-cli                 # ← bare name (resolved via PATH) or absolute path
+  codex:                             # ← optional, requires `codex login` first
+    command: codex
+    model: o3
+  cursor:                            # ← optional, requires `cursor-agent login` first
+    command: cursor-agent
+    model: auto
 ```
+
+> **Only agents listed under `agents:` appear in the `/new` wizard.** Remove or comment out any agent you don't use. The minimum is one agent (Claude or Kiro).
 
 Reload the daemon to pick up the new config:
 
@@ -1072,6 +1087,41 @@ launchctl load ~/Library/LaunchAgents/dev.telecode.daemon.plist
 ```
 
 **Verify**: `~/.telecode/logs/telecode.log` should have a `kiro adapter ready` line (no warning about the binary).
+
+### Claude / Codex / Cursor says "Not logged in"
+
+**Symptom**: session starts → bot replies `❌ Not logged in · Please run /login` (Claude) or `❌ not authenticated — please run cursor-agent login` (Cursor) or Codex fails to refresh access token.
+
+**Root cause**: these agents use **OAuth tokens with a TTL**. When you run the CLI in your terminal, it can refresh the token interactively (browser popup). The daemon runs non-interactive → when the token expires, it cannot refresh and reports "not logged in".
+
+**Fix** — re-login from your terminal, then restart the daemon:
+
+```bash
+# Claude — opens browser for OAuth refresh
+claude
+# then type: /login
+# or just running any claude command triggers a refresh
+
+# Codex — opens browser for OAuth refresh
+codex login
+
+# Cursor — opens browser for OAuth refresh
+cursor-agent login
+
+# Restart daemon to pick up fresh tokens
+# macOS:
+launchctl bootout gui/$(id -u)/dev.telecode.daemon
+rm -f ~/.telecode/daemon.lock
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.telecode.daemon.plist
+
+# Linux:
+systemctl --user restart telecode.service
+
+# Windows:
+nssm restart Telecode
+```
+
+**How often?** Depends on the provider's token TTL — typically a few hours to a few days. If it happens frequently, consider running a cron/launchd job that periodically invokes the CLI to keep the token fresh.
 
 ### Daemon crash loop
 

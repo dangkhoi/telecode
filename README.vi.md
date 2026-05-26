@@ -305,7 +305,7 @@ code ~/.telecode/config.yaml
 nano ~/.telecode/config.yaml
 ```
 
-Sửa 2 chỗ:
+Sửa các phần chính:
 
 ```yaml
 telegram:
@@ -314,7 +314,22 @@ telegram:
 daemon:
   workspace_scan:
     roots: [~/Documents/workspaces]  # ← Đường dẫn folder chứa các project của bạn
+
+agents:
+  claude:
+    binary: claude
+    setting_sources: [user, project, local]
+  kiro:
+    binary: kiro-cli                 # ← tên bare (resolve qua PATH) hoặc absolute path
+  codex:                             # ← optional, cần `codex login` trước
+    command: codex
+    model: o3
+  cursor:                            # ← optional, cần `cursor-agent login` trước
+    command: cursor-agent
+    model: auto
 ```
+
+> **Chỉ agent nào có trong `agents:` mới hiện ở wizard `/new`.** Bỏ hoặc comment agent không dùng. Tối thiểu cần 1 agent (Claude hoặc Kiro).
 
 Reload daemon để pick up config mới:
 
@@ -1073,6 +1088,41 @@ launchctl load ~/Library/LaunchAgents/dev.telecode.daemon.plist
 ```
 
 **Verify**: log `~/.telecode/logs/telecode.log` phải có dòng `kiro adapter ready` (không warning về binary).
+
+### Claude / Codex / Cursor báo "Not logged in"
+
+**Triệu chứng**: tạo session → bot reply `❌ Not logged in · Please run /login` (Claude) hoặc `❌ not authenticated — please run cursor-agent login` (Cursor) hoặc Codex không refresh được access token.
+
+**Nguyên nhân**: các agent này dùng **OAuth token có thời hạn (TTL)**. Khi chạy CLI ở terminal, nó tự refresh token (mở browser). Daemon chạy non-interactive → khi token hết hạn, không thể refresh → báo "not logged in".
+
+**Fix** — login lại ở terminal, rồi restart daemon:
+
+```bash
+# Claude — mở browser để OAuth refresh
+claude
+# rồi gõ: /login
+# hoặc chạy bất kỳ lệnh claude nào cũng trigger refresh
+
+# Codex — mở browser để OAuth refresh
+codex login
+
+# Cursor — mở browser để OAuth refresh
+cursor-agent login
+
+# Restart daemon để pick up token mới
+# macOS:
+launchctl bootout gui/$(id -u)/dev.telecode.daemon
+rm -f ~/.telecode/daemon.lock
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.telecode.daemon.plist
+
+# Linux:
+systemctl --user restart telecode.service
+
+# Windows:
+nssm restart Telecode
+```
+
+**Bao lâu bị 1 lần?** Tuỳ TTL của provider — thường vài giờ đến vài ngày. Nếu bị thường xuyên, có thể setup cron/launchd job chạy CLI định kỳ để giữ token fresh.
 
 ### Daemon crash loop
 
