@@ -76,13 +76,16 @@ describe('model-selection: SessionStore', () => {
   });
 
   it('normalizes Claude dotted model versions to Claude Code IDs', () => {
+    expect(normalizeModelForAgent('claude', 'claude-opus-4.8')).toBe('claude-opus-4-8');
     expect(normalizeModelForAgent('claude', 'claude-opus-4.7')).toBe('claude-opus-4-7');
     expect(normalizeModelForAgent('claude', 'claude-sonnet-4.6')).toBe('claude-sonnet-4-6');
     expect(normalizeModelForAgent('claude', 'opus')).toBe('opus');
     // Kiro CLI uses dotted IDs — reverse normalize hyphenated → dotted
+    expect(normalizeModelForAgent('kiro', 'claude-opus-4-8')).toBe('claude-opus-4.8');
     expect(normalizeModelForAgent('kiro', 'claude-opus-4-7')).toBe('claude-opus-4.7');
     expect(normalizeModelForAgent('kiro', 'claude-sonnet-4-6')).toBe('claude-sonnet-4.6');
     // Already dotted → unchanged
+    expect(normalizeModelForAgent('kiro', 'claude-opus-4.8')).toBe('claude-opus-4.8');
     expect(normalizeModelForAgent('kiro', 'claude-opus-4.7')).toBe('claude-opus-4.7');
     expect(normalizeModelForAgent('kiro', 'auto')).toBe('auto');
     expect(normalizeModelForAgent('codex', 'gpt-5.5')).toBe('gpt-5.5');

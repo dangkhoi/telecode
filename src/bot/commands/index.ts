@@ -1159,19 +1159,19 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   const MODEL_OPTIONS: Record<string, string[]> = {
     // Claude — aliases first so the picker tracks Anthropic's "latest"
     // automatically; concrete names kept as power-user fallback.
-    claude: ['sonnet', 'opus', 'haiku', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
+    claude: ['sonnet', 'opus', 'haiku', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
     // Kiro — live fetch via `kiro-cli chat --list-models`. The fallback
     // here mirrors what kiro-cli currently exposes for a default-tier
     // account (verified 2026-05-23) so the picker is usable even if the
     // live fetch fails.
-    kiro: ['auto', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
+    kiro: ['auto', 'claude-opus-4.8', 'claude-opus-4.7', 'claude-sonnet-4.6', 'claude-haiku-4.5'],
     // Codex — `auto` is the canonical alias (verified via thread/start);
     // `gpt-5.5` is Codex 0.130's default. Concrete names beyond that change
     // monthly, so we keep this list short.
     codex: ['auto', 'gpt-5.5', 'gpt-5.3-codex', 'o3'],
     // Cursor — live fetch via `cursor-agent models` (115+ entries). The
     // fallback below covers the most common picks for a Pro account.
-    cursor: ['auto', 'composer-2', 'gpt-5.3-codex', 'claude-opus-4-7-medium', 'claude-4.6-sonnet-medium', 'sonnet-4'],
+    cursor: ['auto', 'composer-2', 'gpt-5.3-codex', 'claude-opus-4-8-medium', 'claude-opus-4-7-medium', 'claude-4.6-sonnet-medium', 'sonnet-4'],
   };
 
   /**

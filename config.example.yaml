@@ -21,7 +21,7 @@ agents:
     # Nếu vẫn không resolve được, dùng absolute path: `which kiro-cli`.
     binary: kiro-cli
     # agent: telecode                  # default = `telecode` (auto-generated at ~/.kiro/agents/telecode.json with preToolUse hook → daemon)
-    # model: claude-sonnet-4.6         # optional: kiro-cli --model
+    # model: claude-opus-4.8            # optional: kiro-cli --model
 defaults:
   agent: claude
 session_switch_preview_lines: 3
