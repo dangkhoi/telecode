@@ -25,6 +25,7 @@ import type { PolicyEngine } from '../../approval/policy.js';
 import type { AgentRegistry } from '../../agents/registry.js';
 import { normalizeModelForAgent } from '../../agents/model-normalize.js';
 import type { Notifier } from '../notifier.js';
+import type { TelegramAskPrompter } from '../ask-prompter.js';
 import {
   MODE_METADATA,
   VERBOSITY_MODES,
@@ -71,6 +72,16 @@ export interface CommandDeps {
    * fall back to hard-coded English when missing.
    */
   i18n?: import('../../i18n/index.js').I18n;
+  /**
+   * v1.4 — AskUserQuestion prompter. The `bot.on('message:text')` handler
+   * checks this before dispatching the message as a session prompt, so a
+   * reply to a `force_reply` ask-other prompt is consumed as the question
+   * answer rather than forwarded as a new agent prompt.
+   *
+   * Optional so tests that don't exercise the AskUserQuestion flow can omit
+   * it; in that case the intercept simply never matches.
+   */
+  askPrompter?: TelegramAskPrompter;
 }
 
 /**
@@ -2959,6 +2970,20 @@ export function registerCommands(bot: Bot<any>, deps: CommandDeps): void {
   bot.on('message:text', async (ctx) => {
     const text = ctx.message.text;
     if (!text || text.startsWith('/')) return;
+    // v1.4 — intercept replies to AskUserQuestion "Other" free-text prompts
+    // BEFORE forwarding the text as a session prompt. If the reply's
+    // reply_to_message id matches a registered ask-other prompt id, the
+    // text is consumed as the question's answer and the broker advances.
+    const replyTo = ctx.message.reply_to_message?.message_id;
+    const chatId = ctx.chat?.id;
+    if (deps.askPrompter && replyTo != null && typeof chatId === 'number') {
+      try {
+        const consumed = await deps.askPrompter.consumeFreeTextReply(chatId, replyTo, text);
+        if (consumed) return;
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'ask free-text consume failed');
+      }
+    }
     await dispatchPromptToActiveSession(ctx, text);
   });
 

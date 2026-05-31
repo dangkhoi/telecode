@@ -12,6 +12,7 @@ import { SessionManager } from './session/manager.js';
 import { AgentRegistry } from './agents/registry.js';
 import { registerBuiltinAdapters } from './agents/index.js';
 import { ApprovalBroker } from './approval/broker.js';
+import { AskQuestionBroker } from './approval/ask-broker.js';
 import { PolicyEngine } from './approval/policy.js';
 import { scanWorkspaces } from './util/workspace-scanner.js';
 import { startBot } from './bot/router.js';
@@ -65,6 +66,11 @@ async function main(): Promise<void> {
   policy.watch(() => logger.info('policy reloaded'));
 
   const broker = new ApprovalBroker({ timeoutMs: config.daemon.approval_timeout_sec * 1000 });
+  // v1.4 — AskUserQuestion broker. Reuses approval_timeout_sec (Q3 in spec)
+  // so AskUserQuestion UX timeout stays consistent with policy approval.
+  const askBroker = new AskQuestionBroker({
+    timeoutMs: config.daemon.approval_timeout_sec * 1000,
+  });
 
   // Pre-flight: resolve kiro binary on disk so we don't fail at first
   // session-creation with a confusing ENOENT. The binary often lives outside
@@ -125,6 +131,7 @@ async function main(): Promise<void> {
           policy,
           store,
           settingSources: config.agents.claude.setting_sources,
+          askBroker,
         }
       : undefined,
     kiro: config.agents.kiro
@@ -199,7 +206,7 @@ async function main(): Promise<void> {
   // Crash-recovery: mark stale sessions interrupted, notify.
   const stale = store.markRunningAsInterrupted();
 
-  const started = await startBot({ config, store, manager, broker, policy, registry, i18n });
+  const started = await startBot({ config, store, manager, broker, askBroker, policy, registry, i18n });
 
   // v1.2 D9 — Timeline HTTP server (loopback only).
   const { startTimelineServer } = await import('./bot/timeline.js');

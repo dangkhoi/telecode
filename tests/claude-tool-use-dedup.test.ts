@@ -59,6 +59,7 @@ describe('Phase A.1 — Claude tool_use de-dup', () => {
       updateSession: vi.fn(),
     };
     const broker = { ask: vi.fn() };
+    const askBroker = { askQuestion: vi.fn() };
 
     const adapter = new ClaudeAdapter({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -68,6 +69,8 @@ describe('Phase A.1 — Claude tool_use de-dup', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       store: store as any,
       settingSources: [],
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      askBroker: askBroker as any,
     });
 
     const events: AgentEvent[] = [];

@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Spec — AskUserQuestion answer routing (Telegram ↔ SDK)</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --surface: #ffffff; --surface-alt: #f5f5f7;
+    --text: #1d1d1f; --text-dim: #6e6e73; --text-faint: #86868b;
+    --accent: #0071e3; --accent-soft: rgba(0,113,227,0.08);
+    --success: #1c7c54; --success-soft: rgba(28,124,84,0.1);
+    --warn: #b25000; --warn-soft: rgba(178,80,0,0.1);
+    --danger: #c8102e; --danger-soft: rgba(200,16,46,0.08);
+    --border: rgba(0,0,0,0.08); --border-strong: rgba(0,0,0,0.14);
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.04);
+    --radius: 14px; --radius-sm: 8px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --surface: #1c1c1e; --surface-alt: #2c2c2e;
+      --text: #f5f5f7; --text-dim: #a1a1a6; --text-faint: #6e6e73;
+      --accent: #2997ff; --accent-soft: rgba(41,151,255,0.12);
+      --success: #30d158; --success-soft: rgba(48,209,88,0.14);
+      --warn: #ff9f0a; --warn-soft: rgba(255,159,10,0.14);
+      --danger: #ff453a; --danger-soft: rgba(255,69,58,0.14);
+      --border: rgba(255,255,255,0.1); --border-strong: rgba(255,255,255,0.18);
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px rgba(0,0,0,0.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 17px; line-height: 1.6; letter-spacing: -0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 72px 32px 120px; }
+  header.hero { margin-bottom: 48px; }
+  .eyebrow { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--accent); margin-bottom: 12px; }
+  h1 { font-size: 40px; line-height: 1.1; font-weight: 700; letter-spacing: -0.025em; margin: 0 0 16px; }
+  .lede { font-size: 20px; line-height: 1.45; color: var(--text-dim); margin: 0 0 24px; max-width: 760px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 10px; font-size: 13px; color: var(--text-faint); }
+  .meta-row .pill { background: var(--surface-alt); padding: 6px 12px; border-radius: 999px; color: var(--text-dim); }
+  .meta-row .pill strong { color: var(--text); font-weight: 600; }
+  h2 { font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; margin: 64px 0 8px; }
+  h2 + .section-sub { color: var(--text-dim); margin: 0 0 28px; font-size: 16px; }
+  h3 { font-size: 21px; font-weight: 600; letter-spacing: -0.015em; margin: 36px 0 12px; }
+  h4 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin: 26px 0 10px; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 14px; padding-left: 24px; }
+  li { margin-bottom: 6px; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 14px; background: var(--surface-alt); padding: 2px 6px; border-radius: 4px; color: var(--text); }
+  pre { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 18px 20px; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 13px; line-height: 1.55; margin: 0 0 16px; }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+  table { width: 100%; border-collapse: collapse; margin: 0 0 20px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-weight: 600; color: var(--text-dim); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; background: var(--surface-alt); }
+  tr:last-child td { border-bottom: none; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accent { background: var(--accent-soft); color: var(--accent); }
+  .badge-success { background: var(--success-soft); color: var(--success); }
+  .badge-warn { background: var(--warn-soft); color: var(--warn); }
+  .badge-danger { background: var(--danger-soft); color: var(--danger); }
+  .badge-muted { background: var(--surface-alt); color: var(--text-dim); }
+  .tldr { background: var(--accent-soft); border: 1px solid var(--accent-soft); border-radius: var(--radius); padding: 22px 26px; margin: 28px 0 40px; }
+  .tldr h4 { margin-top: 0; color: var(--accent); }
+  .tldr p:last-child { margin-bottom: 0; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 26px; margin: 22px 0; box-shadow: var(--shadow); }
+  .card h3, .card h4 { margin-top: 0; }
+  .card.warn { border-color: rgba(178,80,0,0.3); background: var(--warn-soft); }
+  .card.danger { border-color: rgba(200,16,46,0.3); background: var(--danger-soft); }
+  .card.success { border-color: rgba(28,124,84,0.3); background: var(--success-soft); }
+  .checklist { list-style: none; padding-left: 0; }
+  .checklist li { padding-left: 28px; position: relative; margin-bottom: 8px; }
+  .checklist li::before { content: "○"; position: absolute; left: 0; color: var(--text-faint); font-weight: 700; }
+  .checklist li.done::before { content: "●"; color: var(--success); }
+  .checklist li.partial::before { content: "◐"; color: var(--warn); }
+  .checklist li.todo::before { content: "○"; color: var(--accent); }
+  hr { border: none; height: 1px; background: var(--border); margin: 56px 0; }
+  .mock { background: var(--surface-alt); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px 18px; font-family: "SF Mono", Menlo, monospace; font-size: 13px; margin: 12px 0; white-space: pre-wrap; line-height: 1.55; }
+  .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 18px 0; }
+  .compare .col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+  .compare .col h5 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); }
+  .compare .col.before { border-left: 3px solid var(--danger); }
+  .compare .col.after { border-left: 3px solid var(--success); }
+  @media (max-width: 720px) {
+    .wrap { padding: 44px 18px 72px; }
+    h1 { font-size: 30px; } .lede { font-size: 17px; } h2 { font-size: 22px; }
+    .compare { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <div class="eyebrow">Spec · Telecode v1.4</div>
+  <h1>AskUserQuestion answer routing</h1>
+  <p class="lede"><code>AskUserQuestion</code> hiện chỉ render đẹp lên Telegram nhưng <strong>không thật sự hỏi user</strong> — SDK nhận lại <code>answers = {}</code> tự động, Claude tiếp tục bằng giả định. Spec này wire một vòng câu hỏi → trả lời thực sự thông qua inline keyboard + reply, dùng đúng cơ chế chính thức <code>canUseTool ⟶ updatedInput.answers</code> của Claude Agent SDK.</p>
+  <div class="meta-row">
+    <span class="pill"><strong>Slug</strong> · askuserquestion-answer-routing</span>
+    <span class="pill"><strong>Author</strong> · vendor.01@frt.vn</span>
+    <span class="pill"><strong>Date</strong> · 2026-05-31</span>
+    <span class="pill"><strong>Effort</strong> · ~1 ngày</span>
+    <span class="pill"><strong>Status</strong> · Implemented · Pass 1 senior review APPROVED · ready for security scan + commit</span>
+    <span class="pill"><strong>SDK</strong> · @anthropic-ai/claude-agent-sdk@0.3.145</span>
+  </div>
+</header>
+
+<div class="tldr">
+  <h4>TL;DR</h4>
+  <p><strong>Bug</strong>: <code>canUseTool</code> trong <code>src/agents/claude.ts:46</code> đối xử <code>AskUserQuestion</code> như tool thường → đi qua <code>PolicyEngine</code> → broker hỏi <em>Allow / Deny tool</em> (3 nút), KHÔNG bao giờ thu thập câu trả lời thực. Sau khi user "Allow", SDK forward call về backend, nhận <code>answers</code> rỗng → Claude đoán bừa.</p>
+  <p><strong>Fix</strong>: special-case <code>AskUserQuestion</code> tại <code>canUseTool</code>. Hiển thị câu hỏi + inline keyboard option-per-button trên Telegram, suspend handler, đợi user tap nút (hoặc reply text cho "Other"), rồi trả về <code>{ behavior: 'allow', updatedInput: { questions, answers } }</code> theo schema chính thức <code>AskUserQuestionInput.answers</code> (Context7 verified, SDK <code>sdk-tools.d.ts:2137-2139</code>).</p>
+  <p><strong>Không cần MCP server riêng</strong>, không cần <code>inputAlias</code>. Cơ chế <code>updatedInput.answers</code> đã là path chính thức của SDK. Toàn bộ thay đổi nằm trong process bridge, không phá compatibility với policy/broker hiện có cho các tool khác.</p>
+</div>
+
+<!-- ============================================================== -->
+<h2>Changelog</h2>
+<table>
+  <thead><tr><th>Date</th><th>Section</th><th>Note</th></tr></thead>
+  <tbody>
+    <tr><td>2026-05-31</td><td>All</td><td>Spec khởi tạo. Root cause + fix mechanism đã được senior review (Opus) xác nhận với refinement: SDK forward call đi backend chứ không exec local; cơ chế <code>updatedInput.answers</code> được Context7 + SDK <code>sdk-tools.d.ts</code> chứng thực.</td></tr>
+    <tr><td>2026-05-31</td><td>Requirements · R7</td><td>User chốt design <strong>Option A</strong> (bypass cứng PolicyEngine + ApprovalBroker trong code) sau khi loại trừ B (2-tap redundant) và C (declarative qua YAML). Lý do: 1-tap nhanh, không phụ thuộc default YAML, audit log vẫn giữ qua <code>store.logTool</code> với decision <code>user_answered:&lt;summary&gt;</code> (xem D6).</td></tr>
+    <tr><td>2026-05-31</td><td>Requirements</td><td><strong>APPROVED</strong> by user (agent prompt, "Ok nhé"). Thêm R11 yêu cầu module generic để các adapter khác (Codex/Kiro/future) reuse được nếu protocol có tool tương tự. Q5 resolved: Codex protocol đã verified không có equivalent (chỉ <code>item/permissions/requestApproval</code>); Kiro cần verify trong Design phase (T0).</td></tr>
+    <tr><td>2026-05-31</td><td>Design</td><td>User delegated decisions ("Tự quyết nhé, approve"). <strong>T0 done</strong>: Kiro <code>KiroHookPayload</code> schema (<code>util/kiro-hook-server.ts:27-33</code>) chỉ có <code>tool_name</code> + <code>tool_input</code> (binary gate), KHÔNG có equivalent — N/A như Codex. <strong>Q1–Q4 resolved</strong> (xem §Open Questions). <strong>Design APPROVED</strong>. Bắt đầu Tasks DAG implement.</td></tr>
+    <tr><td>2026-06-01</td><td>Tasks · T1–T11</td><td><strong>Implemented</strong> qua sub-agent DAG (Opus). 4 file mới: <code>src/approval/ask-broker.ts</code> (279 LOC), <code>src/bot/auto-switch.ts</code> (150 LOC), <code>src/bot/ask-prompter.ts</code> (462 LOC), tests. Modified <code>claude.ts</code>, <code>router.ts</code>, <code>commands/index.ts</code>, <code>index.ts</code>. <strong>tsc clean</strong>, <strong>vitest 991 pass / 6 skip / 0 fail</strong>.</td></tr>
+    <tr><td>2026-06-01</td><td>Reviewer Log · Pass 1</td><td>Senior review (Opus 4.8) APPROVED. 3 findings (F1 [P1] spread original input giữ <code>annotations</code>/<code>preview</code>; F2 [P1] clear keyboard với <code>{inline_keyboard: []}</code> không phải <code>undefined</code>; F3 [P2] race-window: seed UI state trước await auto-switch) — tự patch xong. Pass 2 re-review clean. Tech freshness: SDK 0.3.145 + grammy latest, không deprecated.</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================== -->
+<h2>Context</h2>
+<p>Telecode là daemon bắc cầu Telegram ↔ Claude Agent SDK (kèm Codex / Kiro adapter). Mỗi session trong <code>src/agents/claude.ts</code> chạy <code>query()</code> với một <code>canUseTool</code> callback duy nhất — đây là policy gate cho mọi tool call.</p>
+
+<p>Mô hình permission hiện tại:</p>
+<ol>
+  <li><code>policy.decide(toolName, input)</code> tra YAML allow/deny (file path/command glob).</li>
+  <li>Nếu rule là <code>'allow'</code> hoặc <code>'deny'</code> → trả luôn.</li>
+  <li>Còn lại (<code>'ask'</code>) → <code>ApprovalBroker.ask()</code> hiện 4 nút trên Telegram: <em>Allow once · Allow always · Forever · Deny</em>.</li>
+</ol>
+
+<p>Hệ quả lên <code>AskUserQuestion</code>: tool này không được khai báo trong <code>policy.yaml</code> → mặc định <code>'ask'</code> → broker chỉ hỏi quyền chạy tool, KHÔNG bao giờ surface câu hỏi nội dung mà Claude muốn user trả lời. User tap "Allow once" → <code>canUseTool</code> trả <code>{ behavior: 'allow', updatedInput: input }</code> giữ nguyên input, SDK forward call lên backend, không có nguồn answer nào → tool_result rỗng → Claude tiếp tục bằng giả định.</p>
+
+<p>Spec tiền nhiệm <code>telegram-message-chunking-fix.html</code> đã sửa <em>render</em> (câu hỏi hiện đầy đủ qua <code>sendChunked</code>) nhưng explicit out-of-scope phần routing answer (<em>"surfacing blocking asks regardless of mode is a separate feature decision. Recommend a follow-up spec."</em>). Đây chính là follow-up spec đó.</p>
+
+<h4>Root cause table</h4>
+<table>
+  <thead><tr><th>File</th><th>Vị trí</th><th>Quan sát</th></tr></thead>
+  <tbody>
+    <tr><td><code>src/agents/claude.ts</code></td><td><code>canUseTool</code> (≈46-105)</td><td>Không phân biệt <code>AskUserQuestion</code>; mọi tool đều đi PolicyEngine → broker. <strong>Căn nguyên (a).</strong></td></tr>
+    <tr><td><code>src/approval/broker.ts</code></td><td><code>ApprovalDecision</code> (≈4)</td><td>Decision chỉ 4 giá trị <code>allow_once|allow_always|deny|timeout</code> — không có chỗ chứa câu trả lời tự do.</td></tr>
+    <tr><td><code>src/bot/keyboards.ts</code></td><td><code>approvalKeyboard</code> (≈26-41)</td><td>Render đúng 3-4 nút quyền tool, không phải option của câu hỏi. <strong>Căn nguyên (b).</strong></td></tr>
+    <tr><td><code>src/bot/tool-render.ts</code></td><td>338-340</td><td>Comment thừa nhận: <em>"Full inline-keyboard answer routing is a separate feature."</em></td></tr>
+    <tr><td><code>src/bot/router.ts</code></td><td>1338-1340</td><td>Comment thừa nhận: <em>"AgentEvent has no question variant today — agent questions surface through the approval mechanism."</em></td></tr>
+    <tr><td><code>src/bot/commands/index.ts</code></td><td><code>bot.on('message:text')</code> (≈2959-2963)</td><td>Reply text bị forward thẳng làm prompt mới qua <code>dispatchPromptToActiveSession</code>, không có correlation với pending question. <strong>Căn nguyên (c).</strong></td></tr>
+    <tr><td>SDK <code>sdk-tools.d.ts</code></td><td>2137-2139</td><td><code>AskUserQuestionInput.answers?: { [k: string]: string }</code> — schema chính thức để inject câu trả lời.</td></tr>
+  </tbody>
+</table>
+
+<h4>Senior review verdict</h4>
+<p>Pass 0 (pre-spec, Opus): <strong>CONFIRMED</strong>. Refinement: SDK 0.3.145 không exec <code>AskUserQuestion</code> client-side — forward về backend (<code>assistant.mjs</code> 0 match, <code>sdk.mjs</code> chỉ có <code>previewFormat</code> env passthrough). Backend không có nguồn answer → trả tool_result rỗng. Cơ chế đúng để inject câu trả lời là <code>updatedInput.answers</code> tại <code>canUseTool</code>, đã được Context7 docs (<code>permissions.md</code>) + SDK type definitions xác nhận.</p>
+
+<!-- ============================================================== -->
+<h2>Requirements</h2>
+<p class="section-sub">Approval gate: ngoài tài liệu (portal hoặc agent prompt).</p>
+<ul class="checklist">
+  <li class="done"><strong>R1 — User thực sự được hỏi.</strong> Khi Claude gọi <code>AskUserQuestion</code>, Telegram hiển thị từng câu hỏi + nút bấm cho từng option. User tap nút = chọn option đó.</li>
+  <li class="done"><strong>R2 — Câu trả lời quay về Claude đúng schema.</strong> Sau khi user trả lời xong tất cả câu hỏi trong batch (SDK cho phép 1–4), Telecode return <code>{ behavior: 'allow', updatedInput: { questions, answers } }</code> với <code>answers</code> là record <code>question text → label</code> đúng schema <code>AskUserQuestionInput.answers</code>.</li>
+  <li class="done"><strong>R3 — Hỗ trợ multi-select.</strong> Question có <code>multiSelect: true</code> → keyboard toggle nhiều nút, có nút <em>"✅ Done"</em> để confirm. Answer trả về dạng comma-separated theo convention SDK.</li>
+  <li class="done"><strong>R4 — Hỗ trợ free-text ("Other").</strong> Nếu user muốn trả lời ngoài options: nút <em>"✏️ Other"</em> → bot reply "Trả lời tự do cho câu: …" + đợi text reply (dùng <code>force_reply</code>). Free-text dùng làm answer label.</li>
+  <li class="done"><strong>R5 — Multi-question batch.</strong> Một <code>AskUserQuestion</code> có thể chứa 1–4 câu. Phải trả lời lần lượt từng câu trước khi resolve toàn batch. UI cho user biết "Câu N/Total".</li>
+  <li class="done"><strong>R6 — Timeout an toàn.</strong> Nếu user không trả lời trong N phút (config, default 10 phút), <code>canUseTool</code> trả <code>{ behavior: 'deny', message: 'user did not answer within timeout' }</code> để Claude biết và dừng thay vì đoán bừa. Telegram báo "⌛ Timeout".</li>
+  <li class="done"><strong>R7 — Không loop qua PolicyEngine/ApprovalBroker.</strong> <code>AskUserQuestion</code> KHÔNG còn nhả 4-nút Allow/Deny — vì việc "hỏi user" là chính nó. Special-case sớm trong <code>canUseTool</code>.</li>
+  <li class="done"><strong>R8 — Không regression.</strong> Tool khác (Read/Edit/Bash/...) giữ nguyên đường PolicyEngine + ApprovalBroker. Test cũ pass 100%. Spec render hiện tại (<code>renderAskUserQuestion</code>, <code>sendChunked</code> dispatch) vẫn được tái sử dụng cho phần "show question text", chỉ thêm <code>reply_markup</code>.</li>
+  <li class="done"><strong>R9 — Session focus an toàn.</strong> Khi <code>AskUserQuestion</code> gọi từ background session, auto-switch active session sang nó (giống pattern <code>broker.ask</code> hiện tại) — user không bị mất context.</li>
+  <li class="done"><strong>R10 — Concurrency.</strong> Hai session khác nhau cùng raise <code>AskUserQuestion</code> phải không trộn lẫn câu trả lời. Pending entry key theo (sessionId, toolUseID).</li>
+  <li class="done"><strong>R11 — Adapter-generic module.</strong> <code>AskQuestionBroker</code> + <code>AskPrompter</code> phải tách khỏi <code>claude.ts</code>-specific code. Nếu sau này adapter khác (Codex, Kiro, hoặc adapter mới) phát hiện ra tool/protocol-message yêu cầu user trả lời từ option set → cần reuse được module này chỉ bằng cách inject thêm 1 wiring point ở adapter đó. Cụ thể, Claude adapter wire trong <code>canUseTool</code>; Codex (nếu protocol bổ sung) wire trong message dispatch; Kiro (nếu CLI hỗ trợ) wire trong preToolUse hook. Spec scope hiện chỉ implement cho Claude (vì chỉ Claude SDK 0.3.145 có tool <code>AskUserQuestion</code>); Codex/Kiro out-of-scope code path nhưng module API design phải accommodate.</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Design</h2>
+<p class="section-sub">Approval gate: ngoài tài liệu. Verify Context7 đã chốt schema; chi tiết được điền song song khi implement (rule §2).</p>
+
+<h3>D1 — Special-case <code>AskUserQuestion</code> trong <code>canUseTool</code></h3>
+<p>Tại <code>src/agents/claude.ts:46</code>, thêm branch sớm:</p>
+<pre><code>const canUseTool: CanUseTool = async (toolName, input, options) =&gt; {
+  if (toolName === 'AskUserQuestion') {
+    return await askBroker.askQuestion({
+      sessionId: start.sessionId,
+      chatId: start.chatId,
+      sessionLabel: start.sessionLabel,
+      toolUseID: options?.toolUseID ?? randomUUID(), // correlation key
+      input: input as AskUserQuestionInput,
+    });
+  }
+  // ... existing PolicyEngine + ApprovalBroker path
+};</code></pre>
+<p><code>askBroker.askQuestion(...)</code> trả về <code>PermissionResult</code> đúng shape SDK: <code>{ behavior: 'allow', updatedInput: { questions, answers } }</code> hoặc <code>{ behavior: 'deny', message }</code> khi timeout.</p>
+
+<h3>D2 — <code>AskQuestionBroker</code> (module mới, <code>src/approval/ask-broker.ts</code>)</h3>
+<p>Tách module riêng (không nhét vào <code>ApprovalBroker</code>) vì semantic khác: trả về answer record, không phải allow/deny scalar.</p>
+<ul>
+  <li>API: <code>askQuestion(req): Promise&lt;PermissionResult&gt;</code> — suspend Promise đến khi <code>resolveAnswer(toolUseID, answers)</code> hoặc <code>cancelAnswer(toolUseID)</code> hoặc timeout.</li>
+  <li>State: <code>Map&lt;toolUseID, PendingAsk&gt;</code> chứa <code>{ req, resolve, timer, answers: Partial&lt;Record&lt;string, string|string[]&gt;&gt;, currentQuestionIdx, anchorMessageIds[] }</code>.</li>
+  <li>Prompter attach pattern giống <code>ApprovalBroker</code>: <code>attach(p: AskPrompter)</code> với <code>p.prompt(req) / p.notifyTimeout(req) / p.editAnswered(req, q, answer)</code>.</li>
+  <li>Timeout: <code>settings.askTimeoutMs</code>, default 10 phút. Khi timeout: <code>resolve({ behavior: 'deny', message: 'user did not answer within timeout' })</code>, prompter edit tin nhắn câu hỏi thành "⌛ Timeout — Claude sẽ tiếp tục mà không có câu trả lời".</li>
+</ul>
+
+<h3>D3 — Telegram UI: inline keyboard + multi-question state machine</h3>
+<p>Tái dụng <code>renderAskUserQuestion</code> hiện có để compose body text (đã chunk-safe sau v1.3). Bổ sung <code>reply_markup</code>:</p>
+<ul>
+  <li><strong>Single-select</strong>: mỗi option = 1 nút riêng dòng (option label ngắn ≤24 chars Telegram), <code>callback_data = ask:pick:&lt;toolUseID&gt;:&lt;qIdx&gt;:&lt;oIdx&gt;</code>. Thêm nút <em>"✏️ Other"</em> (<code>ask:other:&lt;toolUseID&gt;:&lt;qIdx&gt;</code>) và <em>"✖ Cancel"</em> (<code>ask:cancel:&lt;toolUseID&gt;</code>).</li>
+  <li><strong>Multi-select</strong>: nút có prefix <code>☐</code>/<code>☑</code> phản ánh state. Tap = toggle (edit message giữ keyboard). Thêm nút <em>"✅ Done"</em> (<code>ask:done:&lt;toolUseID&gt;:&lt;qIdx&gt;</code>) để confirm.</li>
+  <li><strong>Multi-question</strong>: sau khi câu N được trả lời → edit tin nhắn câu N thành "✓ <em>question</em> → <em>answer</em>" (read-only, gỡ keyboard) → render câu N+1 với keyboard mới. Header câu hiện tại có badge "Câu 2/4".</li>
+  <li>Khi tất cả N câu xong → <code>resolveAnswer(toolUseID, answers)</code> → <code>canUseTool</code> trả về SDK.</li>
+</ul>
+
+<h3>D4 — Callback router wire</h3>
+<p>Đăng ký 4 namespace mới trong <code>CallbackRouter</code> (đường convention <code>ns:action:payload</code>, <code>src/bot/callback-router.ts</code>): <code>ask:pick</code>, <code>ask:other</code>, <code>ask:done</code>, <code>ask:cancel</code>. Handler giải payload → lookup pending <code>toolUseID</code> trong <code>AskQuestionBroker</code> → mutate state hoặc resolve. <code>answerCallbackQuery</code> với feedback ngắn ("Đã chọn: X").</p>
+
+<h3>D5 — "Other" / free-text flow</h3>
+<p>User tap "✏️ Other" → bot <code>sendMessage</code> "Trả lời câu '<em>question</em>' (reply tin này):" với <code>reply_markup: { force_reply: true, selective: true }</code>. Lưu pending <code>(chatId, replyToMessageId) → (toolUseID, qIdx)</code> vào <code>askBroker.pendingFreeText</code>. Trong <code>bot.on('message:text')</code> handler, BEFORE call <code>dispatchPromptToActiveSession</code>, check nếu <code>ctx.message.reply_to_message?.message_id</code> match pending free-text → consume nó làm answer thay vì forward prompt.</p>
+
+<h3>D6 — Tránh PolicyEngine/ApprovalBroker cho AskUserQuestion (R7)</h3>
+<p>Vì branch ở D1 return sớm, không bao giờ đến <code>policy.decide(...)</code> hay <code>broker.ask(...)</code> cho tool này. Side effect:</p>
+<ul>
+  <li>Log policy/audit: thêm <code>store.logTool({ tool_name: 'AskUserQuestion', decision: 'user_answered:&lt;summary&gt;' })</code> trong askBroker resolve để giữ audit trail.</li>
+  <li>Không cần update <code>policy.example.yaml</code>.</li>
+</ul>
+
+<h3>D7 — Background session auto-switch (R9)</h3>
+<p>Tận dụng <code>createApprovalPrompter</code>'s auto-switch helper (<code>runAutoSwitch</code> trong <code>router.ts</code>). Refactor nhẹ: extract <code>runAutoSwitchForChat(chatId, sessionId)</code> ra shared util để AskPrompter cũng gọi được. Không thay đổi logic, chỉ tách re-use.</p>
+
+<h3>D8 — Concurrency (R10)</h3>
+<p><code>toolUseID</code> SDK cung cấp là unique per call (UUID). Pending Map key bằng nó → 2 session raise đồng thời cũng không đụng nhau. Callback_data đã embed <code>toolUseID</code>. Free-text reply lookup theo <code>replyToMessageId</code> → cũng unique.</p>
+
+<h3>Tech freshness (Context7 verified, 2026-05-31)</h3>
+<ul>
+  <li><code>@anthropic-ai/claude-agent-sdk@0.3.145</code> — version đang dùng. <strong>API <code>canUseTool</code> + <code>updatedInput.answers</code> là path chính thức, không deprecated</strong> (Context7 <code>permissions.md</code> + đọc trực tiếp <code>sdk-tools.d.ts</code>).</li>
+  <li>Không cần thêm dependency. Không cần MCP server riêng. <code>options.inputAlias</code> KHÔNG cần — schema đơn giản hơn nhiều.</li>
+  <li>grammY (Telegram) <code>InlineKeyboard</code> + <code>callback_query:data</code>: API stable, đã dùng khắp project.</li>
+</ul>
+
+<h3>UI mockup</h3>
+<div class="compare">
+  <div class="col before">
+    <h5>Trước (current bug)</h5>
+    <div class="mock">[A] 🔧 AskUserQuestion · [Database] Which DB do we use?
+  1. PostgreSQL
+  2. MySQL
+  3. SQLite
+
+🤖 broker prompt
+[Allow once] [Allow always]
+[Forever]    [Deny]
+↓ user tap "Allow once"
+↓ SDK forward call → backend → answers={}
+🤖 "Tôi sẽ chọn PostgreSQL làm default..."  ← Claude đoán bừa</div>
+  </div>
+  <div class="col after">
+    <h5>Sau (fix)</h5>
+    <div class="mock">[A] 🔧 AskUserQuestion · Câu 1/1
+[Database] Which DB do we use?
+• PostgreSQL — battle-tested
+• MySQL — familiar to team
+• SQLite — embedded only
+
+[ PostgreSQL ]
+[ MySQL ]
+[ SQLite ]
+[ ✏️ Other ]  [ ✖ Cancel ]
+↓ user tap "PostgreSQL"
+✓ Which DB do we use? → PostgreSQL
+↓ canUseTool returns
+   updatedInput.answers = { "Which DB do we use?": "PostgreSQL" }
+🤖 "Đã chọn PostgreSQL. Cài đặt..."</div>
+  </div>
+</div>
+
+<!-- ============================================================== -->
+<h2>Tasks</h2>
+<p class="section-sub">Approval gate: ngoài tài liệu. DAG dưới đây gồm các sub-agent có thể chạy song song khi implement.</p>
+<table>
+  <thead><tr><th>ID</th><th>Task</th><th>File chính</th><th>Phụ thuộc</th></tr></thead>
+  <tbody>
+    <tr><td>T0</td><td>Verify Kiro CLI: kiểm tra preToolUse hook payload có thể chứa tool tương đương <code>AskUserQuestion</code> không (đọc Kiro docs + invocation logs). Báo cáo trong §Design. Nếu CÓ → thêm wiring task; nếu KHÔNG → confirm Q5 fully resolved.</td><td><code>src/agents/kiro.ts</code> (đọc), Kiro docs</td><td>—</td></tr>
+    <tr><td>T1</td><td>Tạo module <code>AskQuestionBroker</code> + types (<code>PendingAsk</code>, <code>AskPrompter</code>, <code>AskRequest</code>); pure logic + timer; unit test (resolve / cancel / timeout / multi-question state machine). <strong>API generic per R11</strong> — không reference tới Claude SDK types; nhận generic <code>QuestionsInput</code> shape (questions + options + multiSelect) và trả về generic <code>AnswerRecord</code></td><td><code>src/approval/ask-broker.ts</code>, <code>tests/ask-broker.test.ts</code></td><td>—</td></tr>
+    <tr><td>T2</td><td>Special-case <code>AskUserQuestion</code> trong <code>canUseTool</code>; wire <code>toolUseID</code> từ <code>options</code>; bypass PolicyEngine/ApprovalBroker; audit log qua <code>store.logTool</code></td><td><code>src/agents/claude.ts</code></td><td>T1</td></tr>
+    <tr><td>T3</td><td>Tách <code>runAutoSwitchForChat</code> ra shared util để AskPrompter dùng được</td><td><code>src/bot/router.ts</code>, <code>src/bot/auto-switch.ts</code> (mới)</td><td>—</td></tr>
+    <tr><td>T4</td><td>Build <code>AskPrompter</code>: render câu hỏi + keyboard (single/multi/Other/Cancel), edit-in-place khi advance câu, timeout edit, free-text force_reply flow</td><td><code>src/bot/ask-prompter.ts</code> (mới), tận dụng <code>renderAskUserQuestion</code>, <code>sendChunked</code></td><td>T1, T3</td></tr>
+    <tr><td>T5</td><td>Đăng ký callback router cho <code>ask:pick</code>, <code>ask:other</code>, <code>ask:done</code>, <code>ask:cancel</code>; ack <code>answerCallbackQuery</code>; error boundary</td><td><code>src/bot/commands/index.ts</code> hoặc <code>src/bot/router.ts</code></td><td>T1, T4</td></tr>
+    <tr><td>T6</td><td>Intercept free-text reply (<code>reply_to_message</code> match pending) trong <code>bot.on('message:text')</code> trước khi gọi <code>dispatchPromptToActiveSession</code></td><td><code>src/bot/commands/index.ts</code> (≈2959)</td><td>T1, T4</td></tr>
+    <tr><td>T7</td><td>Wire <code>askBroker.attach(prompter)</code> trong daemon bootstrap (giống pattern <code>broker.attach</code>)</td><td><code>src/daemon/*</code>, <code>src/bot/router.ts</code></td><td>T1, T4</td></tr>
+    <tr><td>T8</td><td>Config: <code>settings.askTimeoutMs</code> default 600_000; doc trong <code>config.example.yaml</code></td><td><code>src/config.ts</code>, <code>config.example.yaml</code></td><td>—</td></tr>
+    <tr><td>T9</td><td>Update <code>renderAskUserQuestion</code> nếu cần tách header "Câu N/Total" + giữ render hiện tại cho body</td><td><code>src/bot/tool-render.ts</code></td><td>—</td></tr>
+    <tr><td>T10</td><td>Tests integration: stub <code>canUseTool</code> input cho từng case (single, multi-select, multi-question, Other, cancel, timeout). Đảm bảo <code>updatedInput.answers</code> shape đúng SDK schema</td><td><code>tests/ask-broker.test.ts</code>, <code>tests/ask-prompter.test.ts</code> (mới)</td><td>T1, T4</td></tr>
+    <tr><td>T11</td><td>Regression: chạy toàn bộ test cũ (775+) đảm bảo Read/Edit/Bash/policy/broker không thay đổi behavior</td><td><code>tests/</code></td><td>T2–T10</td></tr>
+    <tr><td>T12</td><td>Update spec §Design (chi tiết phát sinh khi code), §Verification (kết quả), §Reviewer Log (Pass 1 senior review)</td><td>spec HTML này</td><td>T1–T11</td></tr>
+  </tbody>
+</table>
+
+<p>DAG: T1 và T3 song song; T2 chờ T1; T4 chờ T1+T3; T5–T7 chờ T1+T4 (song song với nhau); T8, T9 độc lập song song; T10 chờ T1+T4; T11 chờ T2–T10.</p>
+
+<!-- ============================================================== -->
+<h2>Verification</h2>
+<p class="section-sub">Pass-criteria khi implement xong. Check từng item trong Consolidate phase (rule §2.1).</p>
+<ul class="checklist">
+  <li class="done">Unit: <code>AskQuestionBroker</code> — resolve, cancel, timeout, multi-question advance, multi-select toggle, free-text consume.</li>
+  <li class="done">Unit: prompter render đúng keyboard cho single vs multi-select; "Câu N/Total" header chính xác.</li>
+  <li class="done">Integration: stub session → emit <code>tool_use</code> <code>AskUserQuestion</code> → simulate user tap option → assert <code>canUseTool</code> return shape khớp <code>{ behavior: 'allow', updatedInput: { questions, answers: {...} } }</code>.</li>
+  <li class="done">Integration: multi-question batch (3 câu, mỗi câu khác multiSelect) → trả lời tuần tự → answers record có 3 keys đúng question text.</li>
+  <li class="done">Integration: timeout → <code>{ behavior: 'deny', message: 'user did not answer within timeout' }</code>.</li>
+  <li class="done">Integration: cancel → cùng kết quả deny với message <code>'user cancelled'</code>.</li>
+  <li class="done">Integration: free-text "Other" reply → answer = text user gõ.</li>
+  <li class="done">Regression: Read/Edit/Bash gọi qua broker truyền thống vẫn allow/deny đúng; <code>policy.example.yaml</code> không cần thay đổi.</li>
+  <li class="done">Regression: 775+ test hiện tại pass.</li>
+  <li class="done">Typecheck: <code>tsc --noEmit</code> clean.</li>
+  <li class="done">E2E thủ công: chat thật với Claude, prompt yêu cầu Claude dùng <code>AskUserQuestion</code> (ví dụ <em>"Hỏi tôi 2 câu rồi mới làm"</em>), verify câu hỏi hiện với nút + tap trả lời → Claude tiếp tục dùng đúng câu trả lời.</li>
+  <li class="done">Security scan trước commit (rule §6).</li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Open Questions</h2>
+<ol>
+  <li><strong>Q1 — Background session: auto-switch có gây yank focus nếu user đang ở giữa wizard?</strong> <span class="badge badge-success">RESOLVED 2026-05-31</span> Reuse pattern <code>runAutoSwitch</code> của <code>createApprovalPrompter</code>. Tách thành <code>src/bot/auto-switch.ts</code> shared util (T3) với cùng wizard guard signature. AskPrompter import và gọi giống ApprovalPrompter — guard logic không thay đổi, chỉ extract.</li>
+  <li><strong>Q2 — Multi-select limit?</strong> <span class="badge badge-success">RESOLVED 2026-05-31</span> Yêu cầu ≥1 selection. Nút "✅ Done" disabled (hoặc reject với toast "Chọn ít nhất 1 option") khi chưa có gì được toggle. Nếu user muốn skip → tap "✖ Cancel" → deny. Lý do: empty answers cho multi-select tạo ambiguity (Claude không biết là "không có" hay "chưa trả lời").</li>
+  <li><strong>Q3 — Timeout default?</strong> <span class="badge badge-success">RESOLVED 2026-05-31</span> Reuse <code>config.daemon.approval_timeout_sec</code> (default 300s/5 phút, đã có trong <code>config.example.yaml:7</code>). Không thêm config knob mới — UX timeout của AskUserQuestion phải nhất quán với approval gate.</li>
+  <li><strong>Q4 — Cancel có nên dùng <code>behavior: 'deny'</code> hay return empty <code>answers</code>?</strong> <span class="badge badge-success">RESOLVED 2026-05-31</span> Deny với <code>message: 'user cancelled'</code> (hoặc <code>'user did not answer within timeout'</code> cho timeout path). Lý do: user chủ động cancel = muốn Claude DỪNG, không phải đoán bừa. Claude đọc denial reason và xử lý gracefully.</li>
+  <li><strong>Q5 — Codex/Kiro adapter có cần tương đương không?</strong> <span class="badge badge-success">RESOLVED 2026-05-31</span> Codex protocol verified KHÔNG có tool <code>AskUserQuestion</code> equivalent (chỉ <code>item/permissions/requestApproval</code> tại <code>codex.ts:382-383, 499-510</code>, đã wire vào <code>ApprovalBroker</code>). Kiro verified: <code>KiroHookPayload</code> (<code>util/kiro-hook-server.ts:27-33</code>) chỉ có <code>tool_name</code> + <code>tool_input</code> — binary gate, không có option-picking protocol. → Cả 2 adapter N/A code path. Per R11, module <code>AskQuestionBroker</code> tách generic; Claude là adapter duy nhất implement code path trong spec này.</li>
+</ol>
+
+<!-- ============================================================== -->
+<h2>References</h2>
+<ul>
+  <li>Spec tiền nhiệm: <code>docs/specs/telegram-message-chunking-fix.html</code> (sửa render, flag answer routing out-of-scope).</li>
+  <li>SDK type: <code>node_modules/@anthropic-ai/claude-agent-sdk@0.3.145/sdk-tools.d.ts</code> — <code>AskUserQuestionInput</code> (line 588), <code>answers</code> field (line 2137-2139), <code>AskUserQuestionOutput</code> (line 2624).</li>
+  <li>SDK type: <code>.../sdk.d.ts</code> — <code>CanUseTool</code> (line 223-227, <code>toolUseID</code> argument), permission gate (line 1255-1258).</li>
+  <li>Context7 docs: <code>/nothflare/claude-agent-sdk-docs</code> — <em>"Handling the AskUserQuestion Tool"</em> guide.</li>
+  <li>Code touch points:
+    <ul>
+      <li><code>src/agents/claude.ts:46-105</code> — <code>canUseTool</code> registration.</li>
+      <li><code>src/approval/broker.ts</code> — pattern mẫu cho new <code>AskQuestionBroker</code>.</li>
+      <li><code>src/bot/router.ts:1322-1430</code> — <code>createApprovalPrompter</code> mẫu (auto-switch).</li>
+      <li><code>src/bot/callback-router.ts:1-90</code> — <code>ns:action:payload</code> convention.</li>
+      <li><code>src/bot/tool-render.ts:388-437</code> — <code>renderAskUserQuestion</code> hiện tại (tái dụng).</li>
+      <li><code>src/bot/commands/index.ts:2355-2364</code> — dispatch hiện tại (gửi <code>sendChunked</code>, thêm <code>reply_markup</code>).</li>
+      <li><code>src/bot/commands/index.ts:2959-2963</code> — text reply intercept point.</li>
+    </ul>
+  </li>
+</ul>
+
+<!-- ============================================================== -->
+<h2>Reviewer Log</h2>
+<p class="section-sub">Append-only. Mỗi pass review thêm <code>Pass N — YYYY-MM-DD</code> h3, không overwrite.</p>
+
+<h3>Pass 1 — 2026-06-01 (post-implementation senior review, Opus 4.8)</h3>
+<p><strong>Scope</strong>: T1–T11 implementation + scope completeness check (§5.1) + tech freshness check (§5.2).</p>
+<p><strong>Verdict</strong>: <span class="badge badge-success">APPROVED</span> — 11/11 Requirements ✅, 12/12 Tasks ✅, 0 [P0]–[P3] findings còn lại sau patch.</p>
+<h4>Scope checklist</h4>
+<ul>
+  <li>R1 (user-pick UI) ✅ — <code>ask-prompter.ts:223-244</code> render keyboard 1 nút/option.</li>
+  <li>R2 (answer shape SDK) ✅ — <code>claude.ts:129-141</code> trả <code>{behavior:'allow', updatedInput:{...originalInput, answers}}</code> sau patch F1.</li>
+  <li>R3 (multi-select toggle + Done) ✅ — <code>ask-prompter.ts:292-326</code>, broker comma-join.</li>
+  <li>R4 (free-text "Other" via force_reply) ✅ — <code>router.ts:1293-1316</code>, intercept tại <code>commands/index.ts:2979-2986</code>.</li>
+  <li>R5 (multi-question "Câu N/Total") ✅ — counter <code>ask-prompter.ts:78</code>.</li>
+  <li>R6 (timeout deny) ✅ — <code>ask-broker.ts:162-177</code>.</li>
+  <li>R7 (bypass PolicyEngine/ApprovalBroker) ✅ — <code>claude.ts:67</code> early branch; test asserts no <code>policy.decide</code> call.</li>
+  <li>R8 (no regression) ✅ — PolicyEngine path untouched, test pass.</li>
+  <li>R9 (auto-switch) ✅ — <code>ask-prompter.ts:165-181</code> calls <code>runAutoSwitchForChat</code>.</li>
+  <li>R10 (concurrency by toolUseID) ✅ — pending Map key bằng <code>toolUseID</code>, test concurrent isolation.</li>
+  <li>R11 (adapter-generic) ✅ — <code>ask-broker.ts:5-25</code> không import SDK types.</li>
+</ul>
+<h4>Findings + patches</h4>
+<ul>
+  <li><strong>[P1] F1 — Lost SDK fields</strong>: <code>updatedInput</code> rebuild thiếu <code>annotations</code>, <code>metadata</code>, <code>options[*].preview</code>, <code>options[*].description</code> mặc dù Context7 hướng dẫn pass through original questions. <strong>Patch</strong>: <code>updatedInput: { ...originalInput, answers }</code> tại <code>claude.ts:126-128</code>.</li>
+  <li><strong>[P1] F2 — Keyboard không clear</strong>: <code>editPlain(..., { reply_markup: undefined })</code> không clear inline keyboard trên Telegram — Bot API yêu cầu explicit <code>{ inline_keyboard: [] }</code>. Hệ quả: tin nhắn finalized "✓ Q → A" vẫn giữ nút tap được. <strong>Patch</strong>: <code>ask-prompter.ts:209, 263, 410</code> dùng <code>{ inline_keyboard: [] }</code>; tests update assertions.</li>
+  <li><strong>[P2] F3 — Race window</strong>: UI state seed sau khi await <code>runAutoSwitchForChat</code> → fast user tap trong window đó nhận "expired". <strong>Patch</strong>: seed BEFORE await.</li>
+</ul>
+<h4>Tech freshness</h4>
+<ul>
+  <li><code>@anthropic-ai/claude-agent-sdk@0.3.145</code> — <strong>OK</strong>. <code>canUseTool</code> + <code>updatedInput.answers</code> + <code>toolUseID</code> arg name confirmed Context7 + <code>sdk-tools.d.ts:2137-2139</code>. Không deprecated.</li>
+  <li><code>grammy</code> — <strong>OK</strong>. <code>InlineKeyboard</code>, <code>callback_query:data</code>, <code>force_reply</code>, <code>editMessageReplyMarkup</code> không deprecated.</li>
+</ul>
+<h4>Test result sau patches</h4>
+<p><code>tsc --noEmit</code> clean. <code>vitest run</code>: 84 test files passed (1 skipped), 991 tests passed (6 skipped, 0 failed). 45/45 test trong target set của changed files pass.</p>
+
+<h3>Pass 0 — 2026-05-31 (pre-spec senior review, Opus 4.8)</h3>
+<p><strong>Scope</strong>: verify root cause + fix mechanism trước khi viết spec (rule §1.1).</p>
+<p><strong>Verdict</strong>: <span class="badge badge-success">CONFIRMED</span> với 1 refinement.</p>
+<ul>
+  <li>Step 1 (canUseTool fires cho mọi tool, không exclusion): <span class="badge badge-success">XÁC NHẬN</span>. Evidence <code>src/agents/claude.ts:46-105</code> + SDK <code>sdk.d.ts:1255-1258</code> + <code>policy.example.yaml:1-19</code> (không có entry).</li>
+  <li>Step 2 (SDK forward call → empty answer): <span class="badge badge-warn">XÁC NHẬN + REFINE</span>. SDK 0.3.145 KHÔNG execute <code>AskUserQuestion</code> client-side (assistant.mjs 0 match) — forward về backend. Mechanism đúng: backend nhận answers rỗng → tool_result rỗng.</li>
+  <li>Step 3 (renderer preview-only, không có answer routing): <span class="badge badge-success">XÁC NHẬN</span>. Evidence <code>src/bot/tool-render.ts:334-437</code>, <code>src/bot/commands/index.ts:2355-2364</code> (sendChunked plain), <code>src/bot/router.ts:1338-1340</code> + <code>src/bot/commands/index.ts:2959-2962</code> (text reply forward thẳng, không correlate).</li>
+  <li>Reviewer ban đầu đề xuất MCP server / <code>inputAlias</code>. Context7 docs (<code>permissions.md</code>) + đọc trực tiếp SDK types (<code>sdk-tools.d.ts:2137-2139</code> — <code>answers?: { [k: string]: string }</code>) chứng minh: cơ chế <code>canUseTool</code> + <code>updatedInput.answers</code> là path CHÍNH THỨC, đơn giản hơn nhiều. Spec đã chọn path này (D1).</li>
+</ul>
+<p><strong>Tech freshness</strong>: <code>@anthropic-ai/claude-agent-sdk@0.3.145</code> latest tại thời điểm spec; API stable, không deprecated.</p>
+<p><strong>Action items áp dụng vào spec</strong>: (a) D1 dùng <code>canUseTool</code> + <code>updatedInput.answers</code>, không MCP. (b) D2 tách <code>AskQuestionBroker</code> riêng. (c) D8 dùng <code>toolUseID</code> làm correlation key. (d) R6 timeout fallback dùng <code>behavior: 'deny'</code>. (e) §Open Questions liệt kê 5 điểm chưa chốt.</p>
+
+</div>
+</body>
+</html>

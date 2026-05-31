@@ -46,6 +46,7 @@ function makeAdapter(): ClaudeAdapter {
   };
   const store = { logTool: vi.fn(), updateSession: vi.fn() };
   const broker = { ask: vi.fn() };
+  const askBroker = { askQuestion: vi.fn() };
   return new ClaudeAdapter({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     broker: broker as any,
@@ -54,6 +55,8 @@ function makeAdapter(): ClaudeAdapter {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     store: store as any,
     settingSources: [],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    askBroker: askBroker as any,
   });
 }
 

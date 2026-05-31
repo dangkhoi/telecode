@@ -1,7 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { query, type CanUseTool, type HookCallbackMatcher, type SettingSource } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentAdapter, AgentStartOpts, AgentEvent, AdapterMetadata } from './types.js';
 import type { ApprovalBroker } from '../approval/broker.js';
 import type { PolicyEngine } from '../approval/policy.js';
+import type { AskQuestionBroker, AskQuestion } from '../approval/ask-broker.js';
 import type { SessionStore } from '../session/store.js';
 import { logger } from '../util/logger.js';
 import { normalizeModelForAgent } from './model-normalize.js';
@@ -22,6 +24,13 @@ export interface ClaudeAdapterOpts {
   policy: PolicyEngine;
   store: SessionStore;
   settingSources: SettingSource[];
+  /**
+   * v1.4 — AskUserQuestion routing. When the Claude SDK calls the
+   * `AskUserQuestion` tool, `canUseTool` short-circuits the policy/approval
+   * path and suspends here until the user picks options via the Telegram UI
+   * (or cancels / times out). Wired in `src/index.ts` boot.
+   */
+  askBroker: AskQuestionBroker;
 }
 
 function previewInput(input: unknown, max = 240): string {
@@ -40,10 +49,100 @@ export class ClaudeAdapter implements AgentAdapter {
   constructor(private readonly opts: ClaudeAdapterOpts) {}
 
   async run(start: AgentStartOpts): Promise<void> {
-    const { broker, policy, store } = this.opts;
+    const { broker, policy, store, askBroker } = this.opts;
     const model = normalizeModelForAgent(this.kind, start.model);
 
-    const canUseTool: CanUseTool = async (toolName, input, _options) => {
+    const canUseTool: CanUseTool = async (toolName, input, options) => {
+      // v1.4 — AskUserQuestion routes through the AskQuestionBroker so the
+      // user actually gets to ANSWER (vs. the legacy path which surfaced a
+      // generic Allow/Deny prompt and forwarded empty `answers` to the SDK).
+      //
+      // Per spec R7 (Option A): bypass PolicyEngine + ApprovalBroker
+      // entirely. Audit trail is preserved via `store.logTool` with a
+      // `user_<behavior>:<answer-summary>` decision string.
+      //
+      // Shape returned matches the SDK's `AskUserQuestionInput.answers`
+      // schema (Context7 verified): `{ behavior: 'allow', updatedInput:
+      // { questions, answers: { [questionText]: answerLabel } } }`.
+      if (toolName === 'AskUserQuestion') {
+        // Parse the SDK input into our internal `AskQuestion[]` (UI-only —
+        // used by the prompter to render keyboards). We pass the ORIGINAL
+        // `input.questions` back to the SDK verbatim in `updatedInput` so the
+        // backend sees the full schema (description, preview, annotations,
+        // metadata) without any field loss. Per Context7 docs (permissions
+        // guide): "Pass through original questions".
+        const askInput = input as { questions?: unknown };
+        const questionsRaw = Array.isArray(askInput.questions)
+          ? (askInput.questions as Array<Record<string, unknown>>)
+          : [];
+        const questions: AskQuestion[] = [];
+        for (const qRaw of questionsRaw) {
+          if (!qRaw || typeof qRaw !== 'object') continue;
+          const question = typeof qRaw.question === 'string' ? qRaw.question : '';
+          if (!question) continue;
+          const header = typeof qRaw.header === 'string' ? qRaw.header : undefined;
+          const multiSelect = qRaw.multiSelect === true;
+          const opts: Array<{ label: string; description?: string }> = [];
+          const oRaw = qRaw.options;
+          if (Array.isArray(oRaw)) {
+            for (const opt of oRaw) {
+              if (!opt || typeof opt !== 'object') continue;
+              const rec = opt as Record<string, unknown>;
+              const label = typeof rec.label === 'string' ? rec.label : '';
+              if (!label) continue;
+              const description = typeof rec.description === 'string'
+                ? rec.description
+                : undefined;
+              opts.push(description ? { label, description } : { label });
+            }
+          }
+          questions.push({ question, header, multiSelect, options: opts });
+        }
+        if (questions.length === 0) {
+          store.logTool({
+            session_id: start.sessionId,
+            tool_name: 'AskUserQuestion',
+            input_preview: previewInput(input),
+            decision: 'user_deny:empty questions array',
+            duration_ms: null,
+          });
+          return { behavior: 'deny', message: 'AskUserQuestion: empty questions array' };
+        }
+        const toolUseID = options?.toolUseID ?? randomUUID();
+        const result = await askBroker.askQuestion({
+          toolUseID,
+          sessionId: start.sessionId,
+          chatId: start.chatId,
+          sessionLabel: start.sessionLabel,
+          questions,
+        });
+        const summary = result.behavior === 'allow' && result.answers
+          ? Object.values(result.answers).join(' | ').slice(0, 240)
+          : (result.message ?? 'no answer');
+        store.logTool({
+          session_id: start.sessionId,
+          tool_name: 'AskUserQuestion',
+          input_preview: previewInput(input),
+          decision: `user_${result.behavior}:${summary}`,
+          duration_ms: null,
+        });
+        if (result.behavior === 'allow') {
+          // Spread original input so any optional SDK fields (annotations,
+          // metadata) survive the round-trip; only override `answers`. The
+          // backend tool result handler reads `answers` to build the
+          // assistant-visible tool_result content.
+          const originalInput = input as Record<string, unknown>;
+          return {
+            behavior: 'allow',
+            updatedInput: {
+              ...originalInput,
+              answers: result.answers ?? {},
+            },
+          };
+        }
+        return { behavior: 'deny', message: result.message ?? 'user cancelled' };
+      }
+
       const decision = policy.decide(toolName, input, { projectDir: start.cwd });
       const preview = previewInput(input);
       if (decision.decision === 'allow') {

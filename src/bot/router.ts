@@ -13,6 +13,8 @@ import type { SessionManager } from '../session/manager.js';
 import type { AgentRegistry } from '../agents/registry.js';
 import type { ApprovalBroker, ApprovalRequest } from '../approval/broker.js';
 import { PolicyEngine } from '../approval/policy.js';
+import type { AskQuestionBroker } from '../approval/ask-broker.js';
+import { TelegramAskPrompter } from './ask-prompter.js';
 import { Notifier } from './notifier.js';
 import {
   registerCommands,
@@ -47,7 +49,8 @@ import { logger } from '../util/logger.js';
 import { scrubSecrets } from '../util/scrub.js';
 import { normalizeModelForAgent } from '../agents/model-normalize.js';
 import { suggestionAck } from './suggestions.js';
-import { enterWizard, exitWizard, isWizardActive, deferUntilWizardExits } from './wizard-state.js';
+import { enterWizard, exitWizard, isWizardActive } from './wizard-state.js';
+import { runAutoSwitchForChat } from './auto-switch.js';
 import { DashboardLoop } from './dashboard.js';
 import { tStatic as _routerT } from '../i18n/index.js';
 
@@ -64,6 +67,12 @@ export interface BotDeps {
   store: SessionStore;
   manager: SessionManager;
   broker: ApprovalBroker;
+  /**
+   * v1.4 — AskUserQuestion broker. When Claude SDK calls the
+   * `AskUserQuestion` tool, the canUseTool special-case suspends here until
+   * the user picks options via the Telegram inline keyboard.
+   */
+  askBroker: AskQuestionBroker;
   policy: PolicyEngine;
   /**
    * Adapter registry (plan P1.1). The wizard reads `registry.list()` to
@@ -170,6 +179,22 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
       notifierFor,
     }),
   );
+
+  // v1.4 — Ask prompter (AskUserQuestion routing). Built here so it shares
+  // the same notifier + store + manager + wizard-guard wiring as the
+  // approval prompter. Callbacks (`ask:pick`, `ask:done`, `ask:other`,
+  // `ask:cancel`) registered further below need this instance, as does the
+  // text-reply intercept in `bot.on('message:text')` for free-text answers.
+  const askPrompter = new TelegramAskPrompter({
+    notifierFor,
+    broker: deps.askBroker,
+    autoSwitch: {
+      store: deps.store,
+      manager: deps.manager,
+      notifierFor,
+    },
+  });
+  deps.askBroker.attach(askPrompter);
 
   // ---- @grammyjs/conversations wiring (B3) ----------------------------------
   // Must run BEFORE registerCommands so `ctx.conversation.enter('newSession')`
@@ -309,7 +334,7 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
     await ctx.reply(t(chatId, 'router.help'), { parse_mode: 'Markdown' });
   });
 
-  registerCommands(bot, { ...deps, notifierFor });
+  registerCommands(bot, { ...deps, notifierFor, askPrompter });
 
   // Namespaced callback dispatcher — replaces direct bot.callbackQuery() regex.
   // Backward-compat: existing callback_data strings like `apv:once:<id>` and
@@ -1232,6 +1257,74 @@ export async function startBot(deps: BotDeps): Promise<StartedBot> {
   // unit-tested without a full Bot boot. See SDD §B2.
   registerProjectCallbacks(callbackRouter, { store: deps.store });
 
+  // v1.4 — AskUserQuestion callbacks. Payload format:
+  //   ask:pick:<toolUseID>:<qIdx>:<oIdx>   — single tap an option
+  //   ask:done:<toolUseID>:<qIdx>          — multi-select confirm
+  //   ask:other:<toolUseID>:<qIdx>         — free-text via force_reply
+  //   ask:cancel:<toolUseID>               — abort the ask (deny)
+  //
+  // Each handler defers to the AskPrompter for state mutation and acks via
+  // answerCallbackQuery. The toolUseID is a UUID (36 chars) so the longest
+  // callback_data is ~50 chars, well under Telegram's 64-byte cap.
+  callbackRouter
+    .on('ask', 'pick', async (ctx, payload) => {
+      const parts = payload.split(':');
+      const toolUseID = parts[0] ?? '';
+      const qIdx = parseInt(parts[1] ?? '', 10);
+      const oIdx = parseInt(parts[2] ?? '', 10);
+      if (!toolUseID || !Number.isFinite(qIdx) || !Number.isFinite(oIdx)) {
+        await ctx.answerCallbackQuery({ text: 'bad payload' });
+        return;
+      }
+      const r = await askPrompter.handlePick(toolUseID, qIdx, oIdx);
+      await ctx.answerCallbackQuery({ text: r.toast });
+    })
+    .on('ask', 'done', async (ctx, payload) => {
+      const parts = payload.split(':');
+      const toolUseID = parts[0] ?? '';
+      const qIdx = parseInt(parts[1] ?? '', 10);
+      if (!toolUseID || !Number.isFinite(qIdx)) {
+        await ctx.answerCallbackQuery({ text: 'bad payload' });
+        return;
+      }
+      const r = await askPrompter.handleDone(toolUseID, qIdx);
+      await ctx.answerCallbackQuery({ text: r.toast, show_alert: !r.ok });
+    })
+    .on('ask', 'other', async (ctx, payload) => {
+      const parts = payload.split(':');
+      const toolUseID = parts[0] ?? '';
+      const qIdx = parseInt(parts[1] ?? '', 10);
+      if (!toolUseID || !Number.isFinite(qIdx)) {
+        await ctx.answerCallbackQuery({ text: 'bad payload' });
+        return;
+      }
+      const built = askPrompter.buildFreeTextPrompt(toolUseID, qIdx);
+      if (!built.ok) {
+        await ctx.answerCallbackQuery({ text: built.toast });
+        return;
+      }
+      await ctx.answerCallbackQuery({ text: '✏️ reply tin tiếp theo' });
+      try {
+        const msg = await ctx.reply(built.text, {
+          // grammY's typing for force_reply is precise — selective: true
+          // means only the recipient's reply prompts the keyboard.
+          reply_markup: { force_reply: true, selective: true },
+        });
+        askPrompter.registerFreeTextWaiting(toolUseID, qIdx, msg.message_id);
+      } catch (err) {
+        logger.warn({ err: String(err) }, 'ask:other reply failed');
+      }
+    })
+    .on('ask', 'cancel', async (ctx, payload) => {
+      const toolUseID = payload;
+      if (!toolUseID) {
+        await ctx.answerCallbackQuery({ text: 'bad payload' });
+        return;
+      }
+      const r = await askPrompter.handleCancel(toolUseID);
+      await ctx.answerCallbackQuery({ text: r.toast });
+    });
+
   callbackRouter.attach(bot);
 
   bot.catch((err) => {
@@ -1349,59 +1442,10 @@ export function createApprovalPrompter(deps: ApprovalPrompterDeps): {
   prompt(req: ApprovalRequest): Promise<void>;
   notifyTimeout(req: ApprovalRequest): Promise<void>;
 } {
-  // Default the wizard guard to the singleton — preserves existing behavior
-  // for tests that don't pass it. Tests can inject a fake to skip OS effects.
-  const guard = deps.wizardGuard ?? {
-    isActive: isWizardActive,
-    deferUntilWizardExits,
-  };
-
-  /**
-   * Effective body of auto-switch. Factored so we can either run it inline
-   * OR defer it to the wizard's onExit hook (plan P0.6).
-   *
-   * `expectedActive` is the active-session id we observed at the moment the
-   * decision to switch was made. When the switch runs deferred, we compare
-   * against the current value — if it changed (e.g. user manually flipped
-   * to a different session while the wizard was open) we abort, respecting
-   * their explicit choice.
-   */
-  const runAutoSwitch = async (
-    req: ApprovalRequest,
-    expectedActive: string | null,
-  ): Promise<void> => {
-    const n = deps.notifierFor(req.chatId);
-    // Re-check at run-time — by the time a deferred switch fires, state may
-    // have changed.
-    const curActive = deps.store.getChatState(req.chatId).active_session_id;
-    if (curActive === req.sessionId) return;
-    // User manually switched mid-defer; don't override.
-    if (curActive !== expectedActive) {
-      logger.info(
-        { sessionId: req.sessionId, chatId: req.chatId, curActive, expectedActive },
-        'deferred auto-switch skipped — user changed active session manually',
-      );
-      return;
-    }
-    // Also skip if another session has stolen focus first-come-first-active.
-    if (deps.broker.hasPendingFor(req.chatId, req.sessionId)) return;
-    deps.store.setActiveSession(req.chatId, req.sessionId);
-    if (deps.manager.hasBuffered(req.sessionId)) {
-      const events = deps.manager.drainBuffer(req.sessionId);
-      const lines = events.map((e) => e.data);
-      const header = `[${req.sessionLabel}] 📥 catch-up (${events.length} events from background):`;
-      const contHeader = `[${req.sessionLabel}] 📥 catch-up (cont.):`;
-      const parts = splitCatchUp(header, contHeader, lines);
-      for (const part of parts) {
-        await n.sendPlain(part, { silent: true });
-      }
-    }
-    await n.sendPlain(
-      `🔔 Đã chuyển sang \`${req.sessionLabel}\` vì cần approval.`,
-      { parse_mode: 'Markdown', silent: true },
-    );
-  };
-
+  // Auto-switch logic lives in `src/bot/auto-switch.ts` so the ask prompter
+  // (v1.4 AskUserQuestion routing) can reuse the same wizard-guarded /
+  // first-come-first-active path. Behavior preserved verbatim — see
+  // {@link runAutoSwitchForChat}.
   return {
     async prompt(req: ApprovalRequest): Promise<void> {
       const n = deps.notifierFor(req.chatId);
@@ -1414,33 +1458,19 @@ export function createApprovalPrompter(deps: ApprovalPrompterDeps): {
       try {
         deps.store.recordApproval(req.id, req.sessionId, req.toolName, JSON.stringify(req.input));
 
-        const curActive = deps.store.getChatState(req.chatId).active_session_id;
-        if (curActive !== req.sessionId) {
-          // First-come-first-active: only auto-switch if no OTHER session in
-          // this chat has a pending approval. broker.ask() adds the request
-          // to the pending map before invoking us, so we exclude it from the
-          // check by passing req.sessionId.
-          if (!deps.broker.hasPendingFor(req.chatId, req.sessionId)) {
-            // P0.6: if a wizard owns the chat's input, defer the switch
-            // until the wizard exits so we don't hijack its text step.
-            // Snapshot the "expected active" at deferral time so when the
-            // queued callback fires we can detect if the user manually
-            // switched while the wizard was open — in which case we MUST
-            // respect their choice and skip the auto-switch entirely.
-            if (guard.isActive(req.chatId)) {
-              const activeAtDeferral = curActive;
-              logger.info(
-                { sessionId: req.sessionId, chatId: req.chatId },
-                'auto-switch deferred — wizard active',
-              );
-              guard.deferUntilWizardExits(req.chatId, () =>
-                runAutoSwitch(req, activeAtDeferral),
-              );
-            } else {
-              await runAutoSwitch(req, curActive);
-            }
-          }
-        }
+        await runAutoSwitchForChat({
+          chatId: req.chatId,
+          sessionId: req.sessionId,
+          sessionLabel: req.sessionLabel,
+          deps: {
+            store: deps.store,
+            manager: deps.manager,
+            notifierFor: deps.notifierFor,
+            hasOtherPendingFor: (chatId, excludeSessionId) =>
+              deps.broker.hasPendingFor(chatId, excludeSessionId),
+            ...(deps.wizardGuard ? { wizardGuard: deps.wizardGuard } : {}),
+          },
+        });
 
         const sessions: SessionListItem[] = deps.store.listSessions(req.chatId).map((s) => ({
           id: s.id,
