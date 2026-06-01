@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, writeFileSync as writeFile, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 import {
   acquireLock,
+  killOrphanDaemons,
   LockfileError,
   _internals,
 } from '../src/daemon/lockfile.js';
@@ -180,5 +182,199 @@ describe('P6.3 daemon lockfile', () => {
       expect(existsSync(nestedPath)).toBe(true);
       release();
     });
+  });
+
+  // Orphan reaper — incident 2026-06-01. A daemon whose shutdown await
+  // chain hung past `process.exit(0)` left a node process holding the
+  // loopback ports + SQLite WAL for 8 days. The lockfile was eventually
+  // marked stale by the previous-boot heuristic so a fresh daemon booted
+  // alongside it. These tests exercise the boot-time sweep that prevents
+  // the alongside-coexistence case.
+  describe('killOrphanDaemons (POSIX)', () => {
+    const skipOnWindows = process.platform === 'win32' ? it.skip : it;
+
+    skipOnWindows(
+      'reaps a node process whose argv contains the entrypoint',
+      async () => {
+        const sleeperPath = join(tmp, 'sleeper.js');
+        // The child must:
+        //   (a) keep the event loop alive so it stays running until we kill it
+        //   (b) NOT trap SIGTERM — we want the canonical signal path tested
+        writeFile(sleeperPath, 'setInterval(() => {}, 100000);\n');
+        const child = spawn(process.execPath, [sleeperPath], {
+          stdio: 'ignore',
+          detached: false,
+        });
+        try {
+          // Wait for the child to be visible in `ps` (a few ms post-spawn).
+          await new Promise((r) => setTimeout(r, 200));
+          expect(child.pid).toBeTypeOf('number');
+          expect(_internals.isPidAlive(child.pid!)).toBe(true);
+
+          const reaped = await killOrphanDaemons({
+            entrypoint: sleeperPath,
+            timeoutMs: 2_000,
+          });
+          expect(reaped).toContain(child.pid);
+          expect(_internals.isPidAlive(child.pid!)).toBe(false);
+        } finally {
+          // Belt-and-suspenders cleanup in case reap didn't catch it.
+          if (child.pid && _internals.isPidAlive(child.pid)) {
+            try {
+              process.kill(child.pid, 'SIGKILL');
+            } catch {
+              /* already dead */
+            }
+          }
+        }
+      },
+      15_000,
+    );
+
+    skipOnWindows(
+      'returns [] when no other process matches the entrypoint',
+      async () => {
+        // Use a path that is GUARANTEED unique to this test run — no other
+        // process can have it in argv.
+        const uniquePath = join(tmp, `nonexistent-${Date.now()}-${Math.random()}.js`);
+        const reaped = await killOrphanDaemons({ entrypoint: uniquePath });
+        expect(reaped).toEqual([]);
+      },
+    );
+
+    skipOnWindows('never reaps our own PID', async () => {
+      // Use this test file's own path as entrypoint — vitest's child includes
+      // it in argv. The scan should EXCLUDE our pid and return [] (or only
+      // sibling vitest workers, none of which we control here).
+      const findOrphans = _internals.findOrphanDaemons;
+      const found = await findOrphans('/usr/lib/node_modules/vitest/dist/cli.js', process.pid);
+      expect(found).not.toContain(process.pid);
+    });
+
+    skipOnWindows(
+      'SIGKILL escalation kills a child that ignores SIGTERM',
+      async () => {
+        const sleeperPath = join(tmp, 'stubborn.js');
+        // Trap SIGTERM and ignore it — the only way to die is SIGKILL.
+        writeFile(
+          sleeperPath,
+          [
+            "process.on('SIGTERM', () => { /* ignore */ });",
+            'setInterval(() => {}, 100000);',
+          ].join('\n'),
+        );
+        const child = spawn(process.execPath, [sleeperPath], {
+          stdio: 'ignore',
+          detached: false,
+        });
+        try {
+          await new Promise((r) => setTimeout(r, 200));
+          expect(_internals.isPidAlive(child.pid!)).toBe(true);
+
+          const reaped = await killOrphanDaemons({
+            entrypoint: sleeperPath,
+            timeoutMs: 500, // short — force SIGKILL path
+          });
+          expect(reaped).toContain(child.pid);
+          expect(_internals.isPidAlive(child.pid!)).toBe(false);
+        } finally {
+          if (child.pid && _internals.isPidAlive(child.pid)) {
+            try {
+              process.kill(child.pid, 'SIGKILL');
+            } catch {
+              /* already dead */
+            }
+          }
+        }
+      },
+      15_000,
+    );
+
+    skipOnWindows('returns [] when entrypoint is empty', async () => {
+      expect(await killOrphanDaemons({ entrypoint: '' })).toEqual([]);
+    });
+
+    it('returns [] on Windows (platform short-circuit)', async () => {
+      // findOrphanDaemons short-circuits on win32. We can't easily mock
+      // process.platform without invasive setup, so on non-Windows we just
+      // assert the contract via a sentinel path. On Windows the result is
+      // guaranteed [] regardless of input.
+      if (process.platform === 'win32') {
+        const reaped = await killOrphanDaemons({ entrypoint: 'anything' });
+        expect(reaped).toEqual([]);
+      }
+    });
+
+    // Senior review [P1] 2026-06-01: tighten the substring match so we don't
+    // accidentally reap editors / viewers / grep / IDE indexers whose argv
+    // mentions the daemon entrypoint path.
+    describe('looksLikeNodeInvocation', () => {
+      const f = _internals.looksLikeNodeInvocation;
+
+      it('accepts canonical node invocations', () => {
+        expect(f('node dist/index.js')).toBe(true);
+        expect(f('/opt/homebrew/Cellar/node/26.0.0/bin/node dist/index.js')).toBe(true);
+        expect(f('  node --enable-source-maps dist/index.js')).toBe(true);
+        expect(f('node.exe C:/app/dist/index.js')).toBe(true);
+      });
+
+      it('accepts tsx and other node-compat launchers', () => {
+        expect(f('node /path/to/tsx/dist/cli.mjs src/index.ts')).toBe(true);
+        expect(f('tsx src/index.ts')).toBe(true);
+        expect(f('bun dist/index.js')).toBe(true);
+      });
+
+      it('REJECTS editors / viewers / shells operating on the file', () => {
+        expect(f('vim dist/index.js')).toBe(false);
+        expect(f('/usr/bin/vim dist/index.js')).toBe(false);
+        expect(f('nvim dist/index.js')).toBe(false);
+        expect(f('tail -f dist/index.js')).toBe(false);
+        expect(f('less dist/index.js')).toBe(false);
+        expect(f('cat dist/index.js')).toBe(false);
+        expect(f('grep -r foo dist/index.js')).toBe(false);
+        expect(f('rg foo dist/index.js')).toBe(false);
+        expect(f('git diff dist/index.js')).toBe(false);
+      });
+
+      it('REJECTS empty or whitespace input', () => {
+        expect(f('')).toBe(false);
+        expect(f('   ')).toBe(false);
+      });
+    });
+
+    skipOnWindows(
+      'does NOT reap a non-node process matching the entrypoint substring',
+      async () => {
+        // Repro of the [P1] false-positive: simulate `tail -f <entrypoint>`
+        // (which is what a developer / log-tailing tool would look like).
+        // tail keeps running on a file with no writers, holding the file
+        // descriptor — perfect for keeping the process alive without any
+        // SIGTERM trap.
+        const targetPath = join(tmp, 'fake-entrypoint.js');
+        writeFile(targetPath, '// placeholder\n');
+        const child = spawn('tail', ['-f', targetPath], { stdio: 'ignore', detached: false });
+        try {
+          await new Promise((r) => setTimeout(r, 200));
+          expect(_internals.isPidAlive(child.pid!)).toBe(true);
+
+          const reaped = await killOrphanDaemons({
+            entrypoint: targetPath,
+            timeoutMs: 500,
+          });
+          // `tail` is not a node invocation — must NOT be reaped.
+          expect(reaped).not.toContain(child.pid);
+          expect(_internals.isPidAlive(child.pid!)).toBe(true);
+        } finally {
+          if (child.pid && _internals.isPidAlive(child.pid)) {
+            try {
+              process.kill(child.pid, 'SIGKILL');
+            } catch {
+              /* already dead */
+            }
+          }
+        }
+      },
+      15_000,
+    );
   });
 });

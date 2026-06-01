@@ -22,7 +22,7 @@ import { POLICY_PATH } from './util/paths.js';
 import { KiroHookServer } from './util/kiro-hook-server.js';
 import { writeKiroTelecodeAgent } from './agents/kiro-agent-config.js';
 import { generateGateToken } from './util/hmac.js';
-import { acquireLock, LockfileError } from './daemon/lockfile.js';
+import { acquireLock, killOrphanDaemons, LockfileError } from './daemon/lockfile.js';
 
 function resolveGateScript(): string {
   // Find the compiled cli/kiro-gate.js next to this file (dist/) or fall back
@@ -59,6 +59,20 @@ async function main(): Promise<void> {
       process.exit(2);
     }
     throw err;
+  }
+
+  // After we own the lockfile, sweep any other process running our entrypoint.
+  // These are zombies from a prior daemon whose shutdown chain hung past
+  // process.exit (typically: grammY awaiting a stalled Telegram request) so
+  // the lockfile was later reclaimed by the previous-boot heuristic while the
+  // node process stayed alive holding ports + DB. Defense-in-depth: the
+  // hard-exit timer in shutdown() prevents NEW orphans; this reaps any that
+  // already exist from older builds. (Incident 2026-06-01.)
+  try {
+    const reaped = await killOrphanDaemons();
+    if (reaped.length) logger.warn({ reaped }, 'orphan daemon(s) reaped at boot');
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'orphan scan failed (continuing)');
   }
 
   const store = new SessionStore();
@@ -273,21 +287,61 @@ async function main(): Promise<void> {
     60 * 60 * 1000,
   );
 
+  let shuttingDown = false;
   const shutdown = async (sig: string): Promise<void> => {
+    // Re-entry guard: SIGTERM followed by SIGINT (or duplicate SIGTERM from
+    // launchd escalation) must NOT spawn a second shutdown chain — that
+    // doubled the chance of awaiting an already-rejected handle and hanging.
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info({ sig }, 'shutdown');
-    clearInterval(pruneTimer);
-    policy.stop();
-    timeline.server.close();
-    await kiroHookServer.stop();
-    await started.stop();
-    store.close();
+
+    // Hard ceiling: if any await below stalls (grammY mid-request on a dead
+    // network, kiro hook server with a wedged client, SQLite WAL fsync), the
+    // node process MUST still die — otherwise it lingers as a zombie holding
+    // loopback ports + DB while launchd's lockfile heuristic eventually
+    // reclaims the slot for a new daemon (split-brain). Incident 2026-06-01:
+    // an orphan lived 8 days because shutdown awaits hung past process.exit.
+    //
+    // Senior review [P1]: the timer is REF'd (not unref'd). If we unref'd it,
+    // a fast clean shutdown that drains all other handles would let the loop
+    // empty and exit before the timer fires — that's fine, BUT we explicitly
+    // call process.exit() at the end of this function so a ref'd timer adds
+    // no additional uptime and gives us a real fallback if something below
+    // throws synchronously AND somehow swallows the exception.
+    const HARD_EXIT_MS = 10_000;
+    const forceExit = setTimeout(() => {
+      // eslint-disable-next-line no-console
+      console.error(`shutdown: timed out after ${HARD_EXIT_MS}ms — forcing exit`);
+      process.exit(1);
+    }, HARD_EXIT_MS);
+
+    // Senior review [P1]: the original try { ... } finally { clearTimeout } /
+    // process.exit(0) pattern had a fatal hole — if anything inside the try
+    // rejected (e.g. kiroHookServer.stop() throws), finally cleared the
+    // timer, the exception propagated up through `void shutdown(...)`, and
+    // process.exit was never reached. Result: timer disarmed + no exit =
+    // exactly the 8-day-orphan failure mode we're trying to prevent. Wrap
+    // each step individually and ALWAYS reach process.exit unconditionally.
+    const safe = async (label: string, fn: () => unknown | Promise<unknown>): Promise<void> => {
+      try {
+        await fn();
+      } catch (err) {
+        logger.warn({ err: String(err), step: label }, 'shutdown step failed (continuing)');
+      }
+    };
+
+    await safe('pruneTimer', () => clearInterval(pruneTimer));
+    await safe('policy.stop', () => policy.stop());
+    await safe('timeline.close', () => timeline.server.close());
+    await safe('kiroHookServer.stop', () => kiroHookServer.stop());
+    await safe('bot.stop', () => started.stop());
+    await safe('store.close', () => store.close());
     // P6.3 — release the lockfile AFTER everything else so a concurrent boot
     // attempt during shutdown sees us as still running until the dust settles.
-    try {
-      releaseLock();
-    } catch (err) {
-      logger.warn({ err: String(err) }, 'lockfile release failed during shutdown');
-    }
+    await safe('lockfile.release', () => releaseLock());
+
+    clearTimeout(forceExit);
     process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));

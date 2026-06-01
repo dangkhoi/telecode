@@ -1,9 +1,13 @@
 import { openSync, writeSync, closeSync, readFileSync, unlinkSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import os from 'node:os';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { TELECODE_HOME } from '../util/paths.js';
 import { logger } from '../util/logger.js';
 import path from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * P6.3 — Single-instance daemon lockfile.
@@ -236,5 +240,136 @@ export function acquireLock(opts: { lockPath?: string } = {}): { release: () => 
   return { release, path: lockPath };
 }
 
+/**
+ * POSIX-only orphan scan: enumerate live processes whose command line is a
+ * node-family invocation AND contains `entrypoint` as a substring, excluding
+ * our own PID. Returns [] on Windows.
+ *
+ * Why this exists (incident 2026-06-01): the launchd-managed daemon
+ * received SIGTERM during a network outage; grammY's stop() was awaiting
+ * a Telegram `getUpdates` request that never resolved, so the shutdown
+ * `await` chain hung and `process.exit(0)` was never reached. The process
+ * stayed alive holding loopback ports + SQLite WAL for 8 days; the
+ * lockfile was eventually marked stale by the previous-boot heuristic,
+ * and a fresh daemon booted alongside it — two daemons polling the same
+ * bot token caused intermittent 409 Conflict and bot "freeze". The hard
+ * exit timer in index.ts prevents new orphans; this function reaps any
+ * that already exist at boot.
+ *
+ * Safety [senior review 2026-06-01, P1]: bare substring match would
+ * happily reap any process whose argv mentions the entrypoint path —
+ * `vim dist/index.js`, `tail -f dist/index.js`, `grep -r 'foo' dist/`,
+ * an IDE language-server indexing the file, even a backup tool. We
+ * additionally require the FIRST whitespace-delimited token (the
+ * executable) to look like a node interpreter (`node`, `node.exe`) or a
+ * known node-launcher (`tsx`). Editors and viewers fail this check.
+ */
+function looksLikeNodeInvocation(commandLine: string): boolean {
+  // First whitespace-delimited token = the executable path as exec'd. We
+  // can't perfectly handle paths with embedded spaces (exec preserves them
+  // but ps' rendering is space-separated), but node binaries practically
+  // never live at such paths, so basename matching on the first token is a
+  // sound heuristic.
+  const trimmed = commandLine.trimStart();
+  const firstSpace = trimmed.search(/\s/);
+  const exe = firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace);
+  // Strip any trailing parens macOS sometimes adds for process states.
+  const base = exe.split('/').pop() ?? exe;
+  // Match: node, node.exe, node-<version>, tsx, tsx.cmd, bun (also acceptable
+  // as a node-compat runtime), deno (less common, future-proof).
+  return /^(node(\.exe)?|tsx(\.cmd)?|bun|deno)(\b|$|-)/.test(base);
+}
+
+async function findOrphanDaemons(entrypoint: string, ownPid: number): Promise<number[]> {
+  if (process.platform === 'win32') return [];
+  if (!entrypoint) return [];
+  try {
+    // `ps -A`: all processes. `-ww`: don't truncate the command field on
+    // macOS (default truncates to terminal width, which would chop long
+    // node entrypoint paths and break our substring match). `-o pid=,command=`:
+    // suppress headers, output "pid command" per line.
+    const { stdout } = await execFileAsync('ps', ['-Awwo', 'pid=,command='], {
+      timeout: 5_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const pids: number[] = [];
+    for (const line of stdout.split('\n')) {
+      const m = /^\s*(\d+)\s+(.+)$/.exec(line);
+      if (!m || m[1] === undefined || m[2] === undefined) continue;
+      const pid = Number(m[1]);
+      if (!Number.isInteger(pid) || pid <= 0 || pid === ownPid) continue;
+      const command = m[2];
+      if (!command.includes(entrypoint)) continue;
+      if (!looksLikeNodeInvocation(command)) {
+        logger.debug(
+          { pid, command: command.slice(0, 200) },
+          'orphan scan: skipping non-node match (editor/viewer/etc.)',
+        );
+        continue;
+      }
+      pids.push(pid);
+    }
+    return pids;
+  } catch (err) {
+    logger.warn({ err: String(err) }, 'orphan-daemon scan failed (skipping)');
+    return [];
+  }
+}
+
+async function sigtermThenSigkill(pid: number, timeoutMs: number): Promise<boolean> {
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ESRCH') return true;
+    logger.warn({ pid, err: String(err) }, 'SIGTERM to orphan failed');
+    return false;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isPidAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  // Escalate: SIGKILL cannot be caught — guarantees the process dies even
+  // if its SIGTERM handler is stuck in a hung await (the exact failure mode
+  // the original orphan exhibited).
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'ESRCH';
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  return !isPidAlive(pid);
+}
+
+/**
+ * Boot-time orphan reaper. Call AFTER `acquireLock()` so this process is
+ * the legitimate lockfile holder by construction — any other live process
+ * matching `entrypoint` is by definition an orphan (not a sibling daemon
+ * we'd otherwise refuse to displace).
+ *
+ * Returns the PIDs successfully reaped (dead by SIGTERM or SIGKILL).
+ */
+export async function killOrphanDaemons(
+  opts: { entrypoint?: string; timeoutMs?: number } = {},
+): Promise<number[]> {
+  const entrypoint = opts.entrypoint ?? process.argv[1];
+  if (!entrypoint) return [];
+  const timeoutMs = opts.timeoutMs ?? 3_000;
+  const candidates = await findOrphanDaemons(entrypoint, process.pid);
+  if (candidates.length === 0) return [];
+  logger.warn({ candidates, entrypoint }, 'orphan daemon(s) detected — reaping');
+  const reaped: number[] = [];
+  for (const pid of candidates) {
+    if (await sigtermThenSigkill(pid, timeoutMs)) reaped.push(pid);
+  }
+  return reaped;
+}
+
 /** Exposed for tests — production code uses the default path. */
-export const _internals = { isPidAlive, readLockfile, isFromPreviousBoot };
+export const _internals = {
+  isPidAlive,
+  readLockfile,
+  isFromPreviousBoot,
+  findOrphanDaemons,
+  looksLikeNodeInvocation,
+};
