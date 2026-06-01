@@ -100,7 +100,7 @@
   <p class="lede"><code>AskUserQuestion</code> hiện chỉ render đẹp lên Telegram nhưng <strong>không thật sự hỏi user</strong> — SDK nhận lại <code>answers = {}</code> tự động, Claude tiếp tục bằng giả định. Spec này wire một vòng câu hỏi → trả lời thực sự thông qua inline keyboard + reply, dùng đúng cơ chế chính thức <code>canUseTool ⟶ updatedInput.answers</code> của Claude Agent SDK.</p>
   <div class="meta-row">
     <span class="pill"><strong>Slug</strong> · askuserquestion-answer-routing</span>
-    <span class="pill"><strong>Author</strong> · vendor.01@frt.vn</span>
+    <span class="pill"><strong>Author</strong> · koi</span>
     <span class="pill"><strong>Date</strong> · 2026-05-31</span>
     <span class="pill"><strong>Effort</strong> · ~1 ngày</span>
     <span class="pill"><strong>Status</strong> · Implemented · Pass 1 senior review APPROVED · ready for security scan + commit</span>
